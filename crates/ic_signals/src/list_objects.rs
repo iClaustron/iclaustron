@@ -11,27 +11,25 @@
 //! counting the terminating NUL, then the name padded to whole words.
 //!
 //! **The dictionary splits a long answer itself**, and each piece
-//! carries the count of objects in that piece only; the API adds them
-//! up. So once the pieces are joined, the count at the front belongs to
-//! the first piece alone. The number of objects is read from the length
-//! of section 0 instead, at three words each.
+//! carries the count of objects in that piece only; the reference adds
+//! them up. So once the pieces are joined, the count at the front
+//! belongs to the first piece alone. The number of objects is read from
+//! the length of section 0 instead, at three words each.
 //!
 //! Every current data node answers in this long form. An older form
 //! packed each object into one word; it is not read here.
 //!
-//! Verify: `ListTables.hpp`; `NdbDictionaryImpl.cpp`,
-//! `listDependentObjects`, `listObjects`, `execLIST_TABLES_CONF` and
-//! `unpackListTables`; `Dbdict.cpp`, `sendLIST_TABLES_CONF`.
+//! Verify: chapter 05 §17.9.
 
 use ic_port::err;
 use ic_port::IcError;
 
-/// Words in a `LIST_TABLES_REQ`.
-pub const IC_LIST_TABLES_REQ_LEN: usize = 5;
-/// Words in a `LIST_TABLES_CONF`, before any fragment words.
-pub const IC_LIST_TABLES_CONF_LEN: usize = 2;
+/// Words in a `LIST_OBJECTS_REQ`.
+pub const IC_LIST_OBJECTS_REQ_LEN: usize = 5;
+/// Words in a `LIST_OBJECTS_CONF`, before any fragment words.
+pub const IC_LIST_OBJECTS_CONF_LEN: usize = 2;
 /// Words per object in section 0 of the answer.
-pub const IC_LIST_TABLES_DATA_WORDS: usize = 3;
+pub const IC_LIST_OBJECTS_DATA_WORDS: usize = 3;
 
 /// Request flag: send each object's name.
 const IC_LIST_NAMES_BIT: u32 = 1 << 28;
@@ -43,68 +41,68 @@ const IC_OLD_TABLE_ID_MASK: u32 = 0xFFF;
 
 /// Ask for a list of objects.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct ListTablesReq {
+pub struct ListObjectsReq {
   /// Our own number for the request, which comes back in the answer.
-  pub sender_data: u32,
+  pub caller_data: u32,
   /// Our block reference, which is where the answer is sent.
-  pub sender_ref: u32,
+  pub caller_ref: u32,
   /// Flags, and the table id and type in the older form.
   pub request_data: u32,
   /// The table whose dependents are wanted, or zero for all objects.
   pub table_id: u32,
   /// Only objects of this type, or zero for all types.
-  pub table_type: u32,
+  pub table_kind: u32,
 }
 
-impl ListTablesReq {
+impl ListObjectsReq {
   /// A request for the objects that depend on a table, names included.
   /// That is how the reference finds a table's indexes.
   pub fn dependents_of(
-    sender_data: u32,
-    sender_ref: u32,
+    caller_data: u32,
+    caller_ref: u32,
     table_id: u32,
-  ) -> ListTablesReq {
-    ListTablesReq {
-      sender_data,
-      sender_ref,
+  ) -> ListObjectsReq {
+    ListObjectsReq {
+      caller_data,
+      caller_ref,
       request_data: IC_LIST_NAMES_BIT
         | IC_LIST_DEPENDENT_BIT
         | (table_id & IC_OLD_TABLE_ID_MASK),
       table_id,
-      table_type: 0,
+      table_kind: 0,
     }
   }
 
   /// The words of signal data this carries.
-  pub fn encode(&self) -> [u32; IC_LIST_TABLES_REQ_LEN] {
+  pub fn encode(&self) -> [u32; IC_LIST_OBJECTS_REQ_LEN] {
     [
-      self.sender_data,
-      self.sender_ref,
+      self.caller_data,
+      self.caller_ref,
       self.request_data,
       self.table_id,
-      self.table_type,
+      self.table_kind,
     ]
   }
 }
 
 /// The front of an answer.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct ListTablesConf {
+pub struct ListObjectsConf {
   /// Our own number for the request.
-  pub sender_data: u32,
+  pub caller_data: u32,
   /// Objects in this piece of the answer; see the module note.
-  pub no_of_tables: u32,
+  pub object_count: u32,
 }
 
-impl ListTablesConf {
+impl ListObjectsConf {
   /// Read the front of an answer.
-  pub fn decode(data: &[u32]) -> Result<ListTablesConf, IcError> {
-    if data.len() < IC_LIST_TABLES_CONF_LEN {
+  pub fn decode(data: &[u32]) -> Result<ListObjectsConf, IcError> {
+    if data.len() < IC_LIST_OBJECTS_CONF_LEN {
       return Err(IcError::new(err::IC_ERROR_INCONSISTENT_DATA));
     }
-    Ok(ListTablesConf {
-      sender_data: data[0],
-      no_of_tables: data[1],
+    Ok(ListObjectsConf {
+      caller_data: data[0],
+      object_count: data[1],
     })
   }
 }
@@ -115,7 +113,7 @@ pub struct ListedObject {
   /// Its id.
   pub id: u32,
   /// What kind of object, as the dictionary numbers kinds: the
-  /// `IC_TABLE_TYPE_*` values of `dict_tab_info` for tables and indexes.
+  /// `IC_OBJECT_KIND_*` values of `table_props` for tables and indexes.
   pub object_type: u32,
   /// Its state, such as online or being built.
   pub state: u32,
@@ -146,18 +144,18 @@ pub fn parse_listed_objects(
   names: &[u32],
 ) -> Result<Vec<ListedObject>, IcError> {
   let bad = IcError::new(err::IC_ERROR_INCONSISTENT_DATA);
-  if data.len() % IC_LIST_TABLES_DATA_WORDS != 0 {
+  if data.len() % IC_LIST_OBJECTS_DATA_WORDS != 0 {
     return Err(bad);
   }
-  let count = data.len() / IC_LIST_TABLES_DATA_WORDS;
+  let count = data.len() / IC_LIST_OBJECTS_DATA_WORDS;
   let mut objects: Vec<ListedObject> = Vec::with_capacity(count);
   let mut name_pos: usize = 0;
   let mut i: usize = 0;
   while i < count {
-    let flags = data[i * IC_LIST_TABLES_DATA_WORDS];
+    let flags = data[i * IC_LIST_OBJECTS_DATA_WORDS];
     let mut object = ListedObject {
-      id: data[i * IC_LIST_TABLES_DATA_WORDS + 1],
-      object_type: data[i * IC_LIST_TABLES_DATA_WORDS + 2],
+      id: data[i * IC_LIST_OBJECTS_DATA_WORDS + 1],
+      object_type: data[i * IC_LIST_OBJECTS_DATA_WORDS + 2],
       store: (flags >> 20) & 0x7,
       // Parenthesised for C readers: Rust ranks & above !=, C below.
       temporary: ((flags >> 23) & 0x1) != 0,
@@ -201,7 +199,7 @@ fn text_of_words(words: &[u32], size: usize) -> String {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::get_tab_info::name_section;
+  use crate::table_desc::name_section;
 
   fn names_of(list: &[&str]) -> Vec<u32> {
     let mut words: Vec<u32> = Vec::new();
@@ -214,7 +212,7 @@ mod tests {
 
   #[test]
   fn dependents_are_asked_for_with_names() {
-    let req = ListTablesReq::dependents_of(9, 0x8000_00C0, 13);
+    let req = ListObjectsReq::dependents_of(9, 0x8000_00C0, 13);
     let words = req.encode();
     assert_eq!(words[0], 9);
     assert_eq!(words[1], 0x8000_00C0);

@@ -31,7 +31,7 @@ const IC_GENERATION_MASK: u32 = 0xFF;
 /// The id of an object in a [`PtrArray`]: what travels in a signal.
 ///
 /// A valid id is never 0, because generations start at 1, so 0 can be
-/// used as "no object" the way `RNIL` is in the NDB protocol.
+/// used as "no object" the way `IC_NULL_PTR` is in the NDB protocol.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct PtrId(u32);
 

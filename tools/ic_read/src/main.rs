@@ -32,7 +32,7 @@
 //! hashing it as the data nodes do, and asks a data node which
 //! partition the row is really in, so that the two can be compared.
 //!
-//! Debug level 1024 traces every signal, which shows the seize of a
+//! Debug level 1024 traces every signal, which shows the allocate of a
 //! transaction record, the request, and the replies, packed or not.
 
 use std::sync::Arc;

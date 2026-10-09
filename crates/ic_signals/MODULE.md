@@ -1,4 +1,4 @@
-# ic_ndb_signals — module notes
+# ic_signals — module notes
 
 See `doc/rust/03-module-map.md` for the file-by-file mapping.
 

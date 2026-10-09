@@ -8,7 +8,7 @@
 //! completing them as their replies come, with the accounting of
 //! doc/rust/05-ndb-protocol.md, 6.6.
 //!
-//! **A transaction starts locally.** Starting one seizes a record at a
+//! **A transaction starts locally.** Starting one allocates a record at a
 //! coordinator, chosen by the hint, and gives the transaction its id;
 //! the data node knows nothing until the first operation is sent with
 //! the start flag. Operations are defined one by one and sent together:
@@ -18,12 +18,12 @@
 //! one on a transaction that never began completes at once.
 //!
 //! **Replies find their objects by their first word.** The coordinator
-//! answers about the transaction, naming the record it was seized on:
-//! `TCKEYCONF` with what each operation will bring, `TC_COMMITCONF`,
-//! `TCROLLBACKCONF`, their refusals, and `TCROLLBACKREP` when it has
+//! answers about the transaction, naming the record it was allocated on:
+//! `KEY_OP_CONF` with what each operation will bring, `COMMIT_CONF`,
+//! `ROLLBACK_CONF`, their refusals, and `TRANS_ABORTED_REP` when it has
 //! rolled the transaction back on its own. The node that read a row
-//! answers about the operation, naming the query: `TRANSID_AI` with the
-//! row, and `TCKEYREF` when the operation alone failed. Every reply
+//! answers about the operation, naming the query: `ROW_DATA_REP` with the
+//! row, and `KEY_OP_REF` when the operation alone failed. Every reply
 //! carries the transaction id and is checked against it, so a reply to
 //! an earlier use of the same query or record is passed over.
 //!
@@ -35,61 +35,56 @@
 //! and the transaction stays until the application closes it.
 //!
 //! **A unique query** goes through a unique hash index: the request is
-//! `TCINDXREQ`, naming the index's own table and carrying the index
+//! `UNIQUE_OP_REQ`, naming the index's own table and carrying the index
 //! columns as its key, and the coordinator finds the row's primary key
 //! through the index and runs the operation on the table. Its replies
-//! are `TCINDXCONF` and `TCINDXREF`, laid out as the key family's, and
-//! the row comes as `TRANSID_AI` like any other. An insert cannot go
+//! are `UNIQUE_OP_CONF` and `UNIQUE_OP_REF`, laid out as the key family's, and
+//! the row comes as `ROW_DATA_REP` like any other. An insert cannot go
 //! through an index, and a read through one always takes the shared
 //! lock: the reference sends its committed and simple index reads that
 //! way, and the coordinator asserts that an index request carries
 //! neither the dirty nor the simple flag, which on a debug data node
-//! is fatal. Verify: `TcIndx.hpp`; `DbtcMain.cpp`, `execTCINDXREQ` and
-//! the assertions where the index read is made; `NdbIndexOperation.cpp`,
-//! `committedRead` and `simpleRead`.
+//! is fatal. Verify: chapter 05 §17.14.
 //!
 //! **When the coordinator's node fails**, as the reference does it:
 //! while a surviving data node has reported the failure and none has
 //! yet reported it handled, the transaction waits, because the
-//! coordinator that takes over may still answer for it: `TCKEY_FAILCONF`
-//! says it committed, `TCKEY_FAILREF` that it was aborted, which is the
+//! coordinator that takes over may still answer for it: `TAKEOVER_CONF`
+//! says it committed, `TAKEOVER_REF` that it was aborted, which is the
 //! outcome wanted if a rollback had been asked for and an error
 //! otherwise. Once the failure is reported handled, whatever is still
 //! waiting was not found by the takeover and cannot have committed: it
 //! is rolled back with the reference's error for that, or counted done
 //! if a rollback was what was asked. A link that goes with no failure
 //! reported fails the transaction at once, with its outcome unknown:
-//! the coordinator aborts what an API node it lost had open. Verify:
-//! `Ndbif.cpp`, `report_node_failure_completed` and the two takeover
-//! replies; `NdbTransaction.cpp`, `receiveTCKEY_FAILCONF` and
-//! `receiveTCKEY_FAILREF`; `DbtcMain.cpp`, `sendTCKEY_FAILCONF`.
+//! the coordinator aborts what an API node it lost had open.
+//! Verify: chapter 05 §17.14.
 //!
-//! What is not here yet: callbacks, which chapter 04 wants beside the
-//! executed list, and placing a unique query by the index's own hash
+//! What is not here yet: placing a unique query by the index's own hash
 //! map, so it goes to a node holding the index.
 
-use ic_ndb_signals::gsn;
-use ic_ndb_signals::header::SignalHeader;
-use ic_ndb_signals::tc_key;
-use ic_ndb_signals::tc_key::TcCommitConf;
-use ic_ndb_signals::tc_key::TcKeyConf;
-use ic_ndb_signals::tc_key::TcKeyFailConf;
-use ic_ndb_signals::tc_key::TcKeyFailRef;
-use ic_ndb_signals::tc_key::TcKeyFlags;
-use ic_ndb_signals::tc_key::TcKeyRef;
-use ic_ndb_signals::tc_key::TcKeyReq;
-use ic_ndb_signals::tc_key::TcRollbackConf;
-use ic_ndb_signals::tc_key::TcRollbackRep;
-use ic_ndb_signals::tc_key::TcTransRef;
-use ic_ndb_signals::tc_key::TransIdAi;
 use ic_port::debug::IC_NDB_MESSAGE_LEVEL;
 use ic_port::err;
 use ic_port::IcError;
+use ic_signals::header::SignalHeader;
+use ic_signals::key_ops;
+use ic_signals::key_ops::KeyOpConf;
+use ic_signals::key_ops::KeyOpFlags;
+use ic_signals::key_ops::KeyOpRef;
+use ic_signals::key_ops::KeyOpReq;
+use ic_signals::key_ops::RollbackConf;
+use ic_signals::key_ops::RowDataRep;
+use ic_signals::key_ops::TakeoverConf;
+use ic_signals::key_ops::TakeoverRef;
+use ic_signals::key_ops::TransAbortedRep;
+use ic_signals::key_ops::TransCommitConf;
+use ic_signals::key_ops::TransEndRef;
+use ic_signals::numbers;
 use ic_util::ptr_array::PtrId;
 
 use crate::apid_conn::ApidConnection;
+use crate::apid_conn::CoordRecord;
 use crate::apid_conn::Staged;
-use crate::apid_conn::TcRecord;
 use crate::apid_global::LinkStatus;
 use crate::dict_cache::IndexDef;
 use crate::dict_cache::TableDef;
@@ -155,8 +150,8 @@ pub enum CommitState {
 /// A transaction (`IC_TRANSACTION`).
 pub struct Transaction {
   trans_id: u64,
-  /// The coordinator's node and the record seized there.
-  pub(crate) tc: TcRecord,
+  /// The coordinator's node and the record allocated there.
+  pub(crate) coord: CoordRecord,
   state: CommitState,
   /// True once the first operation has been sent: the coordinator has
   /// the transaction.
@@ -182,7 +177,7 @@ impl std::fmt::Debug for Transaction {
       f,
       "Transaction({:#x} at node {}, {:?}, {} sent, {} complete)",
       self.trans_id,
-      self.tc.node_id,
+      self.coord.node_id,
       self.state,
       self.ops_sent,
       self.ops_completed
@@ -198,7 +193,7 @@ impl Transaction {
 
   /// The node whose coordinator runs the transaction.
   pub fn node_id(&self) -> u32 {
-    self.tc.node_id
+    self.coord.node_id
   }
 
   /// Where the transaction is.
@@ -237,9 +232,9 @@ impl Transaction {
 
 /// The record of a query's transaction id and the transaction's, for
 /// checking a reply.
-fn same_trans(query: &ApidQuery, trans_id1: u32, trans_id2: u32) -> bool {
+fn same_trans(query: &ApidQuery, trans_id_lo: u32, trans_id_hi: u32) -> bool {
   let id = query.execution.trans_id;
-  id as u32 == trans_id1 && (id >> 32) as u32 == trans_id2
+  id as u32 == trans_id_lo && (id >> 32) as u32 == trans_id_hi
 }
 
 impl ApidConnection {
@@ -339,10 +334,10 @@ impl ApidConnection {
     let chosen = self.choose_start_node(hint, table, &started);
     self.started_scratch = started;
     let node_id = chosen?;
-    let tc = self.tc_record(node_id)?;
+    let coord = self.coord_record(node_id)?;
     let trans = Transaction {
       trans_id: self.next_transaction_id(),
-      tc,
+      coord,
       state: CommitState::Started,
       begun: false,
       defined: self.spare_lists.pop().unwrap_or_default(),
@@ -355,7 +350,7 @@ impl ApidConnection {
       queued_for_send: false,
     };
     let id = TransId(self.transactions.insert(trans)?);
-    self.active_insert(tc.index, id);
+    self.active_insert(coord.index, id);
     Ok(id)
   }
 
@@ -436,9 +431,9 @@ impl ApidConnection {
           // A committed read has no transaction to abort.
           return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
         }
-        tc_key::IC_ABORT_ON_ERROR
+        key_ops::IC_ABORT_ON_ERROR
       }
-      _ => tc_key::IC_IGNORE_ERROR,
+      _ => key_ops::IC_IGNORE_ERROR,
     };
     let exclusive = args.kind == ReadKind::Exclusive
       || args.kind == ReadKind::ExclusiveNoWait;
@@ -449,17 +444,17 @@ impl ApidConnection {
       Some(query) => query.index().is_some(),
       None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
     };
-    let flags = TcKeyFlags {
+    let flags = KeyOpFlags {
       operation: if exclusive {
-        tc_key::IC_OP_READ_EXCLUSIVE
+        key_ops::IC_OP_READ_EXCLUSIVE
       } else {
-        tc_key::IC_OP_READ
+        key_ops::IC_OP_READ
       },
       simple: (args.kind == ReadKind::Simple || committed) && !through_index,
       dirty: committed && !through_index,
       abort_option,
       no_wait: args.kind == ReadKind::ExclusiveNoWait,
-      ..TcKeyFlags::default()
+      ..KeyOpFlags::default()
     };
     self.define(
       query_id,
@@ -482,21 +477,21 @@ impl ApidConnection {
     args: &WriteKeyArgs,
   ) -> Result<(), IcError> {
     let operation = match args.kind {
-      WriteKind::Update => tc_key::IC_OP_UPDATE,
-      WriteKind::Write => tc_key::IC_OP_WRITE,
-      WriteKind::Insert => tc_key::IC_OP_INSERT,
-      WriteKind::Delete => tc_key::IC_OP_DELETE,
+      WriteKind::Update => key_ops::IC_OP_UPDATE,
+      WriteKind::Write => key_ops::IC_OP_WRITE,
+      WriteKind::Insert => key_ops::IC_OP_INSERT,
+      WriteKind::Delete => key_ops::IC_OP_DELETE,
     };
     let abort_option = match args.abort_option {
-      AbortOption::IgnoreError => tc_key::IC_IGNORE_ERROR,
-      _ => tc_key::IC_ABORT_ON_ERROR,
+      AbortOption::IgnoreError => key_ops::IC_IGNORE_ERROR,
+      _ => key_ops::IC_ABORT_ON_ERROR,
     };
-    let flags = TcKeyFlags {
+    let flags = KeyOpFlags {
       operation,
       abort_option,
       batch_safe: args.batch_hint == BatchHint::Safe,
       batch_unsafe: args.batch_hint == BatchHint::Unsafe,
-      ..TcKeyFlags::default()
+      ..KeyOpFlags::default()
     };
     self.define(
       query_id,
@@ -514,13 +509,13 @@ impl ApidConnection {
     &mut self,
     query_id: QueryId,
     trans_id: TransId,
-    flags: TcKeyFlags,
+    flags: KeyOpFlags,
     is_read: bool,
     user_ref: usize,
     callback: Option<QueryCallback>,
   ) -> Result<(), IcError> {
-    let (id, tc) = match self.transactions.get(trans_id.0) {
-      Some(trans) if trans.is_open() => (trans.trans_id, trans.tc),
+    let (id, coord) = match self.transactions.get(trans_id.0) {
+      Some(trans) if trans.is_open() => (trans.trans_id, trans.coord),
       _ => return Err(IcError::new(err::IC_ERROR_TRANSACTION_ACTIVE)),
     };
     let query = match self.queries.get(query_id.0) {
@@ -532,23 +527,23 @@ impl ApidConnection {
       return Err(IcError::new(err::IC_ERROR_TRANSACTION_ACTIVE));
     }
     // A unique query names the index's own table and goes as a
-    // TCINDXREQ; the coordinator looks the row up through the index.
+    // UNIQUE_OP_REQ; the coordinator looks the row up through the index.
     let (signal, table_id, table_version) = match query.index() {
       Some(index) => {
         // The reference refuses an insert through an index too.
-        let inserts = flags.operation == tc_key::IC_OP_INSERT
-          || flags.operation == tc_key::IC_OP_WRITE;
+        let inserts = flags.operation == key_ops::IC_OP_INSERT
+          || flags.operation == key_ops::IC_OP_WRITE;
         if inserts {
           return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
         }
         (
-          gsn::IC_GSN_TCINDXREQ,
+          numbers::IC_SIG_UNIQUE_OP_REQ,
           index.index_id(),
           index.index_version(),
         )
       }
       None => (
-        gsn::IC_GSN_TCKEYREQ,
+        numbers::IC_SIG_KEY_OP_REQ,
         query.table().table_id(),
         query.table().table_version(),
       ),
@@ -556,19 +551,20 @@ impl ApidConnection {
     // The request is packed now, into the node's staged buffer, with
     // its sections built from the rows into the connection's scratch
     // buffers; the send sets its place in the batch.
-    let request = TcKeyReq {
-      tc_connect_ptr: tc.tc_ptr,
-      api_operation_ptr: query_id.as_u32(),
+    let request = KeyOpReq {
+      coord_ptr: coord.coord_ptr,
+      query_ref: query_id.as_u32(),
       table_id,
-      request_info: flags.request_info(),
+      flags_word: flags.flags_word(),
       table_version,
-      trans_id1: id as u32,
-      trans_id2: (id >> 32) as u32,
+      trans_id_lo: id as u32,
+      trans_id_hi: (id >> 32) as u32,
     };
     let mut key = std::mem::take(&mut self.key_scratch);
     let mut attr = std::mem::take(&mut self.attr_scratch);
     let built = build_sections(query, &flags, is_read, &mut key, &mut attr);
-    let header = SignalHeader::new(signal, self.block_number(), tc.tc_block);
+    let header =
+      SignalHeader::new(signal, self.block_number(), coord.coord_block);
     let staged = match built {
       Ok(()) => {
         let both: [&[u32]; 2] = [&key, &attr];
@@ -577,8 +573,8 @@ impl ApidConnection {
           sections = &both[..1];
         }
         self.stage_signal(
-          tc.node_id,
-          tc.generation,
+          coord.node_id,
+          coord.generation,
           &header,
           &request.encode(),
           sections,
@@ -735,14 +731,14 @@ impl ApidConnection {
   /// The queries of one transaction, with the flags of their place in
   /// the batch, then its commit or rollback if one is due.
   fn send_transaction(&mut self, id: TransId) -> Result<(), IcError> {
-    let (defined, end_wanted, begun, tc, trans_id) =
+    let (defined, end_wanted, begun, coord, trans_id) =
       match self.transactions.get_mut(id.0) {
         Some(trans) if trans.ended() => return Ok(()),
         Some(trans) => (
           std::mem::take(&mut trans.defined),
           trans.end_wanted,
           trans.begun,
-          trans.tc,
+          trans.coord,
           trans.trans_id,
         ),
         None => return Ok(()),
@@ -796,7 +792,7 @@ impl ApidConnection {
       None => None,
     };
     if let Some(how) = end {
-      self.send_end(id, how, &tc, trans_id, begun)?;
+      self.send_end(id, how, &coord, trans_id, begun)?;
     }
     Ok(())
   }
@@ -827,7 +823,7 @@ impl ApidConnection {
     flags.start = start;
     flags.execute = execute;
     flags.commit = commit;
-    self.patch_staged(&staged, IC_TCKEYREQ_REQUEST_INFO, flags.request_info());
+    self.patch_staged(&staged, IC_KEY_OP_REQ_REQUEST_INFO, flags.flags_word());
     if let Some(query) = self.queries.get_mut(qid.0) {
       query.execution.staged = Staged::default();
       if query.execution.is_read {
@@ -843,7 +839,7 @@ impl ApidConnection {
     &mut self,
     id: TransId,
     how: CommitState,
-    tc: &TcRecord,
+    coord: &CoordRecord,
     trans_id: u64,
     begun: bool,
   ) -> Result<(), IcError> {
@@ -857,17 +853,21 @@ impl ApidConnection {
       return Ok(());
     }
     let signal = match how {
-      CommitState::CommitRequested => gsn::IC_GSN_TC_COMMITREQ,
-      _ => gsn::IC_GSN_TCROLLBACKREQ,
+      CommitState::CommitRequested => numbers::IC_SIG_COMMIT_REQ,
+      _ => numbers::IC_SIG_ROLLBACK_REQ,
     };
     // The coordinator finds the transaction by its own pointer for it;
     // the reply carries ours.
-    let data =
-      tc_key::tc_trans_req(tc.tc_ptr, trans_id as u32, (trans_id >> 32) as u32);
-    let header = SignalHeader::new(signal, self.block_number(), tc.tc_block);
+    let data = key_ops::trans_end_req(
+      coord.coord_ptr,
+      trans_id as u32,
+      (trans_id >> 32) as u32,
+    );
+    let header =
+      SignalHeader::new(signal, self.block_number(), coord.coord_block);
     self.queue_signal_for_generation(
-      tc.node_id,
-      tc.generation,
+      coord.node_id,
+      coord.generation,
       &header,
       &data,
       &[],
@@ -886,19 +886,21 @@ impl ApidConnection {
   /// False if it is neither.
   pub(crate) fn route_reply(&mut self, signal: &SignalView<'_>) -> bool {
     // The unique index family answers in the key family's layouts.
-    match signal.gsn {
-      gsn::IC_GSN_TCKEYCONF | gsn::IC_GSN_TCINDXCONF => {
+    match signal.sig_no {
+      numbers::IC_SIG_KEY_OP_CONF | numbers::IC_SIG_UNIQUE_OP_CONF => {
         self.take_key_conf(signal)
       }
-      gsn::IC_GSN_TRANSID_AI => self.take_row(signal),
-      gsn::IC_GSN_TCKEYREF | gsn::IC_GSN_TCINDXREF => self.take_key_ref(signal),
-      gsn::IC_GSN_TCROLLBACKREP => self.take_rollback_rep(signal),
-      gsn::IC_GSN_TC_COMMITCONF => self.take_commit_conf(signal),
-      gsn::IC_GSN_TC_COMMITREF => self.take_trans_ref(signal),
-      gsn::IC_GSN_TCROLLBACKCONF => self.take_rollback_conf(signal),
-      gsn::IC_GSN_TCROLLBACKREF => self.take_trans_ref(signal),
-      gsn::IC_GSN_TCKEY_FAILCONF => self.take_fail_conf(signal),
-      gsn::IC_GSN_TCKEY_FAILREF => self.take_fail_ref(signal),
+      numbers::IC_SIG_ROW_DATA_REP => self.take_row(signal),
+      numbers::IC_SIG_KEY_OP_REF | numbers::IC_SIG_UNIQUE_OP_REF => {
+        self.take_key_ref(signal)
+      }
+      numbers::IC_SIG_TRANS_ABORTED_REP => self.take_rollback_rep(signal),
+      numbers::IC_SIG_COMMIT_CONF => self.take_commit_conf(signal),
+      numbers::IC_SIG_COMMIT_REF => self.take_trans_ref(signal),
+      numbers::IC_SIG_ROLLBACK_CONF => self.take_rollback_conf(signal),
+      numbers::IC_SIG_ROLLBACK_REF => self.take_trans_ref(signal),
+      numbers::IC_SIG_TAKEOVER_CONF => self.take_fail_conf(signal),
+      numbers::IC_SIG_TAKEOVER_REF => self.take_fail_ref(signal),
       _ => false,
     }
   }
@@ -907,14 +909,14 @@ impl ApidConnection {
   fn trans_named(
     &self,
     api_ptr: u32,
-    trans_id1: u32,
-    trans_id2: u32,
+    trans_id_lo: u32,
+    trans_id_hi: u32,
   ) -> Option<TransId> {
-    let index = crate::apid_conn::tc_index_of(api_ptr)?;
+    let index = crate::apid_conn::coord_index_of(api_ptr)?;
     let id = self.active_get(index as u32)?;
     if let Some(trans) = self.transactions.get(id.0) {
       let want = trans.trans_id;
-      if want as u32 == trans_id1 && (want >> 32) as u32 == trans_id2 {
+      if want as u32 == trans_id_lo && (want >> 32) as u32 == trans_id_hi {
         return Some(id);
       }
     }
@@ -922,22 +924,22 @@ impl ApidConnection {
   }
 
   fn take_key_conf(&mut self, signal: &SignalView<'_>) -> bool {
-    let conf = match TcKeyConf::decode(signal.data) {
+    let conf = match KeyOpConf::decode(signal.data) {
       Ok(conf) => conf,
       Err(_) => return false,
     };
     // A confirmation with no transaction named is found from its first
     // operation, as the reference does.
-    let mut api_ptr = conf.api_connect_ptr;
-    if api_ptr == tc_key::IC_TCKEYCONF_NO_TRANSACTION {
+    let mut api_ptr = conf.client_ptr;
+    if api_ptr == key_ops::IC_KEY_OP_CONF_NO_TRANSACTION {
       let first = match conf.operations().first() {
-        Some(op) => QueryId(PtrId::from_u32(op.api_operation_ptr)),
+        Some(op) => QueryId(PtrId::from_u32(op.query_ref)),
         None => return false,
       };
       api_ptr = match self.queries.get(first.0) {
         Some(query) => match query.execution.trans {
           Some(tid) => match self.transactions.get(tid.0) {
-            Some(trans) => trans.tc.api_ptr,
+            Some(trans) => trans.coord.api_ptr,
             None => return false,
           },
           None => return false,
@@ -945,12 +947,13 @@ impl ApidConnection {
         None => return false,
       };
     }
-    let tid = match self.trans_named(api_ptr, conf.trans_id1, conf.trans_id2) {
-      Some(tid) => tid,
-      None => return false,
-    };
+    let tid =
+      match self.trans_named(api_ptr, conf.trans_id_lo, conf.trans_id_hi) {
+        Some(tid) => tid,
+        None => return false,
+      };
     if conf.needs_commit_ack() {
-      self.send_commit_ack(signal, conf.trans_id1, conf.trans_id2);
+      self.send_commit_ack(signal, conf.trans_id_lo, conf.trans_id_hi);
     }
     // Record the commit and GCI before completing queries: the last
     // query's callback may close the transaction and start another.
@@ -958,9 +961,9 @@ impl ApidConnection {
       self.end_transaction(tid, CommitState::Committed, None, conf.gci);
     }
     for op in conf.operations() {
-      let qid = QueryId(PtrId::from_u32(op.api_operation_ptr));
+      let qid = QueryId(PtrId::from_u32(op.query_ref));
       if let Some(query) = self.queries.get_mut(qid.0) {
-        if same_trans(query, conf.trans_id1, conf.trans_id2) {
+        if same_trans(query, conf.trans_id_lo, conf.trans_id_hi) {
           query.execution.confirmed = Some(*op);
         }
       }
@@ -970,17 +973,17 @@ impl ApidConnection {
   }
 
   fn take_row(&mut self, signal: &SignalView<'_>) -> bool {
-    let front = match TransIdAi::decode(signal.data) {
+    let front = match RowDataRep::decode(signal.data) {
       Ok(front) => front,
       Err(_) => return false,
     };
-    let qid = QueryId(PtrId::from_u32(front.api_operation_ptr));
+    let qid = QueryId(PtrId::from_u32(front.query_ref));
     let query = match self.queries.get_mut(qid.0) {
       Some(query) => query,
       None => return false,
     };
     if query.state() != QueryState::Sent
-      || !same_trans(query, front.trans_id1, front.trans_id2)
+      || !same_trans(query, front.trans_id_lo, front.trans_id_hi)
     {
       return false;
     }
@@ -988,7 +991,7 @@ impl ApidConnection {
     if signal.num_sections > 0 {
       section = Some(signal.section(0));
     }
-    let row = TransIdAi::row(signal.data, section);
+    let row = RowDataRep::row(signal.data, section);
     // A row that comes whole is unpacked from the signal straight into
     // the attribute row, where it lies in the page the receive thread
     // handed over: a committed read's row always comes in one signal,
@@ -1010,15 +1013,15 @@ impl ApidConnection {
   }
 
   fn take_key_ref(&mut self, signal: &SignalView<'_>) -> bool {
-    let refusal = match TcKeyRef::decode(signal.data) {
+    let refusal = match KeyOpRef::decode(signal.data) {
       Ok(refusal) => refusal,
       Err(_) => return false,
     };
-    let qid = QueryId(PtrId::from_u32(refusal.api_operation_ptr));
+    let qid = QueryId(PtrId::from_u32(refusal.query_ref));
     let ok = match self.queries.get(qid.0) {
       Some(query) => {
         query.state() == QueryState::Sent
-          && same_trans(query, refusal.trans_id1, refusal.trans_id2)
+          && same_trans(query, refusal.trans_id_lo, refusal.trans_id_hi)
       }
       None => false,
     };
@@ -1030,50 +1033,52 @@ impl ApidConnection {
   }
 
   fn take_rollback_rep(&mut self, signal: &SignalView<'_>) -> bool {
-    let rep = match TcRollbackRep::decode(signal.data) {
+    let rep = match TransAbortedRep::decode(signal.data) {
       Ok(rep) => rep,
       Err(_) => return false,
     };
-    let tid =
-      match self.trans_named(rep.api_connect_ptr, rep.trans_id1, rep.trans_id2)
-      {
-        Some(tid) => tid,
-        None => return false,
-      };
+    let tid = match self.trans_named(
+      rep.client_ptr,
+      rep.trans_id_lo,
+      rep.trans_id_hi,
+    ) {
+      Some(tid) => tid,
+      None => return false,
+    };
     let error = IcError::new(rep.error_code as i32);
     self.end_transaction(tid, CommitState::RolledBack, Some(error), 0);
     true
   }
 
   fn take_commit_conf(&mut self, signal: &SignalView<'_>) -> bool {
-    let conf = match TcCommitConf::decode(signal.data) {
+    let conf = match TransCommitConf::decode(signal.data) {
       Ok(conf) => conf,
       Err(_) => return false,
     };
     let tid = match self.trans_named(
-      conf.api_connect_ptr,
-      conf.trans_id1,
-      conf.trans_id2,
+      conf.client_ptr,
+      conf.trans_id_lo,
+      conf.trans_id_hi,
     ) {
       Some(tid) => tid,
       None => return false,
     };
     if conf.needs_commit_ack {
-      self.send_commit_ack(signal, conf.trans_id1, conf.trans_id2);
+      self.send_commit_ack(signal, conf.trans_id_lo, conf.trans_id_hi);
     }
     self.end_transaction(tid, CommitState::Committed, None, conf.gci);
     true
   }
 
   fn take_rollback_conf(&mut self, signal: &SignalView<'_>) -> bool {
-    let conf = match TcRollbackConf::decode(signal.data) {
+    let conf = match RollbackConf::decode(signal.data) {
       Ok(conf) => conf,
       Err(_) => return false,
     };
     let tid = match self.trans_named(
-      conf.api_connect_ptr,
-      conf.trans_id1,
-      conf.trans_id2,
+      conf.client_ptr,
+      conf.trans_id_lo,
+      conf.trans_id_hi,
     ) {
       Some(tid) => tid,
       None => return false,
@@ -1085,14 +1090,14 @@ impl ApidConnection {
   /// A refused commit, or a refused rollback: either way the
   /// transaction is over at the coordinator, and the error says why.
   fn take_trans_ref(&mut self, signal: &SignalView<'_>) -> bool {
-    let refusal = match TcTransRef::decode(signal.data) {
+    let refusal = match TransEndRef::decode(signal.data) {
       Ok(refusal) => refusal,
       Err(_) => return false,
     };
     let tid = match self.trans_named(
-      refusal.api_connect_ptr,
-      refusal.trans_id1,
-      refusal.trans_id2,
+      refusal.client_ptr,
+      refusal.trans_id_lo,
+      refusal.trans_id_hi,
     ) {
       Some(tid) => tid,
       None => return false,
@@ -1106,22 +1111,22 @@ impl ApidConnection {
   /// been lost: complete outstanding writes and fail outstanding reads,
   /// while keeping the transaction's outcome committed.
   fn take_fail_conf(&mut self, signal: &SignalView<'_>) -> bool {
-    let conf = match TcKeyFailConf::decode(signal.data) {
+    let conf = match TakeoverConf::decode(signal.data) {
       Ok(conf) => conf,
       Err(_) => return false,
     };
     let tid =
-      self.trans_named(conf.api_connect_ptr, conf.trans_id1, conf.trans_id2);
+      self.trans_named(conf.client_ptr, conf.trans_id_lo, conf.trans_id_hi);
     if conf.needs_commit_ack {
       // Acknowledged whatever became of the transaction here.
-      self.send_commit_ack(signal, conf.trans_id1, conf.trans_id2);
+      self.send_commit_ack(signal, conf.trans_id_lo, conf.trans_id_hi);
     }
     let tid = match tid {
       Some(tid) => tid,
       None => return false,
     };
-    let (tc, sent) = match self.transactions.get(tid.0) {
-      Some(trans) => (trans.tc, trans.sent.clone()),
+    let (coord, sent) = match self.transactions.get(tid.0) {
+      Some(trans) => (trans.coord, trans.sent.clone()),
       None => return false,
     };
     let lost_read = IcError::new(IC_NDB_ERROR_TAKEOVER_READ_LOST);
@@ -1141,7 +1146,7 @@ impl ApidConnection {
       trans.error = error;
     }
     // The failed coordinator's record must never go back into the pool.
-    self.lose_tc_record(&tc);
+    self.lose_coord_record(&coord);
     for qid in sent {
       let query = match self.queries.get_mut(qid.0) {
         Some(query) => query,
@@ -1162,14 +1167,14 @@ impl ApidConnection {
   /// The coordinator that took over aborted the transaction: what was
   /// wanted, if a rollback had been asked for.
   fn take_fail_ref(&mut self, signal: &SignalView<'_>) -> bool {
-    let refusal = match TcKeyFailRef::decode(signal.data) {
+    let refusal = match TakeoverRef::decode(signal.data) {
       Ok(refusal) => refusal,
       Err(_) => return false,
     };
     let tid = match self.trans_named(
-      refusal.api_connect_ptr,
-      refusal.trans_id1,
-      refusal.trans_id2,
+      refusal.client_ptr,
+      refusal.trans_id_lo,
+      refusal.trans_id_hi,
     ) {
       Some(tid) => tid,
       None => return false,
@@ -1187,9 +1192,9 @@ impl ApidConnection {
   }
 
   fn send_commit_ack(&mut self, signal: &SignalView<'_>, id1: u32, id2: u32) {
-    let ack = tc_key::tc_commit_ack(id1, id2);
+    let ack = key_ops::commit_marker_free_ord(id1, id2);
     let header = SignalHeader::new(
-      gsn::IC_GSN_TC_COMMIT_ACK,
+      numbers::IC_SIG_COMMIT_MARKER_FREE_ORD,
       self.block_number(),
       signal.sender_block,
     );
@@ -1197,7 +1202,7 @@ impl ApidConnection {
     if let Err(e) = queued {
       ic_port::debug_print!(
         IC_NDB_MESSAGE_LEVEL,
-        "TC_COMMIT_ACK to node {} not queued: {}",
+        "COMMIT_MARKER_FREE_ORD to node {} not queued: {}",
         signal.sender_node_id,
         e.message()
       );
@@ -1364,23 +1369,23 @@ impl ApidConnection {
 
   /// Give the coordinator record back once the transaction is done.
   fn release_if_done(&mut self, tid: TransId) {
-    let tc = match self.transactions.get(tid.0) {
+    let coord = match self.transactions.get(tid.0) {
       Some(trans) => {
         if !trans.is_done() {
           return;
         }
-        trans.tc
+        trans.coord
       }
       None => return,
     };
     // Completing the last query may already have released this record,
     // and its callback may have started another transaction using it.
     // Release only while the active mapping still belongs to us.
-    if self.active_get(tc.index) != Some(tid) {
+    if self.active_get(coord.index) != Some(tid) {
       return;
     }
-    self.active_remove(tc.index);
-    self.free_tc_record(&tc);
+    self.active_remove(coord.index);
+    self.free_coord_record(&coord);
   }
 
   /// Fail confirmed dirty reads whose row cannot arrive from the named
@@ -1435,7 +1440,7 @@ impl ApidConnection {
     let ids = self.active_transactions();
     for tid in ids {
       let (node_id, generation) = match self.transactions.get(tid.0) {
-        Some(trans) => (trans.tc.node_id, trans.tc.generation),
+        Some(trans) => (trans.coord.node_id, trans.coord.generation),
         None => continue,
       };
       if self.link_is(node_id, generation) {
@@ -1465,13 +1470,13 @@ impl ApidConnection {
     lost: Vec<(TransId, bool, IcError)>,
   ) {
     for (tid, failed, link_error) in lost {
-      let (tc, state) = match self.transactions.get(tid.0) {
-        Some(trans) if !trans.ended() => (trans.tc, trans.state),
+      let (coord, state) = match self.transactions.get(tid.0) {
+        Some(trans) if !trans.ended() => (trans.coord, trans.state),
         // A reply ended it, or a callback has already closed it.
         _ => continue,
       };
       // The record went with the link, whatever became of the node.
-      self.lose_tc_record(&tc);
+      self.lose_coord_record(&coord);
       let rollback_wanted = state == CommitState::RollbackRequested;
       let mut error: Option<IcError> = Some(link_error);
       if failed {
@@ -1493,16 +1498,16 @@ impl ApidConnection {
 /// enough for a few thousand in flight, beyond which they are freed.
 const IC_SPARE_QUERY_LISTS: usize = 8192;
 
-/// The request word of a `TCKEYREQ` or `TCINDXREQ` that holds the
-/// flags, among its data words (`TcKeyReq::encode`).
-const IC_TCKEYREQ_REQUEST_INFO: usize = 4;
+/// The request word of a `KEY_OP_REQ` or `UNIQUE_OP_REQ` that holds the
+/// flags, among its data words (`KeyOpReq::encode`).
+const IC_KEY_OP_REQ_REQUEST_INFO: usize = 4;
 
 /// A query's key and attribute sections from its rows, into buffers
 /// the caller keeps, cleared first: the key, then for a read what to
 /// read, for a write the values, and for a delete nothing.
 fn build_sections(
   query: &ApidQuery,
-  flags: &TcKeyFlags,
+  flags: &KeyOpFlags,
   is_read: bool,
   key: &mut Vec<u32>,
   attr_info: &mut Vec<u32>,
@@ -1519,8 +1524,8 @@ fn build_sections(
   attr_info.clear();
   if is_read {
     row_codec::read_attr_info_into(query.attr_record(), attr_info);
-  } else if flags.operation != tc_key::IC_OP_DELETE {
-    let skip_keys = flags.operation == tc_key::IC_OP_UPDATE;
+  } else if flags.operation != key_ops::IC_OP_DELETE {
+    let skip_keys = flags.operation == key_ops::IC_OP_UPDATE;
     row_codec::write_attr_info_into(
       query.attr_record(),
       query.attr_row(),
@@ -1539,7 +1544,7 @@ mod tests {
   fn a_transaction_is_done_only_when_ended_and_empty() {
     let mut trans = Transaction {
       trans_id: 5,
-      tc: TcRecord::for_test(1),
+      coord: CoordRecord::for_test(1),
       state: CommitState::Started,
       begun: true,
       defined: Vec::new(),

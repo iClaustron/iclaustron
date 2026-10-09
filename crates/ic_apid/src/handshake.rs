@@ -28,8 +28,7 @@
 //! `ok`, and a server too old for four numbers reads the first two and
 //! ignores the rest.
 //!
-//! Verify: RonDB 26.10 `src/common/util/SocketAuthenticator.cpp:133`
-//! and `src/common/transporter/Transporter.cpp:434`.
+//! Verify: chapter 05 §17.12.
 
 use ic_comm::connection::ConnectConfig;
 use ic_comm::connection::Connection;
@@ -41,7 +40,7 @@ use ic_port::IcError;
 
 /// What kind of transporter this is. A data node link may also be
 /// shared memory or RDMA between data nodes, but an API node uses TCP.
-/// Verify: `TransporterDefinitions.hpp:49`.
+/// Verify: chapter 05 §17.12.
 pub const IC_TRANSPORTER_TYPE_TCP: u32 = 1;
 /// What a data node answers to our hello when it is not expecting a
 /// connection from us yet.
@@ -59,7 +58,7 @@ const IC_AUTH_REPLY_TLS_REQUIRED: &str = "TLS required";
 
 /// Longest hello line a data node will read. The limit is the one older
 /// servers had, and RonDB keeps to it.
-/// Verify: `Transporter.cpp:447`, `OldMaxHandshakeBytesLimit`.
+/// Verify: chapter 05 §17.12.
 pub const IC_MAX_HELLO_LEN: usize = 23;
 
 /// A transporter connection, and anything that arrived on it before the
@@ -139,8 +138,7 @@ pub fn say_hello(
     // restarting node answers until it opens up to API nodes. It asks
     // the client to be the one to close, so that the lingering socket
     // state lands on us and not on the server. Our caller closes.
-    // Verify: `TransporterRegistry.cpp`, the wrong-state branch of
-    // `connect_server`.
+    // Verify: chapter 05 §17.12.
     return Err(IcError::new(err::IC_ERROR_NODE_NOT_READY));
   }
   let (their_node_id, their_type) = parse_hello_reply(&reply)?;

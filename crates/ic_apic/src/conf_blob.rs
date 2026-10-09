@@ -38,16 +38,15 @@
 //! parameter means looking in the section and then in the default for
 //! its type.
 //!
-//! Verify: RonDB 26.10 `src/common/mgmcommon/ConfigObject.cpp:1032`
-//! and `src/common/mgmcommon/ConfigSection.cpp:290,928`.
+//! Verify: chapter 05 §17.3.
 
 use std::collections::BTreeMap;
 
 use ic_port::err;
 use ic_port::IcError;
 
-use crate::conf_param::IC_CFG_NODE_ID;
-use crate::conf_param::IC_CFG_TYPE_OF_SECTION;
+use crate::conf_param::IC_PARAM_NODE_ID;
+use crate::conf_param::IC_PARAM_SECTION_KIND;
 
 /// The eight bytes every version 2 configuration starts with.
 pub const IC_MAGIC_V2: &[u8; 8] = b"NDBCONF2";
@@ -60,7 +59,7 @@ const IC_V2_TYPE_MASK: u32 = 15;
 const IC_V2_KEY_MASK: u32 = 0x0FFF_FFFF;
 
 /// What kind of section this is.
-/// Verify: `include/util/ConfigSection.hpp:52`.
+/// Verify: chapter 05 §17.3.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u32)]
 pub enum SectionType {
@@ -185,7 +184,7 @@ impl Section {
 
   /// The node id this section describes, for a node section.
   pub fn node_id(&self) -> Option<u32> {
-    self.get(IC_CFG_NODE_ID)?.as_u32()
+    self.get(IC_PARAM_NODE_ID)?.as_u32()
   }
 }
 
@@ -458,14 +457,14 @@ impl ConfigBlob {
   /// The section describing the link between two nodes, whichever order
   /// they are given in.
   pub fn link(&self, node_a: u32, node_b: u32) -> Option<&Section> {
-    use crate::conf_param::IC_CFG_CONNECTION_NODE_1;
-    use crate::conf_param::IC_CFG_CONNECTION_NODE_2;
+    use crate::conf_param::IC_PARAM_LINK_NODE_1;
+    use crate::conf_param::IC_PARAM_LINK_NODE_2;
     for section in &self.links {
-      let one = match self.value_u32(section, IC_CFG_CONNECTION_NODE_1) {
+      let one = match self.value_u32(section, IC_PARAM_LINK_NODE_1) {
         Some(id) => id,
         None => continue,
       };
-      let two = match self.value_u32(section, IC_CFG_CONNECTION_NODE_2) {
+      let two = match self.value_u32(section, IC_PARAM_LINK_NODE_2) {
         Some(id) => id,
         None => continue,
       };
@@ -574,10 +573,7 @@ impl BlobBuilder {
   ) {
     let count = entries.len() + 1;
     let mut all: Vec<(u32, ConfigValue)> = Vec::with_capacity(count);
-    all.push((
-      IC_CFG_TYPE_OF_SECTION,
-      ConfigValue::Int(section_type as u32),
-    ));
+    all.push((IC_PARAM_SECTION_KIND, ConfigValue::Int(section_type as u32)));
     for entry in entries {
       all.push(entry.clone());
     }
@@ -614,24 +610,24 @@ mod tests {
     b.typed_section(
       SectionType::DataNode,
       &[
-        (IC_CFG_DB_NO_REPLICAS, ConfigValue::Int(2)),
-        (IC_CFG_DB_API_HEARTBEAT_INTERVAL, ConfigValue::Int(1500)),
+        (IC_PARAM_REPLICA_COUNT, ConfigValue::Int(2)),
+        (IC_PARAM_API_HEARTBEAT_MS, ConfigValue::Int(1500)),
       ],
     );
     b.typed_section(
       SectionType::ApiNode,
       &[
-        (IC_CFG_BATCH_SIZE, ConfigValue::Int(256)),
-        (IC_CFG_BATCH_BYTE_SIZE, ConfigValue::Int(16384)),
-        (IC_CFG_MAX_SCAN_BATCH_SIZE, ConfigValue::Int(262144)),
+        (IC_PARAM_SCAN_BATCH_ROWS, ConfigValue::Int(256)),
+        (IC_PARAM_SCAN_BATCH_BYTES, ConfigValue::Int(16384)),
+        (IC_PARAM_SCAN_BATCH_BYTES_TOTAL, ConfigValue::Int(262144)),
       ],
     );
     b.typed_section(SectionType::MgmNode, &[]);
     b.typed_section(
       SectionType::Tcp,
       &[
-        (IC_CFG_TCP_SEND_BUFFER_SIZE, ConfigValue::Int(2097152)),
-        (IC_CFG_CONNECTION_CHECKSUM, ConfigValue::Int(0)),
+        (IC_PARAM_LINK_SEND_BUFFER, ConfigValue::Int(2097152)),
+        (IC_PARAM_LINK_CHECKSUM, ConfigValue::Int(0)),
       ],
     );
     b.typed_section(SectionType::Shm, &[]);
@@ -644,33 +640,33 @@ mod tests {
     b.typed_section(
       SectionType::DataNode,
       &[
-        (IC_CFG_NODE_ID, ConfigValue::Int(1)),
+        (IC_PARAM_NODE_ID, ConfigValue::Int(1)),
         (
-          IC_CFG_NODE_HOST,
+          IC_PARAM_NODE_HOST,
           ConfigValue::Str("node1.example".to_string()),
         ),
-        (IC_CFG_DB_NODEGROUP, ConfigValue::Int(0)),
+        (IC_PARAM_NODE_GROUP, ConfigValue::Int(0)),
       ],
     );
     b.typed_section(
       SectionType::DataNode,
       &[
-        (IC_CFG_NODE_ID, ConfigValue::Int(2)),
+        (IC_PARAM_NODE_ID, ConfigValue::Int(2)),
         (
-          IC_CFG_NODE_HOST,
+          IC_PARAM_NODE_HOST,
           ConfigValue::Str("node2.example".to_string()),
         ),
-        (IC_CFG_DB_NODEGROUP, ConfigValue::Int(0)),
+        (IC_PARAM_NODE_GROUP, ConfigValue::Int(0)),
         /* This one overrides the default heartbeat interval. */
-        (IC_CFG_DB_API_HEARTBEAT_INTERVAL, ConfigValue::Int(3000)),
+        (IC_PARAM_API_HEARTBEAT_MS, ConfigValue::Int(3000)),
       ],
     );
     b.typed_section(
       SectionType::ApiNode,
       &[
-        (IC_CFG_NODE_ID, ConfigValue::Int(68)),
+        (IC_PARAM_NODE_ID, ConfigValue::Int(68)),
         (
-          IC_CFG_TOTAL_SEND_BUFFER_MEMORY,
+          IC_PARAM_SEND_BUFFER_TOTAL,
           ConfigValue::Int64(8 * 1024 * 1024),
         ),
       ],
@@ -678,9 +674,9 @@ mod tests {
     b.typed_section(
       SectionType::MgmNode,
       &[
-        (IC_CFG_NODE_ID, ConfigValue::Int(65)),
+        (IC_PARAM_NODE_ID, ConfigValue::Int(65)),
         (
-          IC_CFG_NODE_HOST,
+          IC_PARAM_NODE_HOST,
           ConfigValue::Str("mgm.example".to_string()),
         ),
       ],
@@ -689,12 +685,12 @@ mod tests {
     b.typed_section(
       SectionType::Tcp,
       &[
-        (IC_CFG_CONNECTION_NODE_1, ConfigValue::Int(1)),
-        (IC_CFG_CONNECTION_NODE_2, ConfigValue::Int(68)),
-        (IC_CFG_CONNECTION_SERVER_PORT, ConfigValue::Int(0)),
-        (IC_CFG_CONNECTION_NODE_ID_SERVER, ConfigValue::Int(1)),
+        (IC_PARAM_LINK_NODE_1, ConfigValue::Int(1)),
+        (IC_PARAM_LINK_NODE_2, ConfigValue::Int(68)),
+        (IC_PARAM_LINK_PORT, ConfigValue::Int(0)),
+        (IC_PARAM_LINK_SERVER_NODE, ConfigValue::Int(1)),
         (
-          IC_CFG_CONNECTION_HOSTNAME_1,
+          IC_PARAM_LINK_HOST_1,
           ConfigValue::Str("node1.example".to_string()),
         ),
       ],
@@ -702,19 +698,19 @@ mod tests {
     b.typed_section(
       SectionType::Tcp,
       &[
-        (IC_CFG_CONNECTION_NODE_1, ConfigValue::Int(2)),
-        (IC_CFG_CONNECTION_NODE_2, ConfigValue::Int(68)),
-        (IC_CFG_CONNECTION_SERVER_PORT, ConfigValue::Int(45000)),
-        (IC_CFG_CONNECTION_NODE_ID_SERVER, ConfigValue::Int(2)),
-        (IC_CFG_CONNECTION_CHECKSUM, ConfigValue::Int(1)),
+        (IC_PARAM_LINK_NODE_1, ConfigValue::Int(2)),
+        (IC_PARAM_LINK_NODE_2, ConfigValue::Int(68)),
+        (IC_PARAM_LINK_PORT, ConfigValue::Int(45000)),
+        (IC_PARAM_LINK_SERVER_NODE, ConfigValue::Int(2)),
+        (IC_PARAM_LINK_CHECKSUM, ConfigValue::Int(1)),
       ],
     );
     b.typed_section(
       SectionType::Tcp,
       &[
-        (IC_CFG_CONNECTION_NODE_1, ConfigValue::Int(1)),
-        (IC_CFG_CONNECTION_NODE_2, ConfigValue::Int(2)),
-        (IC_CFG_CONNECTION_SERVER_PORT, ConfigValue::Int(44000)),
+        (IC_PARAM_LINK_NODE_1, ConfigValue::Int(1)),
+        (IC_PARAM_LINK_NODE_2, ConfigValue::Int(2)),
+        (IC_PARAM_LINK_PORT, ConfigValue::Int(44000)),
       ],
     );
     b.finish()
@@ -741,54 +737,39 @@ mod tests {
     let node2 = blob.node(2).expect("node 2");
     assert_eq!(node1.section_type, SectionType::DataNode);
     assert_eq!(
-      blob.value_str(node1, IC_CFG_NODE_HOST),
+      blob.value_str(node1, IC_PARAM_NODE_HOST),
       Some("node1.example")
     );
     // Node 1 does not state the heartbeat interval, so the data node
     // default applies; node 2 states its own.
-    assert_eq!(
-      blob.value_u32(node1, IC_CFG_DB_API_HEARTBEAT_INTERVAL),
-      Some(1500)
-    );
-    assert_eq!(
-      blob.value_u32(node2, IC_CFG_DB_API_HEARTBEAT_INTERVAL),
-      Some(3000)
-    );
-    assert_eq!(blob.value_u32(node1, IC_CFG_DB_NO_REPLICAS), Some(2));
+    assert_eq!(blob.value_u32(node1, IC_PARAM_API_HEARTBEAT_MS), Some(1500));
+    assert_eq!(blob.value_u32(node2, IC_PARAM_API_HEARTBEAT_MS), Some(3000));
+    assert_eq!(blob.value_u32(node1, IC_PARAM_REPLICA_COUNT), Some(2));
     /* An API node reads its own settings the same way. */
     let api = blob.node(68).expect("node 68");
     assert_eq!(api.section_type, SectionType::ApiNode);
-    assert_eq!(blob.value_u32(api, IC_CFG_BATCH_SIZE), Some(256));
+    assert_eq!(blob.value_u32(api, IC_PARAM_SCAN_BATCH_ROWS), Some(256));
     assert_eq!(
-      blob.value_u64(api, IC_CFG_TOTAL_SEND_BUFFER_MEMORY),
+      blob.value_u64(api, IC_PARAM_SEND_BUFFER_TOTAL),
       Some(8 * 1024 * 1024)
     );
     /* A parameter nobody states reads as absent. */
-    assert_eq!(blob.value_u32(api, IC_CFG_AUTO_RECONNECT), None);
+    assert_eq!(blob.value_u32(api, IC_PARAM_AUTO_RECONNECT), None);
   }
 
   #[test]
   fn links_are_found_either_way_round() {
     let blob = ConfigBlob::decode(&sample_blob()).expect("decode");
     let link = blob.link(68, 2).expect("link");
-    assert_eq!(
-      blob.value_u32(link, IC_CFG_CONNECTION_SERVER_PORT),
-      Some(45000)
-    );
+    assert_eq!(blob.value_u32(link, IC_PARAM_LINK_PORT), Some(45000));
     let same = blob.link(2, 68).expect("link the other way");
-    assert_eq!(
-      blob.value_u32(same, IC_CFG_CONNECTION_SERVER_PORT),
-      Some(45000)
-    );
+    assert_eq!(blob.value_u32(same, IC_PARAM_LINK_PORT), Some(45000));
     /* Checksum is off by default but on for this link. */
-    assert_eq!(blob.value_u32(link, IC_CFG_CONNECTION_CHECKSUM), Some(1));
+    assert_eq!(blob.value_u32(link, IC_PARAM_LINK_CHECKSUM), Some(1));
     let other = blob.link(68, 1).expect("other link");
-    assert_eq!(blob.value_u32(other, IC_CFG_CONNECTION_CHECKSUM), Some(0));
+    assert_eq!(blob.value_u32(other, IC_PARAM_LINK_CHECKSUM), Some(0));
     /* Port 0 means the data node's port is assigned dynamically. */
-    assert_eq!(
-      blob.value_u32(other, IC_CFG_CONNECTION_SERVER_PORT),
-      Some(0)
-    );
+    assert_eq!(blob.value_u32(other, IC_PARAM_LINK_PORT), Some(0));
     assert!(blob.link(1, 99).is_none());
   }
 
@@ -820,29 +801,29 @@ mod tests {
       b.typed_section(
         SectionType::DataNode,
         &[
-          (IC_CFG_NODE_ID, ConfigValue::Int(1)),
-          (IC_CFG_NODE_HOST, ConfigValue::Str(text.clone())),
+          (IC_PARAM_NODE_ID, ConfigValue::Int(1)),
+          (IC_PARAM_NODE_HOST, ConfigValue::Str(text.clone())),
         ],
       );
       b.typed_section(
         SectionType::ApiNode,
-        &[(IC_CFG_NODE_ID, ConfigValue::Int(68))],
+        &[(IC_PARAM_NODE_ID, ConfigValue::Int(68))],
       );
       b.typed_section(
         SectionType::MgmNode,
-        &[(IC_CFG_NODE_ID, ConfigValue::Int(65))],
+        &[(IC_PARAM_NODE_ID, ConfigValue::Int(65))],
       );
       b.typed_section(
         SectionType::Tcp,
         &[
-          (IC_CFG_CONNECTION_NODE_1, ConfigValue::Int(1)),
-          (IC_CFG_CONNECTION_NODE_2, ConfigValue::Int(68)),
+          (IC_PARAM_LINK_NODE_1, ConfigValue::Int(1)),
+          (IC_PARAM_LINK_NODE_2, ConfigValue::Int(68)),
         ],
       );
       let blob = ConfigBlob::decode(&b.finish()).expect("decode");
       let node = blob.node(1).expect("node");
       assert_eq!(
-        blob.value_str(node, IC_CFG_NODE_HOST),
+        blob.value_str(node, IC_PARAM_NODE_HOST),
         Some(text.as_str()),
         "length {}",
         len

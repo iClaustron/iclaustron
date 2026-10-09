@@ -85,4 +85,4 @@ Everything between a socket and the protocol layers above it. See
   transporter will send a signal header and its sections without copying
   them together first.
 - `line_proto::IC_MAX_LINE_LEN` is 512 to match the management server's own
-  parser. Verify against RonDB 26.10 `mgmapi.cpp` when Phase 2 starts.
+  parser; chapter 05 §17.2.

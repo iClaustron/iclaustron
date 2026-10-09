@@ -24,24 +24,24 @@ Base64 and the vocabulary of the NDB management protocol. See
 - **The strings are verified against RonDB 26.10, not copied from the
   C.** The C's table dated from NDB 7.2.9 and covered the cluster
   manager and process controller protocols as well. What is here is the
-  management protocol only, with the file and line in
-  `storage/ndb/src/mgmapi/mgmapi.cpp` where each string is checked.
+  management protocol only; chapter 05 §17.2 gives where in RonDB each
+  string is checked.
 
 ## Verified against RonDB 26.10
 
 | Item | Value | Where |
 |---|---|---|
-| node id request | `get nodeid` | `mgmapi.cpp:3301` |
-| its reply | `get nodeid reply` | `mgmapi.cpp:3295` |
-| its arguments | version, nodetype, nodeid, user, password, public key, endian, name, log_event | `mgmapi.cpp:3283-3293` |
-| configuration request | `get config_v2`, falling back to `get config` | `mgmapi.cpp:3136` |
-| its reply | `get config reply` for both | `mgmapi.cpp:3126` |
-| blob header | Content-Length, Content-Type `ndbconfig/octet-stream`, Content-Transfer-Encoding `base64` | `mgmapi.cpp:3148-3165` |
-| version request | `get version`, replying `version` | `mgmapi.cpp:3692,3704` |
-| status request | `get status`, replying `node status` | `mgmapi.cpp:1212,1237` |
-| connection parameter | `get connection parameter`, replying with ` reply` | `mgmapi.cpp:3560,3565` |
-| transporter handover | `transporter connect` | `mgmapi.cpp:3600` |
-| node types | DB 0, API 1, MGM 2 | `mgmapi_config_parameters.h:455` |
+| node id request | `get nodeid` | chapter 05 §17.2 |
+| its reply | `get nodeid reply` | chapter 05 §17.2 |
+| its arguments | version, nodetype, nodeid, user, password, public key, endian, name, log_event | chapter 05 §17.2 |
+| configuration request | `get config_v2`, falling back to `get config` | chapter 05 §17.2 |
+| its reply | `get config reply` for both | chapter 05 §17.2 |
+| blob header | Content-Length, Content-Type `ndbconfig/octet-stream`, Content-Transfer-Encoding `base64` | chapter 05 §17.2 |
+| version request | `get version`, replying `version` | chapter 05 §17.2 |
+| status request | `get status`, replying `node status` | chapter 05 §17.2 |
+| connection parameter | `get connection parameter`, replying with ` reply` | chapter 05 §17.2 |
+| transporter handover | `transporter connect` | chapter 05 §17.2 |
+| node types | DB 0, API 1, MGM 2 | chapter 05 §17.2 |
 
 Two replies do not follow the rule that a reply is the command plus
 " reply": `get version` answers `version`, and `get status` answers

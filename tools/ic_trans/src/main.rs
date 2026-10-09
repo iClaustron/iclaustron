@@ -15,7 +15,7 @@
 //! type is left NULL, and a table with such a column that cannot be
 //! NULL is refused.
 //!
-//! Debug level 1024 traces every signal: one `TCKEYREQ` per row, the
+//! Debug level 1024 traces every signal: one `KEY_OP_REQ` per row, the
 //! confirmations packed together, and the rows coming back.
 
 use std::sync::Arc;
@@ -33,11 +33,11 @@ use ic_apid::record::Record;
 use ic_apid::text_row;
 use ic_apid::transaction::CommitState;
 use ic_apid::transaction::TransactionHint;
-use ic_ndb_signals::dict_tab_info;
 use ic_port::options::OptionEntry;
 use ic_port::options::OptionKind;
 use ic_port::options::OptionParser;
 use ic_port::IcError;
+use ic_signals::table_props;
 
 /// How long to wait for one transaction to finish.
 const IC_TRANS_WAIT_MS: u64 = 10_000;
@@ -226,7 +226,7 @@ fn run_all(
 /// Every column other than the key must be an integer, or nullable.
 fn check_columns(def: &Arc<TableDef>) -> Result<(), String> {
   for attr in &def.info().attributes {
-    if attr.primary_key || attr.nullable || is_integer(attr.ext_type) {
+    if attr.primary_key || attr.nullable || is_integer(attr.type_code) {
       continue;
     }
     return Err(format!(
@@ -237,10 +237,10 @@ fn check_columns(def: &Arc<TableDef>) -> Result<(), String> {
   Ok(())
 }
 
-fn is_integer(ext_type: u32) -> bool {
+fn is_integer(type_code: u32) -> bool {
   let integers =
-    dict_tab_info::IC_NDB_TYPE_TINYINT..=dict_tab_info::IC_NDB_TYPE_BIGUNSIGNED;
-  integers.contains(&ext_type)
+    table_props::IC_TYPE_TINYINT..=table_props::IC_TYPE_BIGUNSIGNED;
+  integers.contains(&type_code)
 }
 
 /// The key, and for an insert every other column, into a query's rows.
@@ -257,7 +257,7 @@ fn fill_query(
     None => return Err("The query is gone".to_string()),
   };
   for attr in &def.info().attributes {
-    let position = match rec.position_of(attr.attribute_id) {
+    let position = match rec.position_of(attr.column_id) {
       Some(position) => position,
       None => continue,
     };
@@ -270,7 +270,7 @@ fn fill_query(
     if !values_too {
       continue;
     }
-    let text = if is_integer(attr.ext_type) {
+    let text = if is_integer(attr.type_code) {
       (key * 10).to_string()
     } else {
       text_row::IC_NULL_TEXT.to_string()

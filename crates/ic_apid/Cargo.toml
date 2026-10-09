@@ -17,7 +17,7 @@ ic_util.workspace = true
 ic_comm.workspace = true
 ic_protocol.workspace = true
 ic_apic.workspace = true
-ic_ndb_signals.workspace = true
+ic_signals.workspace = true
 
 [features]
 default = []

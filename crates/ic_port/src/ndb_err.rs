@@ -15,17 +15,16 @@
 //! Only the codes this library and its tools have met, or are likely
 //! to, are here: those of key operations, transactions, the dictionary
 //! and the cluster's state. A code not here is still an NDB code, with
-//! an unknown class. Verify: `ndberror.cpp`, the classification table
-//! and the status of each class.
+//! an unknown class. Verify: chapter 05 §17.1.
 
 use crate::err::ErrorCategory;
 use crate::err::ErrorSeverity;
 
 /// NDB's classes of error, as the reference sorts its codes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum NdbClass {
+pub enum ErrorClass {
   /// No error.
-  NoError,
+  Success,
   /// The application asked for something wrong.
   Application,
   /// The configuration, or the application's use of it, is wrong.
@@ -33,13 +32,13 @@ pub enum NdbClass {
   /// There is no such row.
   NoData,
   /// The row would break a constraint.
-  ConstraintViolation,
+  Constraint,
   /// The schema is not what the request assumed.
   Schema,
   /// An error the application's own program raised.
-  UserDefined,
+  AppDefined,
   /// The cluster is out of space for good.
-  InsufficientSpace,
+  OutOfSpace,
   /// A resource ran out for the moment.
   TemporaryResource,
   /// A node failed or is recovering.
@@ -49,9 +48,9 @@ pub enum NdbClass {
   /// Something timed out.
   Timeout,
   /// A node is shutting down.
-  NodeShutdown,
+  NodeStopping,
   /// An internal condition that passes.
-  InternalTemporary,
+  TemporaryInternal,
   /// The outcome is not known.
   UnknownResult,
   /// A code this table does not know.
@@ -62,19 +61,19 @@ pub enum NdbClass {
   NotImplemented,
 }
 
-impl NdbClass {
+impl ErrorClass {
   /// The category the C header reports for the class.
   pub fn category(&self) -> ErrorCategory {
     match self {
-      NdbClass::NoError => ErrorCategory::NoError,
-      NdbClass::Application
-      | NdbClass::Configuration
-      | NdbClass::NoData
-      | NdbClass::ConstraintViolation
-      | NdbClass::Schema
-      | NdbClass::UserDefined
-      | NdbClass::NotImplemented => ErrorCategory::User,
-      NdbClass::Internal | NdbClass::UnknownCode => ErrorCategory::Internal,
+      ErrorClass::Success => ErrorCategory::NoError,
+      ErrorClass::Application
+      | ErrorClass::Configuration
+      | ErrorClass::NoData
+      | ErrorClass::Constraint
+      | ErrorClass::Schema
+      | ErrorClass::AppDefined
+      | ErrorClass::NotImplemented => ErrorCategory::User,
+      ErrorClass::Internal | ErrorClass::UnknownCode => ErrorCategory::Internal,
       _ => ErrorCategory::External,
     }
   }
@@ -84,419 +83,419 @@ impl NdbClass {
   /// the request may be tried again; permanent for the rest.
   pub fn severity(&self) -> ErrorSeverity {
     match self {
-      NdbClass::NoError => ErrorSeverity::NoError,
-      NdbClass::TemporaryResource
-      | NdbClass::NodeRecovery
-      | NdbClass::Overload
-      | NdbClass::Timeout
-      | NdbClass::NodeShutdown
-      | NdbClass::InternalTemporary
-      | NdbClass::UnknownResult => ErrorSeverity::Temporary,
+      ErrorClass::Success => ErrorSeverity::NoError,
+      ErrorClass::TemporaryResource
+      | ErrorClass::NodeRecovery
+      | ErrorClass::Overload
+      | ErrorClass::Timeout
+      | ErrorClass::NodeStopping
+      | ErrorClass::TemporaryInternal
+      | ErrorClass::UnknownResult => ErrorSeverity::Temporary,
       _ => ErrorSeverity::Error,
     }
   }
 }
 
 /// One code: its class, and what to say about it.
-struct NdbError {
+struct ErrorEntry {
   code: i32,
-  class: NdbClass,
+  class: ErrorClass,
   text: &'static str,
 }
 
-const IC_NDB_ERRORS: &[NdbError] = &[
+const IC_NDB_ERRORS: &[ErrorEntry] = &[
   // Rows.
-  NdbError {
+  ErrorEntry {
     code: 626,
-    class: NdbClass::NoData,
+    class: ErrorClass::NoData,
     text: "There is no row with that key",
   },
-  NdbError {
+  ErrorEntry {
     code: 630,
-    class: NdbClass::ConstraintViolation,
+    class: ErrorClass::Constraint,
     text: "There is already a row with that key",
   },
-  NdbError {
+  ErrorEntry {
     code: 893,
-    class: NdbClass::ConstraintViolation,
+    class: ErrorClass::Constraint,
     text: "The row would break a unique index",
   },
-  NdbError {
+  ErrorEntry {
     code: 899,
-    class: NdbClass::TemporaryResource,
+    class: ErrorClass::TemporaryResource,
     text: "The row's place was taken meanwhile; try again",
   },
   // Schema.
-  NdbError {
+  ErrorEntry {
     code: 241,
-    class: NdbClass::Schema,
+    class: ErrorClass::Schema,
     text: "The table has changed since it was bound",
   },
-  NdbError {
+  ErrorEntry {
     code: 283,
-    class: NdbClass::Schema,
+    class: ErrorClass::Schema,
     text: "The table is being dropped",
   },
-  NdbError {
+  ErrorEntry {
     code: 284,
-    class: NdbClass::Schema,
+    class: ErrorClass::Schema,
     text: "The coordinator does not know the table",
   },
-  NdbError {
+  ErrorEntry {
     code: 709,
-    class: NdbClass::Schema,
+    class: ErrorClass::Schema,
     text: "There is no such table",
   },
-  NdbError {
+  ErrorEntry {
     code: 723,
-    class: NdbClass::Schema,
+    class: ErrorClass::Schema,
     text: "There is no such table",
   },
-  NdbError {
+  ErrorEntry {
     code: 710,
-    class: NdbClass::Schema,
+    class: ErrorClass::Schema,
     text: "The dictionary can only find that object by id",
   },
-  NdbError {
+  ErrorEntry {
     code: 701,
-    class: NdbClass::Timeout,
+    class: ErrorClass::Timeout,
     text: "The dictionary is busy with another schema change",
   },
-  NdbError {
+  ErrorEntry {
     code: 702,
-    class: NdbClass::InternalTemporary,
+    class: ErrorClass::TemporaryInternal,
     text: "The dictionary asked is not the master; ask again",
   },
   // Locks and time.
-  NdbError {
+  ErrorEntry {
     code: 266,
-    class: NdbClass::Timeout,
+    class: ErrorClass::Timeout,
     text: "The operation timed out in the cluster, probably in a deadlock",
   },
-  NdbError {
+  ErrorEntry {
     code: 274,
-    class: NdbClass::Timeout,
+    class: ErrorClass::Timeout,
     text: "The scan timed out in the cluster, probably in a deadlock",
   },
-  NdbError {
+  ErrorEntry {
     code: 296,
-    class: NdbClass::Timeout,
+    class: ErrorClass::Timeout,
     text: "The scan timed out in the cluster, probably in a deadlock",
   },
-  NdbError {
+  ErrorEntry {
     code: 297,
-    class: NdbClass::Timeout,
+    class: ErrorClass::Timeout,
     text: "The scan timed out in the cluster, probably in a deadlock",
   },
-  NdbError {
+  ErrorEntry {
     code: 237,
-    class: NdbClass::Timeout,
+    class: ErrorClass::Timeout,
     text: "The transaction timed out while committing",
   },
-  NdbError {
+  ErrorEntry {
     code: 4351,
-    class: NdbClass::Timeout,
+    class: ErrorClass::Timeout,
     text: "An index build timed out",
   },
   // Resources.
-  NdbError {
+  ErrorEntry {
     code: 218,
-    class: NdbClass::TemporaryResource,
+    class: ErrorClass::TemporaryResource,
     text: "The data node is out of long message buffers",
   },
-  NdbError {
+  ErrorEntry {
     code: 233,
-    class: NdbClass::TemporaryResource,
+    class: ErrorClass::TemporaryResource,
     text: "The coordinator is out of operation records",
   },
-  NdbError {
+  ErrorEntry {
     code: 245,
-    class: NdbClass::TemporaryResource,
+    class: ErrorClass::TemporaryResource,
     text: "Too many scans are running at once",
   },
-  NdbError {
+  ErrorEntry {
     code: 288,
-    class: NdbClass::TemporaryResource,
+    class: ErrorClass::TemporaryResource,
     text: "The coordinator is out of index operation records",
   },
-  NdbError {
+  ErrorEntry {
     code: 1217,
-    class: NdbClass::TemporaryResource,
+    class: ErrorClass::TemporaryResource,
     text: "The data manager is out of operation records",
   },
-  NdbError {
+  ErrorEntry {
     code: 1218,
-    class: NdbClass::TemporaryResource,
+    class: ErrorClass::TemporaryResource,
     text: "The data node's send buffers are full",
   },
-  NdbError {
+  ErrorEntry {
     code: 1220,
-    class: NdbClass::TemporaryResource,
+    class: ErrorClass::TemporaryResource,
     text: "The redo log files are full",
   },
-  NdbError {
+  ErrorEntry {
     code: 1222,
-    class: NdbClass::TemporaryResource,
+    class: ErrorClass::TemporaryResource,
     text: "The data manager is out of transaction markers",
   },
-  NdbError {
+  ErrorEntry {
     code: 4021,
-    class: NdbClass::TemporaryResource,
+    class: ErrorClass::TemporaryResource,
     text: "The API is out of send buffer space",
   },
-  NdbError {
+  ErrorEntry {
     code: 4022,
-    class: NdbClass::TemporaryResource,
+    class: ErrorClass::TemporaryResource,
     text: "The API is out of send buffer space",
   },
-  NdbError {
+  ErrorEntry {
     code: 4032,
-    class: NdbClass::TemporaryResource,
+    class: ErrorClass::TemporaryResource,
     text: "The API is out of send buffer space",
   },
   // Overload.
-  NdbError {
+  ErrorEntry {
     code: 410,
-    class: NdbClass::Overload,
+    class: ErrorClass::Overload,
     text: "The redo log files are overloaded",
   },
-  NdbError {
+  ErrorEntry {
     code: 1221,
-    class: NdbClass::Overload,
+    class: ErrorClass::Overload,
     text: "The redo buffers are overloaded",
   },
-  NdbError {
+  ErrorEntry {
     code: 243,
-    class: NdbClass::Overload,
+    class: ErrorClass::Overload,
     text: "The database's write rate limit is reached",
   },
-  NdbError {
+  ErrorEntry {
     code: 2203,
-    class: NdbClass::Overload,
+    class: ErrorClass::Overload,
     text: "The database's read rate limit is reached",
   },
-  NdbError {
+  ErrorEntry {
     code: 4006,
-    class: NdbClass::Overload,
+    class: ErrorClass::Overload,
     text: "No transaction record is free at the coordinator",
   },
   // Nodes.
-  NdbError {
+  ErrorEntry {
     code: 1204,
-    class: NdbClass::NodeRecovery,
+    class: ErrorClass::NodeRecovery,
     text: "The cluster's distribution changed; try again",
   },
-  NdbError {
+  ErrorEntry {
     code: 4010,
-    class: NdbClass::NodeRecovery,
+    class: ErrorClass::NodeRecovery,
     text: "A node failure aborted the transaction",
   },
-  NdbError {
+  ErrorEntry {
     code: 4025,
-    class: NdbClass::NodeRecovery,
+    class: ErrorClass::NodeRecovery,
     text: "A node failure aborted the transaction",
   },
-  NdbError {
+  ErrorEntry {
     code: 4028,
-    class: NdbClass::NodeRecovery,
+    class: ErrorClass::NodeRecovery,
     text: "A node failure aborted the transaction",
   },
-  NdbError {
+  ErrorEntry {
     code: 4029,
-    class: NdbClass::NodeRecovery,
+    class: ErrorClass::NodeRecovery,
     text: "A node failure aborted the transaction",
   },
-  NdbError {
+  ErrorEntry {
     code: 4031,
-    class: NdbClass::NodeRecovery,
+    class: ErrorClass::NodeRecovery,
     text: "A node failure aborted the transaction",
   },
-  NdbError {
+  ErrorEntry {
     code: 4115,
-    class: NdbClass::NodeRecovery,
+    class: ErrorClass::NodeRecovery,
     text:
       "The transaction committed at a node failure, but what it read is lost",
   },
-  NdbError {
+  ErrorEntry {
     code: 4119,
-    class: NdbClass::NodeRecovery,
+    class: ErrorClass::NodeRecovery,
     text: "A node failure lost the reply to a committed read",
   },
-  NdbError {
+  ErrorEntry {
     code: 4002,
-    class: NdbClass::NodeRecovery,
+    class: ErrorClass::NodeRecovery,
     text: "The request could not be sent to the data node",
   },
-  NdbError {
+  ErrorEntry {
     code: 4007,
-    class: NdbClass::NodeRecovery,
+    class: ErrorClass::NodeRecovery,
     text: "The request could not be sent to the data node",
   },
-  NdbError {
+  ErrorEntry {
     code: 4033,
-    class: NdbClass::NodeRecovery,
+    class: ErrorClass::NodeRecovery,
     text: "The request could not be sent to the data node",
   },
-  NdbError {
+  ErrorEntry {
     code: 4008,
-    class: NdbClass::UnknownResult,
+    class: ErrorClass::UnknownResult,
     text: "Nothing came back from the data node",
   },
-  NdbError {
+  ErrorEntry {
     code: 4009,
-    class: NdbClass::UnknownResult,
+    class: ErrorClass::UnknownResult,
     text: "No data node can be reached",
   },
-  NdbError {
+  ErrorEntry {
     code: 4012,
-    class: NdbClass::UnknownResult,
+    class: ErrorClass::UnknownResult,
     text: "The data node did not answer in time",
   },
-  NdbError {
+  ErrorEntry {
     code: 4035,
-    class: NdbClass::UnknownResult,
+    class: ErrorClass::UnknownResult,
     text: "The data nodes are up but have no connection record for us",
   },
   // Requests the data nodes refuse.
-  NdbError {
+  ErrorEntry {
     code: 242,
-    class: NdbClass::Application,
+    class: ErrorClass::Application,
     text: "A scan was asked for with no concurrency",
   },
-  NdbError {
+  ErrorEntry {
     code: 4116,
-    class: NdbClass::Application,
+    class: ErrorClass::Application,
     text: "The operation is missing its key",
   },
-  NdbError {
+  ErrorEntry {
     code: 4118,
-    class: NdbClass::Application,
+    class: ErrorClass::Application,
     text: "A parameter of the call is wrong",
   },
-  NdbError {
+  ErrorEntry {
     code: 4120,
-    class: NdbClass::Application,
+    class: ErrorClass::Application,
     text: "The scan is already complete",
   },
-  NdbError {
+  ErrorEntry {
     code: 4200,
-    class: NdbClass::Application,
+    class: ErrorClass::Application,
     text: "The operation is not in a state to be defined",
   },
-  NdbError {
+  ErrorEntry {
     code: 4202,
-    class: NdbClass::Application,
+    class: ErrorClass::Application,
     text: "A primary key column cannot be changed",
   },
-  NdbError {
+  ErrorEntry {
     code: 4203,
-    class: NdbClass::Application,
+    class: ErrorClass::Application,
     text: "A column that cannot be NULL was set to NULL",
   },
-  NdbError {
+  ErrorEntry {
     code: 4209,
-    class: NdbClass::Application,
+    class: ErrorClass::Application,
     text: "A value's length does not fit its column",
   },
-  NdbError {
+  ErrorEntry {
     code: 4225,
-    class: NdbClass::Application,
+    class: ErrorClass::Application,
     text: "Every key column is already given",
   },
-  NdbError {
+  ErrorEntry {
     code: 4230,
-    class: NdbClass::Application,
+    class: ErrorClass::Application,
     text: "Only a read can bring values back",
   },
-  NdbError {
+  ErrorEntry {
     code: 4234,
-    class: NdbClass::Application,
+    class: ErrorClass::Application,
     text: "A value cannot be set in this state",
   },
-  NdbError {
+  ErrorEntry {
     code: 4243,
-    class: NdbClass::Application,
+    class: ErrorClass::Application,
     text: "There is no such index",
   },
-  NdbError {
+  ErrorEntry {
     code: 4244,
-    class: NdbClass::Application,
+    class: ErrorClass::Application,
     text: "An index or table of that name already exists",
   },
-  NdbError {
+  ErrorEntry {
     code: 4249,
-    class: NdbClass::Application,
+    class: ErrorClass::Application,
     text: "The table is not valid",
   },
-  NdbError {
+  ErrorEntry {
     code: 4251,
-    class: NdbClass::Application,
+    class: ErrorClass::Application,
     text: "The unique index cannot be made: the rows have duplicates",
   },
-  NdbError {
+  ErrorEntry {
     code: 4254,
-    class: NdbClass::Application,
+    class: ErrorClass::Application,
     text: "The table is not an index",
   },
-  NdbError {
+  ErrorEntry {
     code: 4259,
-    class: NdbClass::Application,
+    class: ErrorClass::Application,
     text: "The scan's bounds do not make a range",
   },
-  NdbError {
+  ErrorEntry {
     code: 4272,
-    class: NdbClass::Application,
+    class: ErrorClass::Application,
     text: "The table has a column with no definition",
   },
-  NdbError {
+  ErrorEntry {
     code: 4277,
-    class: NdbClass::Application,
+    class: ErrorClass::Application,
     text: "A key part is too short for its column",
   },
-  NdbError {
+  ErrorEntry {
     code: 4279,
-    class: NdbClass::Application,
+    class: ErrorClass::Application,
     text: "A string in the key is malformed",
   },
-  NdbError {
+  ErrorEntry {
     code: 4280,
-    class: NdbClass::Application,
+    class: ErrorClass::Application,
     text: "A key part's length is not consistent",
   },
-  NdbError {
+  ErrorEntry {
     code: 4316,
-    class: NdbClass::Application,
+    class: ErrorClass::Application,
     text: "A key column cannot be NULL",
   },
-  NdbError {
+  ErrorEntry {
     code: 4260,
-    class: NdbClass::UserDefined,
+    class: ErrorClass::AppDefined,
     text: "The interpreted condition uses an operator its group has not",
   },
-  NdbError {
+  ErrorEntry {
     code: 4261,
-    class: NdbClass::UserDefined,
+    class: ErrorClass::AppDefined,
     text: "The interpreted condition read a NULL column",
   },
-  NdbError {
+  ErrorEntry {
     code: 4262,
-    class: NdbClass::UserDefined,
+    class: ErrorClass::AppDefined,
     text: "The interpreted condition is out of bounds",
   },
   // Faults.
-  NdbError {
+  ErrorEntry {
     code: 4001,
-    class: NdbClass::Internal,
+    class: ErrorClass::Internal,
     text: "A signal was malformed",
   },
-  NdbError {
+  ErrorEntry {
     code: 4350,
-    class: NdbClass::Internal,
+    class: ErrorClass::Internal,
     text: "The transaction was already aborted",
   },
 ];
 
-fn find(code: i32) -> Option<&'static NdbError> {
+fn find(code: i32) -> Option<&'static ErrorEntry> {
   IC_NDB_ERRORS.iter().find(|error| error.code == code)
 }
 
@@ -506,13 +505,13 @@ pub fn is_known(code: i32) -> bool {
 }
 
 /// NDB's class of the code, or unknown for one not in the table.
-pub fn class_of(code: i32) -> NdbClass {
+pub fn class_of(code: i32) -> ErrorClass {
   if code == 0 {
-    return NdbClass::NoError;
+    return ErrorClass::Success;
   }
   match find(code) {
     Some(error) => error.class,
-    None => NdbClass::UnknownCode,
+    None => ErrorClass::UnknownCode,
   }
 }
 
@@ -535,8 +534,8 @@ mod tests {
       assert!(text_of(code).is_some());
     }
     assert!(!is_known(12345));
-    assert_eq!(class_of(12345), NdbClass::UnknownCode);
-    assert_eq!(class_of(0), NdbClass::NoError);
+    assert_eq!(class_of(12345), ErrorClass::UnknownCode);
+    assert_eq!(class_of(0), ErrorClass::Success);
   }
 
   #[test]

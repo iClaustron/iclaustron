@@ -307,7 +307,7 @@ footer { max-width: 1180px; margin: 64px auto 0; border-top: 1px solid var(--rul
 <!-- ============================================================ -->
 <section id="threads">
 <h2><span class="num">1</span>Threading architecture</h2>
-<p>One rule shapes the design: <strong>receive threads only receive and route; user threads execute.</strong> The C++ NDB API has its receive thread decode each signal and update the transaction, then wake the user thread, so once there are many user threads the receive thread becomes the bottleneck. Here a receive thread's work per signal is a table lookup and a copy into a page. Decoding rows, updating transaction state and running callbacks all happen on the user thread that owns the query, so that work grows with the application's threads rather than with a fixed pool.</p>
+<p>One rule shapes the design: <strong>receive threads only receive and route; user threads execute.</strong> The reference API has its receive thread decode each signal and update the transaction, then wake the user thread, so once there are many user threads the receive thread becomes the bottleneck. Here a receive thread's work per signal is a table lookup and a copy into a page. Decoding rows, updating transaction state and running callbacks all happen on the user thread that owns the query, so that work grows with the application's threads rather than with a fixed pool.</p>
 
 <h3 id="threads-today">The threads today <span class="status built">Built</span></h3>
 
@@ -343,7 +343,7 @@ footer { max-width: 1180px; margin: 64px auto 0; border-top: 1px solid var(--rul
   <rect x="360" y="232" width="250" height="66" rx="4" class="box"/>
   <text x="374" y="256" class="t-head">Receive thread × R</text>
   <text x="374" y="276" class="t-mono">poll set over its share of nodes</text>
-  <text x="374" y="291" class="t-mono">router · executes API_REGCONF</text>
+  <text x="374" y="291" class="t-mono">router · executes HEARTBEAT_CONF</text>
 
   <rect x="360" y="322" width="250" height="44" rx="4" class="box"/>
   <text x="374" y="349" class="t-head">Heartbeat thread · 1</text>
@@ -352,12 +352,12 @@ footer { max-width: 1180px; margin: 64px auto 0; border-top: 1px solid var(--rul
   <text x="374" y="409" class="t-head">Connect thread · one per node</text>
 
   <rect x="690" y="36" width="190" height="390" rx="4" class="box-tint"/>
-  <text x="706" y="62" class="t-head">Data nodes (ndbmtd)</text>
-  <text x="706" y="84" class="t-small">each: recv, tc, ldm, send,</text>
-  <text x="706" y="100" class="t-small">main, rep threads</text>
-  <text x="706" y="128" class="t-mono">TCKEYREQ → tc → ldm</text>
-  <text x="706" y="146" class="t-mono">TCKEYCONF ← tc</text>
-  <text x="706" y="164" class="t-mono">TRANSID_AI ← ldm</text>
+  <text x="706" y="62" class="t-head">Data nodes</text>
+  <text x="706" y="84" class="t-small">each: receive, coordinator,</text>
+  <text x="706" y="100" class="t-small">fragment-owner, send threads</text>
+  <text x="706" y="128" class="t-mono">KEY_OP_REQ → coord → frag</text>
+  <text x="706" y="146" class="t-mono">KEY_OP_CONF ← coord</text>
+  <text x="706" y="164" class="t-mono">ROW_DATA_REP ← frag</text>
 
   <!-- user -> NodeShared -->
   <path d="M280,62 L356,62" class="wire" marker-end="url(#ah)"/>
@@ -378,7 +378,7 @@ footer { max-width: 1180px; margin: 64px auto 0; border-top: 1px solid var(--rul
   <text x="172" y="258" class="t-wire">one page per thread per round</text>
   <!-- heartbeat -->
   <path d="M610,344 L686,344" class="link" marker-end="url(#ahi)"/>
-  <text x="620" y="336" class="t-small">API_REGREQ</text>
+  <text x="620" y="336" class="t-small">HEARTBEAT_REQ</text>
   <!-- connect -->
   <path d="M610,404 L686,404" class="link" marker-end="url(#ahi)"/>
   <text x="620" y="396" class="t-small">dial, handshake</text>
@@ -396,10 +396,10 @@ footer { max-width: 1180px; margin: 64px auto 0; border-top: 1px solid var(--rul
   <thead><tr><th>Thread</th><th class="num">How many</th><th>What it does</th><th>What it touches</th></tr></thead>
   <tbody>
     <tr><td>User thread</td><td class="num">1 – 256</td><td>Defines queries, packs requests, sends, polls its inbox, decodes replies into rows, runs callbacks.</td><td>Its own <code>ApidConnection</code>, with no lock. A node's send buffer, under that node's mutex, held only to append.</td></tr>
-    <tr><td>Receive thread</td><td class="num">1 – #nodes</td><td>Reads its nodes' sockets into receive pages, splits signals, unpacks <code>API_PACKED</code>, routes by block number. Executes signals about the link itself: <code>API_REGCONF</code>, <code>NODE_FAILREP</code>, <code>NF_COMPLETEREP</code>, <code>ALTER_TABLE_REP</code>.</td><td>The sockets of its own nodes. Each inbox's mutex, taken once per round. The published node state, of which it is the only writer.</td></tr>
+    <tr><td>Receive thread</td><td class="num">1 – #nodes</td><td>Reads its nodes' sockets into receive pages, splits signals, unpacks <code>BUNDLE</code>, routes by block number. Executes signals about the link itself: <code>HEARTBEAT_CONF</code>, <code>NODE_LOST_REP</code>, <code>NODE_LOST_DONE_REP</code>, <code>TABLE_CHANGED_REP</code>.</td><td>The sockets of its own nodes. Each inbox's mutex, taken once per round. The published node state, of which it is the only writer.</td></tr>
     <tr><td>Send pool</td><td class="num">1</td><td>Writes what was queued while another thread was writing to the node, and ends adaptive-send waits at their deadline.</td><td>Node send buffers.</td></tr>
-    <tr><td>Heartbeat</td><td class="num">1</td><td>Sends <code>API_REGREQ</code> to every node that is up. It asks a node's receive thread to drop a link whose heartbeats stopped.</td><td>Reads node state through atomics and never writes it.</td></tr>
-    <tr><td>Connect</td><td class="num">1 per node</td><td>Resolves the port, dials, runs the transporter handshake, hands the socket over. Waits for <code>NF_COMPLETEREP</code> before dialling a failed node again.</td><td>Membership word, changed by compare-and-swap.</td></tr>
+    <tr><td>Heartbeat</td><td class="num">1</td><td>Sends <code>HEARTBEAT_REQ</code> to every node that is up. It asks a node's receive thread to drop a link whose heartbeats stopped.</td><td>Reads node state through atomics and never writes it.</td></tr>
+    <tr><td>Connect</td><td class="num">1 per node</td><td>Resolves the port, dials, runs the connection handshake, hands the socket over. Waits for <code>NODE_LOST_DONE_REP</code> before dialling a failed node again.</td><td>Membership word, changed by compare-and-swap.</td></tr>
   </tbody>
 </table>
 </div>
@@ -408,7 +408,7 @@ footer { max-width: 1180px; margin: 64px auto 0; border-top: 1px solid var(--rul
 <div class="two">
   <div class="panel">
     <h4>A node's state has one writer</h4>
-    <p>Each node is assigned to one receive thread when the threads start, and stays there. That thread sees its socket close and executes its <code>API_REGCONF</code>, so it is the only writer of the node's published state. Everyone else reads atomics, and the state needs no mutex. Membership, which any receive thread may learn about from another node's <code>NODE_FAILREP</code>, is a separate word changed by compare-and-swap.</p>
+    <p>Each node is assigned to one receive thread when the threads start, and stays there. That thread sees its socket close and executes its <code>HEARTBEAT_CONF</code>, so it is the only writer of the node's published state. Everyone else reads atomics, and the state needs no mutex. Membership, which any receive thread may learn about from another node's <code>NODE_LOST_REP</code>, is a separate word changed by compare-and-swap.</p>
   </div>
   <div class="panel">
     <h4>One lock per inbox per round</h4>
@@ -440,7 +440,7 @@ footer { max-width: 1180px; margin: 64px auto 0; border-top: 1px solid var(--rul
   <tbody>
     <tr><td>Mac, 1 user thread, depth 4</td><td class="num">2.6 M</td><td class="num">545 ns</td><td>The user thread itself: about 350 ns of user time per read.</td></tr>
     <tr><td>Mac, 4 user threads, batch 300</td><td class="num">5.8 M</td><td class="num">495 ns</td><td>Cores shared with the data nodes' threads.</td></tr>
-    <tr><td>Mac, 8 user threads, batch 300</td><td class="num">7.0 – 8.9 M</td><td class="num">512 – 565 ns</td><td>One data node TC thread at 96%. The data node's TC proxy (<code>DbtcProxy</code>) chooses the TC thread for each record, and with this configuration spreads them 2 : 1 : 0 over three TC threads.</td></tr>
+    <tr><td>Mac, 8 user threads, batch 300</td><td class="num">7.0 – 8.9 M</td><td class="num">512 – 565 ns</td><td>One data node coordinator thread at 96%. The data node's coordinator proxy chooses the coordinator thread for each record, and with this configuration spreads them 2 : 1 : 0 over three coordinator threads.</td></tr>
     <tr><td>Linux (32 CPUs), 8 user threads, 2 receive threads</td><td class="num">up to 7.1 M</td><td class="num">—</td><td>The data node's receive thread.</td></tr>
   </tbody>
 </table>
@@ -485,7 +485,7 @@ footer { max-width: 1180px; margin: 64px auto 0; border-top: 1px solid var(--rul
     <ul>
       <li><code>NodeShared</code> per data node: published link state (atomics), membership word (compare-and-swap), link-drop request word, and the <code>Sender</code>. The <code>Sender</code> holds the waiting buffer, a spare buffer, the writer flag <code>send_active</code>, the <code>deferred</code> flag and the adaptive-send state, all behind one mutex.</li>
       <li><code>ThreadTable</code>: block number → inbox, with a change counter so that receive threads keep their own copy.</li>
-      <li>The send pool, the dictionary cache (<code>TableDef</code>s by name, as <code>Arc</code>, dropped on <code>ALTER_TABLE_REP</code>), the configuration.</li>
+      <li>The send pool, the dictionary cache (<code>TableDef</code>s by name, as <code>Arc</code>, dropped on <code>TABLE_CHANGED_REP</code>), the configuration.</li>
     </ul>
   </div>
   <div class="panel">
@@ -493,7 +493,7 @@ footer { max-width: 1180px; margin: 64px auto 0; border-top: 1px solid var(--rul
     <ul>
       <li><code>inbox</code>: an <code>Arc&lt;ThreadConnection&gt;</code>, with the pages it gives back.</li>
       <li><code>queries</code>, <code>transactions</code>: generational object maps (<code>PtrArray</code>), handled by <code>QueryId</code> and <code>TransId</code>.</li>
-      <li><code>tc_records</code> with a free list per node; <code>active</code>, a vector indexed by a record's place and holding the transaction that uses it.</li>
+      <li><code>coord_records</code> with a free list per node; <code>active</code>, a vector indexed by a record's place and holding the transaction that uses it.</li>
       <li><code>outgoing</code> per node: <code>words</code>, <code>staged</code> and <code>cancelled</code>; <code>to_send</code>, the transactions with something staged.</li>
       <li><code>executed</code> queue, spare query lists, fragment assembler, expected replies.</li>
     </ul>
@@ -508,7 +508,7 @@ footer { max-width: 1180px; margin: 64px auto 0; border-top: 1px solid var(--rul
   </div>
   <div class="panel">
     <h4><code>Transaction</code>: local until its first send</h4>
-    <p>Holds the transaction id, the <code>TcRecord</code> seized at the coordinator the hint chose, and the <code>defined</code> and <code>sent</code> query lists with their counts. It also holds the end wanted (commit or rollback), the error and the GCI.</p>
+    <p>Holds the transaction id, the <code>CoordRecord</code> allocated at the coordinator the hint chose, and the <code>defined</code> and <code>sent</code> query lists with their counts. It also holds the end wanted (commit or rollback), the error and the GCI.</p>
     <p>The data node knows nothing about it until the first operation goes with the start flag. It is done when it has committed or rolled back and every sent operation is complete. Its record then returns to the free list, and its query lists are kept for the next transaction.</p>
   </div>
 </div>
@@ -516,18 +516,18 @@ footer { max-width: 1180px; margin: 64px auto 0; border-top: 1px solid var(--rul
 <h3 id="data-ids">How a reply finds its transaction</h3>
 <p>Each request carries <strong>a number we choose</strong>, and the data node sends it back in every reply about that transaction. We choose it to be the transaction's <strong>place in our own table</strong>, so finding the transaction is one array index: no search, no hash, no lock.</p>
 <div class="flow" role="list" aria-label="How a reply finds its transaction">
-  <div class="stage" role="listitem"><p class="tag">1 · We send</p><p class="what"><code>TCKEYREQ</code></p><p class="how">carries our number: place 3</p></div>
+  <div class="stage" role="listitem"><p class="tag">1 · We send</p><p class="what"><code>KEY_OP_REQ</code></p><p class="how">carries our number: place 3</p></div>
   <span class="arrow" aria-hidden="true">→</span>
   <div class="stage node" role="listitem"><p class="tag">2 · Data node</p><p class="what">Keeps it</p><p class="how">with its own record of the transaction</p></div>
   <span class="arrow" aria-hidden="true">→</span>
-  <div class="stage" role="listitem"><p class="tag">3 · Reply</p><p class="what"><code>TCKEYCONF</code></p><p class="how">first data word: place 3</p></div>
+  <div class="stage" role="listitem"><p class="tag">3 · Reply</p><p class="what"><code>KEY_OP_CONF</code></p><p class="how">first data word: place 3</p></div>
   <span class="arrow" aria-hidden="true">→</span>
   <div class="stage found" role="listitem"><p class="tag">4 · One lookup</p><p class="what"><code>active[3]</code></p><p class="how">is our transaction</p></div>
 </div>
 <div class="two">
   <div class="panel">
     <h4>Rows work the same way</h4>
-    <p>A row (<code>TRANSID_AI</code>) and a single operation's refusal (<code>TCKEYREF</code>) come from the node that read the row. They carry the query's id instead, and find the query the same way.</p>
+    <p>A row (<code>ROW_DATA_REP</code>) and a single operation's refusal (<code>KEY_OP_REF</code>) come from the node that read the row. They carry the query's id instead, and find the query the same way.</p>
   </div>
   <div class="panel">
     <h4>Late replies are caught</h4>
@@ -536,16 +536,16 @@ footer { max-width: 1180px; margin: 64px auto 0; border-top: 1px solid var(--rul
 </div>
 <p>The block number in the signal header (0x8000 + thread id) is what picks the user thread in the first place. Within that thread, the details are as follows.</p>
 
-<p><strong>Our pointer for a coordinator record</strong> (<code>api_connect_ptr</code>, echoed by <code>TCKEYCONF</code>, <code>TC_COMMITCONF</code>, <code>TCROLLBACKCONF</code>):</p>
+<p><strong>Our pointer for a coordinator record</strong> (<code>client_ptr</code>, echoed by <code>KEY_OP_CONF</code>, <code>COMMIT_CONF</code>, <code>ROLLBACK_CONF</code>):</p>
 <div class="layout-wrap">
   <div class="layout" aria-label="Bit layout of the coordinator record pointer">
     <div class="hi" style="grid-column: span 1">1</div>
-    <div class="lo" style="grid-column: span 30">place in tc_records / active (index)</div>
+    <div class="lo" style="grid-column: span 30">place in coord_records / active (index)</div>
     <div style="grid-column: span 1">ack</div>
   </div>
   <div class="bits"><span>bit 31</span><span>bits 30 … 1</span><span>bit 0</span></div>
 </div>
-<p>The top bit marks it as ours. Bit 0 is left free for the acknowledgement flag the protocol puts there. <code>active[index]</code> gives the transaction in one load. The place is reserved before the seize request goes, so a callback that runs during the wait cannot take the same place.</p>
+<p>The top bit marks it as ours. Bit 0 is left free for the acknowledgement flag the protocol puts there. <code>active[index]</code> gives the transaction in one load. The place is reserved before the allocate request goes, so a callback that runs during the wait cannot take the same place.</p>
 
 <p><strong>Transaction id</strong> (64 bits, carried by every reply and checked against the object it names):</p>
 <div class="layout-wrap">
@@ -562,9 +562,9 @@ footer { max-width: 1180px; margin: 64px auto 0; border-top: 1px solid var(--rul
 <table>
   <thead><tr><th>Reply</th><th>From</th><th>Finds its object by</th></tr></thead>
   <tbody>
-    <tr><td><code>TCKEYCONF</code>, <code>TC_COMMITCONF</code>, <code>TCROLLBACKCONF</code>, their refusals, <code>TCROLLBACKREP</code></td><td>Coordinator (TC)</td><td>Record pointer → <code>active[index]</code> → <code>TransId</code></td></tr>
-    <tr><td><code>TRANSID_AI</code>, <code>TCKEYREF</code></td><td>The node that read the row (LDM)</td><td><code>QueryId</code> in the object map, with its generation checked</td></tr>
-    <tr><td><code>TCSEIZECONF</code>, <code>GET_TABINFO_CONF</code>, other single replies</td><td>Any</td><td>Expected-reply table: signal number, node and request number must all match</td></tr>
+    <tr><td><code>KEY_OP_CONF</code>, <code>COMMIT_CONF</code>, <code>ROLLBACK_CONF</code>, their refusals, <code>TRANS_ABORTED_REP</code></td><td>The coordinator</td><td>Record pointer → <code>active[index]</code> → <code>TransId</code></td></tr>
+    <tr><td><code>ROW_DATA_REP</code>, <code>KEY_OP_REF</code></td><td>The node that read the row (the thread that owns its fragment)</td><td><code>QueryId</code> in the object map, with its generation checked</td></tr>
+    <tr><td><code>COORD_ALLOC_CONF</code>, <code>TABLE_DESC_CONF</code>, other single replies</td><td>Any</td><td>Expected-reply table: signal number, node and request number must all match</td></tr>
     <tr><td>Anything else addressed to us</td><td>—</td><td>Counted as unexpected and dropped with a trace</td></tr>
   </tbody>
 </table>
@@ -575,7 +575,7 @@ footer { max-width: 1180px; margin: 64px auto 0; border-top: 1px solid var(--rul
 <ol class="steps">
   <li><span class="n">a</span><div>
     <h4>Define</h4>
-    <p><code>read_key</code> or <code>write_key</code> hashes the key when the transaction has no coordinator yet, picks the node and takes a free TC record for it (seizing one only if none is free). It then packs <code>TCKEYREQ</code> with its key and attribute info straight into that node's <code>staged</code> buffer. The query remembers where its request lies (<code>Staged { node_id, generation, at, len }</code>).</p>
+    <p><code>read_key</code> or <code>write_key</code> hashes the key when the transaction has no coordinator yet, picks the node and takes a free coordinator record for it (allocating one only if none is free). It then packs <code>KEY_OP_REQ</code> with its key and attribute info straight into that node's <code>staged</code> buffer. The query remembers where its request lies (<code>Staged { node_id, generation, at, len }</code>).</p>
   </div></li>
   <li><span class="n">b</span><div>
     <h4>Send</h4>
@@ -607,7 +607,7 @@ footer { max-width: 1180px; margin: 64px auto 0; border-top: 1px solid var(--rul
 
   <rect x="20" y="148" width="250" height="68" rx="4" class="box"/>
   <text x="34" y="172" class="t-head">Router</text>
-  <text x="34" y="192" class="t-mono">split · unpack API_PACKED ·</text>
+  <text x="34" y="192" class="t-mono">split · unpack BUNDLE ·</text>
   <text x="34" y="208" class="t-mono">sort by block number</text>
 
   <rect x="340" y="36" width="230" height="180" rx="4" class="box-accent"/>
@@ -615,7 +615,7 @@ footer { max-width: 1180px; margin: 64px auto 0; border-top: 1px solid var(--rul
   <text x="354" y="84" class="t-mono">&lt; 256 words: copied in</text>
   <text x="354" y="102" class="t-mono">≥ 256 words: by reference,</text>
   <text x="354" y="118" class="t-mono">  holds the receive page</text>
-  <text x="354" y="146" class="t-mono">entry: gsn · blocks · node ·</text>
+  <text x="354" y="146" class="t-mono">entry: sig_no · blocks · node ·</text>
   <text x="354" y="162" class="t-mono">  length · sections · data</text>
   <text x="354" y="190" class="t-small">up to 8 emptied pages kept spare</text>
 
@@ -636,14 +636,14 @@ footer { max-width: 1180px; margin: 64px auto 0; border-top: 1px solid var(--rul
   <path d="M636,150 L574,150" class="link" marker-end="url(#ahi2)"/>
   <text x="580" y="166" class="t-small">give back</text>
 </svg>
-<p class="caption">A small signal is copied into the user thread's page, so the page is released on one thread. A large <code>TRANSID_AI</code> stays in its receive page, which stays sealed until the user thread gives its signal page back. Every page is allocated and freed on the thread that owns it.</p>
+<p class="caption">A small signal is copied into the user thread's page, so the page is released on one thread. A large <code>ROW_DATA_REP</code> stays in its receive page, which stays sealed until the user thread gives its signal page back. Every page is allocated and freed on the thread that owns it.</p>
 </div>
 <p>The receive thread reads a socket again, up to four times, while each read fills all the room it had, then moves on. Commit acknowledgements the replies call for are queued in <code>outgoing</code> and leave with the next send. They are written on their own only after waiting 1 ms, or when nothing is in flight.</p>
 
 <h3 id="data-memory">Memory rules</h3>
 <ul>
-  <li><strong>No allocation per transaction or per signal once warm.</strong> Query lists of closed transactions are kept (up to 8192 spare), TC records are reused through free lists, send buffers are swapped rather than reallocated, and signal pages keep their largest size.</li>
-  <li><strong>Inline buffers spill; they never refuse.</strong> A <code>TCKEYCONF</code> with more than 16 operations goes on into a vector beside the inline array, and node lists hold eight inline. A protocol limit read from the data node's code is not a guarantee.</li>
+  <li><strong>No allocation per transaction or per signal once warm.</strong> Query lists of closed transactions are kept (up to 8192 spare), coordinator records are reused through free lists, send buffers are swapped rather than reallocated, and signal pages keep their largest size.</li>
+  <li><strong>Inline buffers spill; they never refuse.</strong> A <code>KEY_OP_CONF</code> with more than 16 operations goes on into a vector beside the inline array, and node lists hold eight inline. A protocol limit read from the data node's code is not a guarantee.</li>
   <li><strong>No <code>unsafe</code> on the row path.</strong> Queries own their rows, so the library never holds a pointer into the application's memory between send and completion. The C binding copies or maps the caller's rows onto them.</li>
 </ul>
 </section>
@@ -797,7 +797,7 @@ fn submit(&amp;self, r: Request) -&gt; Result&lt;(), Busy&gt; {
   </div>
   <div class="panel">
     <h4>How many executors</h4>
-    <p>One executor per core the application gives to RonDB work, each with its own block and TC records. Application threads pick one by key hash or round-robin. Executors share nothing but the nodes' send buffers, so they scale as user threads do today.</p>
+    <p>One executor per core the application gives to RonDB work, each with its own block and coordinator records. Application threads pick one by key hash or round-robin. Executors share nothing but the nodes' send buffers, so they scale as user threads do today.</p>
   </div>
 </div>
 <div class="callout">
@@ -821,7 +821,7 @@ conn.flush(1000, true)?;      <span class="c">// returns when done</span>
 let row = conn.query(q).attr_row();</code></pre>
     <ul>
       <li>Nothing between the caller and the socket: the lowest latency for one operation.</li>
-      <li>Throughput per thread is 1 / round trip. It scales only with threads, and each thread is a block (256 today, 4711 planned) with its own TC records.</li>
+      <li>Throughput per thread is 1 / round trip. It scales only with threads, and each thread is a block (256 today, 4711 planned) with its own coordinator records.</li>
       <li>Replies still go through the receive thread and the inbox, so each call costs one wake-up.</li>
     </ul>
   </div>
@@ -863,7 +863,7 @@ while !s.done { s = slot.cond.wait(s); }</code></pre>
 </div>
 
 <footer>
-  Sources: <code>crates/ic_apid</code> (<code>apid_conn.rs</code>, <code>thread_conn.rs</code>, <code>signal_page.rs</code>, <code>rec_thread.rs</code>, <code>send_pool.rs</code>, <code>transaction.rs</code>, <code>query.rs</code>, <code>apid_global.rs</code>) and <code>doc/rust</code> chapters 02, 04, 06 and 12. The TC imbalance was measured through <code>ndbinfo.cpustat</code> on 24 Sep 2026.
+  Sources: <code>crates/ic_apid</code> (<code>apid_conn.rs</code>, <code>thread_conn.rs</code>, <code>signal_page.rs</code>, <code>rec_thread.rs</code>, <code>send_pool.rs</code>, <code>transaction.rs</code>, <code>query.rs</code>, <code>apid_global.rs</code>) and <code>doc/rust</code> chapters 02, 04, 06 and 12. The coordinator imbalance was measured through <code>ndbinfo.cpustat</code> on 24 Sep 2026.
 </footer>
 
 </body>

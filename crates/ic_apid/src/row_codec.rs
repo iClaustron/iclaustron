@@ -8,17 +8,16 @@
 //! **The key** is each primary key column's value in attribute order,
 //! as the record holds it, padded to whole words: a fixed-size value at
 //! its full size, a variable-sized one with its length bytes and only
-//! the bytes it has. Verify: `NdbOperationExec.cpp`,
-//! `buildSignalsNdbRecord`, and `NdbDictionaryImpl.cpp`,
-//! `computeAggregates`, where key positions follow attribute order.
+//! the bytes it has. Key positions follow attribute order.
+//! Verify: chapter 05 §17.14.
 //!
 //! **A read asks for its columns packed,** as the reference's record
-//! path does: `READ_ALL` with the column count when the record has
-//! every column, otherwise `READ_PACKED` followed by a bitmask of the
-//! attribute ids wanted. Verify: `buildSignalsNdbRecord`.
+//! path does: `IC_COL_READ_EVERY` with the column count when the record
+//! has every column, otherwise `IC_COL_READ_MASKED` followed by a
+//! bitmask of the attribute ids wanted. Verify: chapter 05 §17.14.
 //!
-//! **The row comes back packed** behind one `READ_PACKED` header whose
-//! size is the length of a result bitmap in bytes:
+//! **The row comes back packed** behind one `IC_COL_READ_MASKED` header
+//! whose size is the length of a result bitmap in bytes:
 //!
 //! - The bitmap has one bit per attribute id, set if the column was
 //!   read, and after each nullable column read one more bit, set if it
@@ -31,14 +30,13 @@
 //! - A fixed-size value has its full size; a variable-sized one says
 //!   its length in its first one or two bytes.
 //!
-//! Verify: `DbtupRoutines.cpp`, `read_packed`; `NdbReceiver.cpp`,
-//! `unpackNdbRecord`, `pad_pos` and `handle_packed_bit`.
+//! Verify: chapter 05 §17.14.
 
-use ic_ndb_signals::attr_header;
-use ic_ndb_signals::dict_tab_info;
-use ic_ndb_signals::dict_tab_info::AttributeInfo;
 use ic_port::err;
 use ic_port::IcError;
+use ic_signals::column_header;
+use ic_signals::table_props;
+use ic_signals::table_props::ColumnProps;
 
 use crate::dict_cache::IndexDef;
 use crate::node_connect::words_as_bytes;
@@ -46,12 +44,12 @@ use crate::record::Record;
 use crate::record::RecordField;
 
 /// Pseudo column: read every column, the count in the size field.
-pub const IC_ATTR_READ_ALL: u32 = 0xFFF0;
+pub const IC_COL_READ_EVERY: u32 = 0xFFF0;
 /// Pseudo column: read the columns a bitmask names, or the packed row
 /// that comes back.
-pub const IC_ATTR_READ_PACKED: u32 = 0xFFF3;
+pub const IC_COL_READ_MASKED: u32 = 0xFFF3;
 /// Pseudo column: the partition the row is in, as one word.
-pub const IC_ATTR_FRAGMENT: u32 = 0xFFFE;
+pub const IC_COL_PARTITION: u32 = 0xFFFE;
 
 /// The key section of a request: each primary key column of the key
 /// record's row, in attribute order, padded to words.
@@ -75,7 +73,7 @@ pub fn key_info_into(
     if !attr.primary_key {
       continue;
     }
-    let field = match key_rec.position_of(attr.attribute_id) {
+    let field = match key_rec.position_of(attr.column_id) {
       Some(position) => match key_rec.field(position) {
         Some(field) => field,
         None => return Err(IcError::new(err::IC_ERROR_KEY_RECORD)),
@@ -93,8 +91,8 @@ pub fn key_info_into(
 /// column of the index, in the index's order, taken from the base
 /// table's row by name and padded to words. The index describes itself
 /// as a table whose primary key is the indexed columns, with a hidden
-/// column after them. Verify: `NdbIndexOperation.cpp`, `indxInit`,
-/// where the operation's access table becomes the index's own.
+/// column after them. An operation through the index accesses the
+/// index's own table. Verify: chapter 05 §17.14.
 pub fn index_key_info(
   index: &IndexDef,
   key_rec: &Record,
@@ -148,7 +146,7 @@ pub fn read_attr_info_into(rec: &Record, out: &mut Vec<u32>) {
   let table = rec.table();
   let count = rec.num_fields();
   if count == table.num_fields() {
-    out.push(attr_header::attr_header(IC_ATTR_READ_ALL, count));
+    out.push(column_header::column_header(IC_COL_READ_EVERY, count));
     return;
   }
   let mut max_id: u32 = 0;
@@ -162,8 +160,8 @@ pub fn read_attr_info_into(rec: &Record, out: &mut Vec<u32>) {
     position += 1;
   }
   let mask_words = (max_id / 32 + 1) as usize;
-  out.push(attr_header::attr_header(
-    IC_ATTR_READ_PACKED,
+  out.push(column_header::column_header(
+    IC_COL_READ_MASKED,
     4 * mask_words as u32,
   ));
   out.resize(1 + mask_words, 0);
@@ -220,12 +218,12 @@ pub fn write_attr_info_into(
     }
     let id = field.field_id();
     if is_null {
-      out.push(attr_header::attr_header(id, 0));
+      out.push(column_header::column_header(id, 0));
       continue;
     }
     let start = field.offset() as usize;
     let len = value_len(attr, field, &row[start..])?;
-    out.push(attr_header::attr_header(id, len as u32));
+    out.push(column_header::column_header(id, len as u32));
     push_padded(out, &row[start..start + len]);
   }
   Ok(())
@@ -246,10 +244,10 @@ pub fn unpack_row(
     Some(header) => *header,
     None => return Err(bad),
   };
-  if attr_header::attribute_id(header) != IC_ATTR_READ_PACKED {
+  if column_header::column_id(header) != IC_COL_READ_MASKED {
     return Err(bad);
   }
-  let mask_words = (attr_header::byte_size(header) / 4) as usize;
+  let mask_words = (column_header::byte_size(header) / 4) as usize;
   if words.len() < 1 + mask_words {
     return Err(bad);
   }
@@ -291,9 +289,9 @@ pub fn unpack_row(
     }
     let start = field.offset() as usize;
     let size = field.size() as usize;
-    if attr.size_bits_log2 == dict_tab_info::IC_ATTR_SIZE_BIT {
+    if attr.size_bits_log2 == table_props::IC_COLUMN_SIZE_BIT {
       pos = next_word(pos);
-      let len = attr.array_size as usize;
+      let len = attr.array_len as usize;
       copy_bits(data, pos, bit_pos, len, &mut row[start..start + size])?;
       pos += 4 * ((bit_pos + len) / 32);
       bit_pos = (bit_pos + len) % 32;
@@ -301,7 +299,7 @@ pub fn unpack_row(
     }
     // Past the words bit columns have filled, then to a word for the
     // wider types.
-    if attr.size_bits_log2 >= dict_tab_info::IC_ATTR_SIZE_32 {
+    if attr.size_bits_log2 >= table_props::IC_COLUMN_SIZE_32 {
       pos = next_word(pos);
     }
     pos += 4 * bit_pos.div_ceil(32);
@@ -323,20 +321,20 @@ pub fn unpack_row(
 /// How many bytes of `value` belong to the field: its full size if
 /// fixed, or its length bytes and the length they say.
 fn value_len(
-  attr: &AttributeInfo,
+  attr: &ColumnProps,
   field: &RecordField,
   value: &[u8],
 ) -> Result<usize, IcError> {
   let size = field.size() as usize;
   let short = IcError::new(err::IC_ERROR_INCONSISTENT_DATA);
-  let len = match attr.array_type {
-    dict_tab_info::IC_ARRAY_TYPE_SHORT_VAR => {
+  let len = match attr.array_kind {
+    table_props::IC_ARRAY_KIND_SHORT_VARSIZE => {
       if value.is_empty() {
         return Err(short);
       }
       1 + value[0] as usize
     }
-    dict_tab_info::IC_ARRAY_TYPE_MEDIUM_VAR => {
+    table_props::IC_ARRAY_KIND_LONG_VARSIZE => {
       if value.len() < 2 {
         return Err(short);
       }
@@ -354,7 +352,7 @@ fn value_len(
 fn field_at(
   rec: &Record,
   position: u32,
-) -> Option<(&AttributeInfo, &RecordField)> {
+) -> Option<(&ColumnProps, &RecordField)> {
   let field = rec.field(position)?;
   let attr = rec.table().field(field.field_id())?;
   Some((attr, field))
@@ -364,7 +362,7 @@ fn field_at(
 fn field_of(
   rec: &Record,
   attr_id: u32,
-) -> Option<(&AttributeInfo, &RecordField, u32)> {
+) -> Option<(&ColumnProps, &RecordField, u32)> {
   let position = rec.position_of(attr_id)?;
   let field = rec.field(position)?;
   let attr = rec.table().field(attr_id)?;
@@ -438,38 +436,38 @@ fn push_padded(out: &mut Vec<u32>, bytes: &[u8]) {
 mod tests {
   use super::*;
   use crate::dict_cache::TableDef;
-  use ic_ndb_signals::dict_tab_info::parse_table_info;
-  use ic_ndb_signals::dict_tab_info::IC_ARRAY_TYPE_FIXED;
-  use ic_ndb_signals::dict_tab_info::IC_ARRAY_TYPE_SHORT_VAR;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_ARRAY_TYPE;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_END;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_EXT_LENGTH;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_EXT_PRECISION;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_EXT_TYPE;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_ID;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_KEY;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_NAME;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_NULLABLE;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_NO_OF_ATTRIBUTES;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_TABLE_NAME;
-  use ic_ndb_signals::dict_tab_info::IC_NDB_TYPE_BIGINT;
-  use ic_ndb_signals::dict_tab_info::IC_NDB_TYPE_BIT;
-  use ic_ndb_signals::dict_tab_info::IC_NDB_TYPE_INT;
-  use ic_ndb_signals::dict_tab_info::IC_NDB_TYPE_TINYINT;
-  use ic_ndb_signals::dict_tab_info::IC_NDB_TYPE_VARCHAR;
-  use ic_ndb_signals::simple_properties::PropertyWriter;
+  use ic_signals::prop_stream::PropertyWriter;
+  use ic_signals::table_props::parse_table_info;
+  use ic_signals::table_props::IC_ARRAY_KIND_FIXED;
+  use ic_signals::table_props::IC_ARRAY_KIND_SHORT_VARSIZE;
+  use ic_signals::table_props::IC_TP_COLUMN_ARRAY_KIND;
+  use ic_signals::table_props::IC_TP_COLUMN_COUNT;
+  use ic_signals::table_props::IC_TP_COLUMN_END;
+  use ic_signals::table_props::IC_TP_COLUMN_ID;
+  use ic_signals::table_props::IC_TP_COLUMN_IN_KEY;
+  use ic_signals::table_props::IC_TP_COLUMN_LENGTH;
+  use ic_signals::table_props::IC_TP_COLUMN_NAME;
+  use ic_signals::table_props::IC_TP_COLUMN_NULLABLE;
+  use ic_signals::table_props::IC_TP_COLUMN_PRECISION;
+  use ic_signals::table_props::IC_TP_COLUMN_TYPE;
+  use ic_signals::table_props::IC_TP_TABLE_NAME;
+  use ic_signals::table_props::IC_TYPE_BIGINT;
+  use ic_signals::table_props::IC_TYPE_BIT;
+  use ic_signals::table_props::IC_TYPE_INT;
+  use ic_signals::table_props::IC_TYPE_TINYINT;
+  use ic_signals::table_props::IC_TYPE_VARCHAR;
   use std::sync::Arc;
 
   struct Column {
     name: &'static str,
-    ext_type: u32,
+    type_code: u32,
     length: u32,
     key: bool,
     nullable: bool,
     charset: u32,
     // Sent by the dictionary for every variable-sized column; it is
     // what makes a value carry its length.
-    array_type: u32,
+    array_kind: u32,
   }
 
   /// `id INT` key, `name VARCHAR(20)` key, `t TINYINT NULL`,
@@ -477,76 +475,76 @@ mod tests {
   const COLUMNS: [Column; 6] = [
     Column {
       name: "id",
-      ext_type: IC_NDB_TYPE_INT,
+      type_code: IC_TYPE_INT,
       length: 1,
       key: true,
       nullable: false,
-      array_type: IC_ARRAY_TYPE_FIXED,
+      array_kind: IC_ARRAY_KIND_FIXED,
       charset: 0,
     },
     Column {
       name: "name",
-      ext_type: IC_NDB_TYPE_VARCHAR,
+      type_code: IC_TYPE_VARCHAR,
       length: 20,
       key: true,
       nullable: false,
-      array_type: IC_ARRAY_TYPE_SHORT_VAR,
+      array_kind: IC_ARRAY_KIND_SHORT_VARSIZE,
       charset: 8,
     },
     Column {
       name: "t",
-      ext_type: IC_NDB_TYPE_TINYINT,
+      type_code: IC_TYPE_TINYINT,
       length: 1,
       key: false,
       nullable: true,
-      array_type: IC_ARRAY_TYPE_FIXED,
+      array_kind: IC_ARRAY_KIND_FIXED,
       charset: 0,
     },
     Column {
       name: "big",
-      ext_type: IC_NDB_TYPE_BIGINT,
+      type_code: IC_TYPE_BIGINT,
       length: 1,
       key: false,
       nullable: true,
-      array_type: IC_ARRAY_TYPE_FIXED,
+      array_kind: IC_ARRAY_KIND_FIXED,
       charset: 0,
     },
     Column {
       name: "b",
-      ext_type: IC_NDB_TYPE_BIT,
+      type_code: IC_TYPE_BIT,
       length: 10,
       key: false,
       nullable: true,
-      array_type: IC_ARRAY_TYPE_FIXED,
+      array_kind: IC_ARRAY_KIND_FIXED,
       charset: 0,
     },
     Column {
       name: "n",
-      ext_type: IC_NDB_TYPE_INT,
+      type_code: IC_TYPE_INT,
       length: 1,
       key: false,
       nullable: false,
-      array_type: IC_ARRAY_TYPE_FIXED,
+      array_kind: IC_ARRAY_KIND_FIXED,
       charset: 0,
     },
   ];
 
   fn table() -> Arc<TableDef> {
     let mut w = PropertyWriter::new();
-    w.add_string(IC_DTI_TABLE_NAME, "db/def/t");
-    w.add_u32(IC_DTI_NO_OF_ATTRIBUTES, COLUMNS.len() as u32);
+    w.add_string(IC_TP_TABLE_NAME, "db/def/t");
+    w.add_u32(IC_TP_COLUMN_COUNT, COLUMNS.len() as u32);
     let mut id: usize = 0;
     while id < COLUMNS.len() {
       let column = &COLUMNS[id];
-      w.add_string(IC_DTI_ATTRIBUTE_NAME, column.name);
-      w.add_u32(IC_DTI_ATTRIBUTE_ID, id as u32);
-      w.add_u32(IC_DTI_ATTRIBUTE_EXT_TYPE, column.ext_type);
-      w.add_u32(IC_DTI_ATTRIBUTE_EXT_LENGTH, column.length);
-      w.add_u32(IC_DTI_ATTRIBUTE_KEY, column.key as u32);
-      w.add_u32(IC_DTI_ATTRIBUTE_NULLABLE, column.nullable as u32);
-      w.add_u32(IC_DTI_ATTRIBUTE_EXT_PRECISION, column.charset << 16);
-      w.add_u32(IC_DTI_ATTRIBUTE_ARRAY_TYPE, column.array_type);
-      w.add_u32(IC_DTI_ATTRIBUTE_END, 0);
+      w.add_string(IC_TP_COLUMN_NAME, column.name);
+      w.add_u32(IC_TP_COLUMN_ID, id as u32);
+      w.add_u32(IC_TP_COLUMN_TYPE, column.type_code);
+      w.add_u32(IC_TP_COLUMN_LENGTH, column.length);
+      w.add_u32(IC_TP_COLUMN_IN_KEY, column.key as u32);
+      w.add_u32(IC_TP_COLUMN_NULLABLE, column.nullable as u32);
+      w.add_u32(IC_TP_COLUMN_PRECISION, column.charset << 16);
+      w.add_u32(IC_TP_COLUMN_ARRAY_KIND, column.array_kind);
+      w.add_u32(IC_TP_COLUMN_END, 0);
       id += 1;
     }
     let info = parse_table_info(w.words()).expect("parsed");
@@ -555,7 +553,7 @@ mod tests {
 
   /// An attribute header, as the words of a write carry it.
   fn head(attr_id: u32, size: u32) -> u32 {
-    attr_header::attr_header(attr_id, size)
+    column_header::column_header(attr_id, size)
   }
 
   /// Words from bytes, padding the last word with zeros.
@@ -588,21 +586,21 @@ mod tests {
     // A unique index over name: the index's own table has name as its
     // key and a hidden column after it.
     let mut w = PropertyWriter::new();
-    w.add_string(IC_DTI_TABLE_NAME, "sys/def/1/uk$unique");
-    w.add_u32(IC_DTI_NO_OF_ATTRIBUTES, 2);
-    w.add_string(IC_DTI_ATTRIBUTE_NAME, "name");
-    w.add_u32(IC_DTI_ATTRIBUTE_ID, 0);
-    w.add_u32(IC_DTI_ATTRIBUTE_EXT_TYPE, IC_NDB_TYPE_VARCHAR);
-    w.add_u32(IC_DTI_ATTRIBUTE_EXT_LENGTH, 20);
-    w.add_u32(IC_DTI_ATTRIBUTE_KEY, 1);
-    w.add_u32(IC_DTI_ATTRIBUTE_EXT_PRECISION, 8 << 16);
-    w.add_u32(IC_DTI_ATTRIBUTE_ARRAY_TYPE, IC_ARRAY_TYPE_SHORT_VAR);
-    w.add_u32(IC_DTI_ATTRIBUTE_END, 0);
-    w.add_string(IC_DTI_ATTRIBUTE_NAME, "NDB$PK");
-    w.add_u32(IC_DTI_ATTRIBUTE_ID, 1);
-    w.add_u32(IC_DTI_ATTRIBUTE_EXT_TYPE, IC_NDB_TYPE_BIGINT);
-    w.add_u32(IC_DTI_ATTRIBUTE_EXT_LENGTH, 1);
-    w.add_u32(IC_DTI_ATTRIBUTE_END, 0);
+    w.add_string(IC_TP_TABLE_NAME, "sys/def/1/uk$unique");
+    w.add_u32(IC_TP_COLUMN_COUNT, 2);
+    w.add_string(IC_TP_COLUMN_NAME, "name");
+    w.add_u32(IC_TP_COLUMN_ID, 0);
+    w.add_u32(IC_TP_COLUMN_TYPE, IC_TYPE_VARCHAR);
+    w.add_u32(IC_TP_COLUMN_LENGTH, 20);
+    w.add_u32(IC_TP_COLUMN_IN_KEY, 1);
+    w.add_u32(IC_TP_COLUMN_PRECISION, 8 << 16);
+    w.add_u32(IC_TP_COLUMN_ARRAY_KIND, IC_ARRAY_KIND_SHORT_VARSIZE);
+    w.add_u32(IC_TP_COLUMN_END, 0);
+    w.add_string(IC_TP_COLUMN_NAME, "NDB$PK");
+    w.add_u32(IC_TP_COLUMN_ID, 1);
+    w.add_u32(IC_TP_COLUMN_TYPE, IC_TYPE_BIGINT);
+    w.add_u32(IC_TP_COLUMN_LENGTH, 1);
+    w.add_u32(IC_TP_COLUMN_END, 0);
     let info = parse_table_info(w.words()).expect("parsed");
     let index = IndexDef::new(info, Arc::clone(&t));
     let rec = Record::default_for(&t, None).expect("record");

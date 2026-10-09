@@ -2,13 +2,16 @@
 // Licensed under the MIT License. See LICENSE in the repository root.
 
 //! `ic_desc`: describe a table as the data nodes' dictionary sees it,
-//! the way `ndb_desc` does.
+//! much as the reference's own table description tool does.
 //!
 //! ```text
 //!   ic_desc -c localhost:1186 -d ictest t1
 //!   ic_desc -c localhost:1186 -d ictest t1 t2 --debug-level 1024
 //!   ic_desc -c localhost:1186 -d ictest t1 --watch 60
 //!   ic_desc -c localhost:1186 -d ictest t1 --record
+//!   ic_desc -c localhost:1186 --collation latin1_swedish_ci --weights
+//!   ic_desc -c localhost:1186 --collation 8 --all-weights
+//!   ic_desc -c localhost:1186 --charset utf8mb4 --weights
 //! ```
 //!
 //! It starts the Data API, makes one connection as a user thread does,
@@ -31,25 +34,36 @@
 //!
 //! `--record` also prints the default record over the table: where each
 //! field lies in the row, every one on a word, and its null bit.
+//!
+//! `--collation` describes a collation instead, by name or by the number
+//! a column's description carries, and `--charset` a character set's
+//! default collation, as a data node's dictionary describes it.
+//! `--weights` also fetches its weights, in as many round trips as it
+//! takes, and prints how many there are and the weight strings of a few
+//! telling characters; `--all-weights` prints every code point's and
+//! every contraction's, one a line, to compare with another source.
 
 use ic_apic::mgm_client;
 use std::sync::Arc;
 
 use ic_apid::apid_conn::ApidConnection;
 use ic_apid::apid_global::ApidGlobal;
+use ic_apid::collation_client;
+use ic_apid::collation_client::Collation;
 use ic_apid::dict_cache::TableDef;
 use ic_apid::dict_client;
 use ic_apid::record::Record;
-use ic_ndb_signals::dict_tab_info;
-use ic_ndb_signals::dict_tab_info::AttributeInfo;
-use ic_ndb_signals::dict_tab_info::HashMapInfo;
-use ic_ndb_signals::dict_tab_info::TableInfo;
 use ic_port::options::OptionEntry;
 use ic_port::options::OptionKind;
 use ic_port::options::OptionParser;
 use ic_port::IcError;
+use ic_signals::collation_desc;
+use ic_signals::table_props;
+use ic_signals::table_props::ColumnProps;
+use ic_signals::table_props::HashMapProps;
+use ic_signals::table_props::TableProps;
 
-const OPTIONS: [OptionEntry; 6] = [
+const OPTIONS: [OptionEntry; 10] = [
   OptionEntry {
     long_name: "ndb-connectstring",
     short_name: b'c',
@@ -86,6 +100,30 @@ const OPTIONS: [OptionEntry; 6] = [
     kind: OptionKind::Flag,
     help: "Also print the default record over each table",
   },
+  OptionEntry {
+    long_name: "collation",
+    short_name: 0,
+    kind: OptionKind::Str,
+    help: "Describe this collation, by name or number, not tables",
+  },
+  OptionEntry {
+    long_name: "charset",
+    short_name: 0,
+    kind: OptionKind::Str,
+    help: "Describe this character set's default collation",
+  },
+  OptionEntry {
+    long_name: "weights",
+    short_name: 0,
+    kind: OptionKind::Flag,
+    help: "With a collation: fetch its weights and show a few",
+  },
+  OptionEntry {
+    long_name: "all-weights",
+    short_name: 0,
+    kind: OptionKind::Flag,
+    help: "With a collation: print every weight string",
+  },
 ];
 
 fn main() {
@@ -110,7 +148,10 @@ fn run() -> i32 {
   // Seconds since the start on every line, so that a pause can be seen.
   ic_port::debug::set_timestamp(debug_level != 0);
   let tables: Vec<String> = parser.positional().to_vec();
-  if tables.is_empty() {
+  let collation = parser.get_string_or("collation", "");
+  let charset = parser.get_string_or("charset", "");
+  let asking_collation = !collation.is_empty() || !charset.is_empty();
+  if tables.is_empty() && !asking_collation {
     println!("Name at least one table, for example: ic_desc -d test t1");
     return 1;
   }
@@ -153,9 +194,187 @@ fn run() -> i32 {
   };
   let watch = parser.get_int_or("watch", 0) as u32;
   let record = parser.get_flag("record");
-  let code = describe_all(&global, &database, &tables, watch, record);
+  let all = parser.get_flag("all-weights");
+  let weights = parser.get_flag("weights") || all;
+  let code = if asking_collation {
+    describe_collation(&global, &collation, &charset, weights, all)
+  } else {
+    describe_all(&global, &database, &tables, watch, record)
+  };
   global.stop();
   code
+}
+
+/// Ask a data node for a collation, and print what it says.
+fn describe_collation(
+  global: &ApidGlobal,
+  collation: &str,
+  charset: &str,
+  weights: bool,
+  all: bool,
+) -> i32 {
+  if global.wait_for_first_started(15_000) == 0 {
+    println!("No data node is started, so there is nobody to ask");
+    return 1;
+  }
+  let mut conn = match global.create_connection() {
+    Ok(conn) => conn,
+    Err(e) => {
+      report("Could not make a connection", &e);
+      return 1;
+    }
+  };
+  let by_charset = collation_desc::IC_COLLATION_BY_CHARSET;
+  let by_name = collation_desc::IC_COLLATION_BY_NAME;
+  let fetched = if !charset.is_empty() {
+    collation_client::describe_by_name(&mut conn, by_charset, charset, weights)
+  } else {
+    match collation.parse::<u32>() {
+      Ok(number) => {
+        collation_client::describe_by_number(&mut conn, number, weights)
+      }
+      Err(_) => collation_client::describe_by_name(
+        &mut conn, by_name, collation, weights,
+      ),
+    }
+  };
+  match fetched {
+    Ok(found) => {
+      print_collation(&found, weights, all);
+      0
+    }
+    Err(e) => {
+      report("Could not describe the collation", &e);
+      1
+    }
+  }
+}
+
+fn print_collation(found: &Collation, weights: bool, all: bool) {
+  let desc = &found.desc;
+  println!("-- collation {} ({}) --", desc.collation_name, desc.number);
+  println!("Character set: {}", desc.charset_name);
+  println!("Default collation of the set: {}", desc.default_number);
+  println!("Binary collation of the set: {}", desc.binary_number);
+  println!("Flags: {}", collation_flags(desc.flags));
+  println!(
+    "Bytes a character: {} to {}",
+    desc.min_char_bytes, desc.max_char_bytes
+  );
+  println!("Sort-key bytes per byte: {}", desc.sort_key_growth);
+  println!(
+    "Case growth: upper {}, lower {}",
+    desc.upper_case_growth, desc.lower_case_growth
+  );
+  println!("Pad byte: 0x{:02x}", desc.pad_byte);
+  println!("Weight levels compared: {}", desc.weight_levels);
+  println!(
+    "Sorts from U+{:04X} to U+{:04X}",
+    desc.min_sort_char, desc.max_sort_char
+  );
+  println!(
+    "Answered by node {} in {} round trip(s)",
+    found.node_id, found.round_trips
+  );
+  if !weights {
+    return;
+  }
+  let mut covered: u64 = 0;
+  for run in &found.runs {
+    covered += run.count as u64;
+  }
+  println!(
+    "Weights: {} runs covering {} code points, {} contractions",
+    found.runs.len(),
+    covered,
+    found.contractions.len()
+  );
+  // A few telling characters: the space, A and a, B and b, Ä and ä, é.
+  let samples: [u32; 8] = [0x20, 0x41, 0x61, 0x42, 0x62, 0xC4, 0xE4, 0xE9];
+  let mut out: Vec<u8> = Vec::new();
+  for code_point in samples {
+    let shown = char::from_u32(code_point).unwrap_or('?');
+    if weight_of(found, code_point, &mut out) {
+      println!("  U+{:04X} '{}': {}", code_point, shown, hex(&out));
+    } else {
+      println!("  U+{:04X} '{}': not in the set", code_point, shown);
+    }
+  }
+  if !all {
+    return;
+  }
+  for run in &found.runs {
+    let mut k: u32 = 0;
+    while k < run.count {
+      run.weight_of(k, &mut out);
+      println!("U+{:04X} {}", run.first + k, hex(&out));
+      k += 1;
+    }
+  }
+  for contraction in &found.contractions {
+    let mut points = String::new();
+    for code_point in &contraction.code_points {
+      if !points.is_empty() {
+        points.push(' ');
+      }
+      points.push_str(&format!("U+{:04X}", code_point));
+    }
+    let context = if contraction.previous_context {
+      " (second weighed by the first)"
+    } else {
+      ""
+    };
+    println!("{} {}{}", points, hex(&contraction.weight), context);
+  }
+}
+
+/// The weight string of one code point, if the set has it.
+fn weight_of(found: &Collation, code_point: u32, out: &mut Vec<u8>) -> bool {
+  for run in &found.runs {
+    if code_point >= run.first && code_point - run.first < run.count {
+      run.weight_of(code_point - run.first, out);
+      return true;
+    }
+  }
+  false
+}
+
+fn hex(bytes: &[u8]) -> String {
+  let mut text = String::new();
+  for byte in bytes {
+    text.push_str(&format!("{:02x}", byte));
+  }
+  if text.is_empty() {
+    text.push_str("(empty)");
+  }
+  text
+}
+
+fn collation_flags(flags: u32) -> String {
+  let names: [(u32, &str); 6] = [
+    (collation_desc::IC_COLLATION_DEFAULT, "the set's default"),
+    (collation_desc::IC_COLLATION_BINARY, "binary order"),
+    (collation_desc::IC_COLLATION_UNICODE, "Unicode"),
+    (
+      collation_desc::IC_COLLATION_CASE_SENSITIVE,
+      "case sensitive",
+    ),
+    (collation_desc::IC_COLLATION_PURE_ASCII, "pure ASCII"),
+    (collation_desc::IC_COLLATION_NO_PAD, "no pad"),
+  ];
+  let mut text = String::new();
+  for (bit, name) in names {
+    if (flags & bit) != 0 {
+      if !text.is_empty() {
+        text.push_str(", ");
+      }
+      text.push_str(name);
+    }
+  }
+  if text.is_empty() {
+    text.push_str("none");
+  }
+  text
 }
 
 fn describe_all(
@@ -236,7 +455,7 @@ fn print_default_record(table: &Arc<TableDef>) {
       println!(
         "{} {}: offset {}, {} bytes{}",
         name,
-        dict_tab_info::type_name(field.field_type()),
+        table_props::type_name(field.field_type()),
         field.offset(),
         field.size(),
         null
@@ -296,11 +515,12 @@ fn watch_tables(
   }
 }
 
-fn print_table(table: &TableInfo, map: Option<&HashMapInfo>) {
-  // The lines and their order are ndb_desc's, so that the two can be
-  // compared line by line. Ours alone come at the end.
+fn print_table(table: &TableProps, map: Option<&HashMapProps>) {
+  // The lines follow the reference's own table description tool in
+  // what they show and in which order, in our words, so that the two
+  // can be compared by meaning. Ours alone come at the end.
   println!("-- {} --", table.table_name());
-  // ndb_desc prints the whole word. Its two halves count different
+  // The reference prints the whole word. Its two halves count different
   // things, online changes above and offline changes below, so they
   // are shown apart.
   println!(
@@ -308,29 +528,29 @@ fn print_table(table: &TableInfo, map: Option<&HashMapInfo>) {
     table.version_upper(),
     table.version_lower()
   );
-  println!("Fragment type: {}", fragment_type_name(table.fragment_type));
-  println!("K Value: {}", table.kvalue);
-  println!("Min load factor: {}", table.min_load_factor);
-  println!("Max load factor: {}", table.max_load_factor);
+  println!("Fragment type: {}", fragment_kind_name(table.fragment_kind));
+  println!("Linear hash k: {}", table.linear_hash_k);
+  println!("Min fill: {}", table.min_fill);
+  println!("Max fill: {}", table.max_fill);
   println!("Temporary table: {}", yes_no(table.temporary));
-  println!("Number of attributes: {}", table.no_of_attributes);
-  println!("Number of primary keys: {}", table.no_of_key_attr);
-  println!("Length of frm data: {}", table.mysql_metadata_len);
+  println!("Number of attributes: {}", table.column_count);
+  println!("Number of primary keys: {}", table.key_column_count);
+  println!("SQL metadata length: {}", table.sql_metadata_len);
   println!("Max Rows: {}", table.max_rows);
   println!("Row Checksum: {}", table.row_checksum as u32);
   println!("Row GCI: {}", table.row_gci as u32);
-  println!("SingleUserMode: {}", table.single_user_mode);
-  println!("ForceVarPart: {}", table.force_var_part as u32);
-  println!("PartitionCount: {}", table.partition_count);
-  println!("FragmentCount: {}", table.fragment_count);
+  println!("Single user: {}", table.single_user);
+  println!("Force varsize part: {}", table.force_varsize_part as u32);
+  println!("Partitions: {}", table.partition_count);
+  println!("Fragments: {}", table.fragment_count);
   println!(
-    "PartitionBalance: {}",
+    "Partition balance: {}",
     partition_balance_name(table.partition_balance)
   );
-  println!("ExtraRowGciBits: {}", table.extra_row_gci_bits);
-  println!("ExtraRowAuthorBits: {}", table.extra_row_author_bits);
+  println!("Extra GCI bits: {}", table.extra_gci_bits);
+  println!("Extra author bits: {}", table.extra_author_bits);
   // What a table is once fetched; the reference prints its own state.
-  println!("TableStatus: Retrieved");
+  println!("Status: fetched");
   let mut options: Vec<&str> = Vec::new();
   if table.read_backup {
     options.push("readbackup");
@@ -343,10 +563,13 @@ fn print_table(table: &TableInfo, map: Option<&HashMapInfo>) {
   }
   println!("Table options: {}", options.join(", "));
   if let Some(map) = map {
-    println!("HashMap: {}", map.name);
+    println!("Hash map: {}", map.name);
   }
-  if table.ttl_sec != dict_tab_info::IC_RNIL {
-    println!("TTL: {} s on column {}", table.ttl_sec, table.ttl_column_no);
+  if table.ttl_seconds != table_props::IC_NULL_PTR {
+    println!(
+      "TTL: {} s on column {}",
+      table.ttl_seconds, table.ttl_column
+    );
   }
   println!("-- Attributes --");
   for attr in &table.attributes {
@@ -354,8 +577,8 @@ fn print_table(table: &TableInfo, map: Option<&HashMapInfo>) {
   }
 }
 
-/// What ndb_desc does not show, after everything it does.
-fn print_own_lines(table: &TableInfo, map: Option<&HashMapInfo>) {
+/// What the reference's tool does not show, after everything it does.
+fn print_own_lines(table: &TableProps, map: Option<&HashMapProps>) {
   println!("-- iClaustron --");
   println!("Database: {}", table.database());
   println!("Table id: {}", table.table_id);
@@ -376,15 +599,15 @@ fn print_own_lines(table: &TableInfo, map: Option<&HashMapInfo>) {
   }
 }
 
-/// The indexes, as ndb_desc lists them: first the primary key, which
-/// is the table itself rather than an index of its own, then every
-/// index in id order, each with its columns. The list comes from the
-/// dictionary; each index is then bound by name.
+/// The indexes, as the reference's tool lists them: first the primary
+/// key, which is the table itself rather than an index of its own, then
+/// every index in id order, each with its columns. The list comes from
+/// the dictionary; each index is then bound by name.
 fn print_indexes(
   conn: &mut ApidConnection,
   database: &str,
   table_name: &str,
-  table: &TableInfo,
+  table: &TableProps,
 ) {
   // The reference prints the heading with a space at its end.
   println!("-- Indexes -- ");
@@ -394,7 +617,7 @@ fn print_indexes(
       key_names.push(&attr.name);
     }
   }
-  println!("PRIMARY KEY({}) - UniqueHashIndex", key_names.join(", "));
+  println!("PRIMARY KEY({}) - unique hash index", key_names.join(", "));
   let listed = dict_client::list_dependents(conn, table.table_id);
   let mut objects = match listed {
     Ok(objects) => objects,
@@ -431,11 +654,11 @@ fn print_indexes(
   }
 }
 
-/// What ndb_desc calls an index type, or nothing for other objects.
+/// An index's kind, or nothing for other objects.
 fn index_type_name(object_type: u32) -> &'static str {
   match object_type {
-    dict_tab_info::IC_TABLE_TYPE_UNIQUE_HASH_INDEX => "UniqueHashIndex",
-    dict_tab_info::IC_TABLE_TYPE_ORDERED_INDEX => "OrderedIndex",
+    table_props::IC_OBJECT_KIND_UNIQUE_INDEX => "unique hash index",
+    table_props::IC_OBJECT_KIND_ORDERED_INDEX => "ordered index",
     _ => "",
   }
 }
@@ -447,9 +670,9 @@ fn yes_no(on: bool) -> &'static str {
   "no"
 }
 
-/// One column as `ndb_desc` shows it: name, type with its sizes, then
-/// flags.
-fn describe_attribute(attr: &AttributeInfo) -> String {
+/// One column as the reference's tool shows it: name, type with its
+/// sizes, then flags.
+fn describe_attribute(attr: &ColumnProps) -> String {
   let mut line = format!("{} {}", attr.name, type_with_sizes(attr));
   // A primary key column cannot be NULL, so the reference says only
   // that it is a key.
@@ -463,16 +686,16 @@ fn describe_attribute(attr: &AttributeInfo) -> String {
   if attr.distribution_key {
     line.push_str(" DISTRIBUTION KEY");
   }
-  line.push_str(" AT=");
-  line.push_str(array_type_name(attr.array_type));
-  line.push_str(" ST=");
-  if attr.storage_type == dict_tab_info::IC_STORAGE_DISK {
+  line.push_str(" array=");
+  line.push_str(array_kind_name(attr.array_kind));
+  line.push_str(" storage=");
+  if attr.storage_kind == table_props::IC_STORAGE_DISK {
     line.push_str("DISK");
   } else {
     line.push_str("MEMORY");
   }
   if attr.auto_increment {
-    line.push_str(" AUTO_INCR");
+    line.push_str(" AUTO_INCREMENT");
   }
   if attr.dynamic {
     line.push_str(" DYNAMIC");
@@ -487,42 +710,42 @@ fn describe_attribute(attr: &AttributeInfo) -> String {
 /// A default value as text: numbers and text as themselves, anything
 /// else as hex. The reference also formats decimals and times; we show
 /// those in hex for now.
-fn format_default(attr: &AttributeInfo) -> String {
+fn format_default(attr: &ColumnProps) -> String {
   let bytes = &attr.default_value;
-  let t = attr.ext_type;
-  if t == dict_tab_info::IC_NDB_TYPE_TINYINT
-    || t == dict_tab_info::IC_NDB_TYPE_SMALLINT
-    || t == dict_tab_info::IC_NDB_TYPE_MEDIUMINT
-    || t == dict_tab_info::IC_NDB_TYPE_INT
-    || t == dict_tab_info::IC_NDB_TYPE_BIGINT
+  let t = attr.type_code;
+  if t == table_props::IC_TYPE_TINYINT
+    || t == table_props::IC_TYPE_SMALLINT
+    || t == table_props::IC_TYPE_MEDIUMINT
+    || t == table_props::IC_TYPE_INT
+    || t == table_props::IC_TYPE_BIGINT
   {
     return signed_of(bytes).to_string();
   }
-  if t == dict_tab_info::IC_NDB_TYPE_TINYUNSIGNED
-    || t == dict_tab_info::IC_NDB_TYPE_SMALLUNSIGNED
-    || t == dict_tab_info::IC_NDB_TYPE_MEDIUMUNSIGNED
-    || t == dict_tab_info::IC_NDB_TYPE_UNSIGNED
-    || t == dict_tab_info::IC_NDB_TYPE_BIGUNSIGNED
+  if t == table_props::IC_TYPE_TINYUNSIGNED
+    || t == table_props::IC_TYPE_SMALLUNSIGNED
+    || t == table_props::IC_TYPE_MEDIUMUNSIGNED
+    || t == table_props::IC_TYPE_UNSIGNED
+    || t == table_props::IC_TYPE_BIGUNSIGNED
   {
     return unsigned_of(bytes).to_string();
   }
-  if t == dict_tab_info::IC_NDB_TYPE_FLOAT && bytes.len() == 4 {
+  if t == table_props::IC_TYPE_FLOAT && bytes.len() == 4 {
     let value = f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
     return value.to_string();
   }
-  if t == dict_tab_info::IC_NDB_TYPE_DOUBLE && bytes.len() == 8 {
+  if t == table_props::IC_TYPE_DOUBLE && bytes.len() == 8 {
     let mut raw: [u8; 8] = [0; 8];
     raw.copy_from_slice(bytes);
     return f64::from_le_bytes(raw).to_string();
   }
-  if t == dict_tab_info::IC_NDB_TYPE_CHAR {
+  if t == table_props::IC_TYPE_CHAR {
     let text = String::from_utf8_lossy(bytes);
     return text.trim_end_matches(' ').to_string();
   }
-  if t == dict_tab_info::IC_NDB_TYPE_VARCHAR && !bytes.is_empty() {
+  if t == table_props::IC_TYPE_VARCHAR && !bytes.is_empty() {
     return String::from_utf8_lossy(&bytes[1..]).into_owned();
   }
-  if t == dict_tab_info::IC_NDB_TYPE_LONGVARCHAR && bytes.len() >= 2 {
+  if t == table_props::IC_TYPE_LONGVARCHAR && bytes.len() >= 2 {
     return String::from_utf8_lossy(&bytes[2..]).into_owned();
   }
   let mut hex = String::from("0x");
@@ -554,46 +777,46 @@ fn signed_of(bytes: &[u8]) -> i64 {
   ((raw << shift) as i64) >> shift
 }
 
-fn type_with_sizes(attr: &AttributeInfo) -> String {
-  let name = dict_tab_info::type_name(attr.ext_type);
+fn type_with_sizes(attr: &ColumnProps) -> String {
+  let name = table_props::type_name(attr.type_code);
   if attr.is_char_type() {
     return format!("{}({};charset {})", name, attr.length, attr.charset);
   }
-  let t = attr.ext_type;
-  if t == dict_tab_info::IC_NDB_TYPE_DECIMAL
-    || t == dict_tab_info::IC_NDB_TYPE_DECIMALUNSIGNED
-    || t == dict_tab_info::IC_NDB_TYPE_OLDDECIMAL
-    || t == dict_tab_info::IC_NDB_TYPE_OLDDECIMALUNSIGNED
+  let t = attr.type_code;
+  if t == table_props::IC_TYPE_DECIMAL
+    || t == table_props::IC_TYPE_DECIMALUNSIGNED
+    || t == table_props::IC_TYPE_OLDDECIMAL
+    || t == table_props::IC_TYPE_OLDDECIMALUNSIGNED
   {
     return format!("{}({},{})", name, attr.precision, attr.scale);
   }
-  if t == dict_tab_info::IC_NDB_TYPE_BINARY
-    || t == dict_tab_info::IC_NDB_TYPE_VARBINARY
-    || t == dict_tab_info::IC_NDB_TYPE_LONGVARBINARY
-    || t == dict_tab_info::IC_NDB_TYPE_BIT
+  if t == table_props::IC_TYPE_BINARY
+    || t == table_props::IC_TYPE_VARBINARY
+    || t == table_props::IC_TYPE_LONGVARBINARY
+    || t == table_props::IC_TYPE_BIT
   {
     return format!("{}({})", name, attr.length);
   }
-  if t == dict_tab_info::IC_NDB_TYPE_TIME2
-    || t == dict_tab_info::IC_NDB_TYPE_DATETIME2
-    || t == dict_tab_info::IC_NDB_TYPE_TIMESTAMP2
+  if t == table_props::IC_TYPE_TIME2
+    || t == table_props::IC_TYPE_DATETIME2
+    || t == table_props::IC_TYPE_TIMESTAMP2
   {
     return format!("{}({})", name, attr.precision);
   }
   name.to_string()
 }
 
-fn array_type_name(array_type: u32) -> &'static str {
-  match array_type {
-    dict_tab_info::IC_ARRAY_TYPE_SHORT_VAR => "SHORT_VAR",
-    dict_tab_info::IC_ARRAY_TYPE_MEDIUM_VAR => "MEDIUM_VAR",
-    _ => "FIXED",
+fn array_kind_name(array_kind: u32) -> &'static str {
+  match array_kind {
+    table_props::IC_ARRAY_KIND_SHORT_VARSIZE => "short varsize",
+    table_props::IC_ARRAY_KIND_LONG_VARSIZE => "long varsize",
+    _ => "fixed",
   }
 }
 
-fn fragment_type_name(fragment_type: u32) -> &'static str {
-  match fragment_type {
-    dict_tab_info::IC_FRAGMENT_TYPE_HASH_MAP => "HashMapPartition",
+fn fragment_kind_name(fragment_kind: u32) -> &'static str {
+  match fragment_kind {
+    table_props::IC_FRAGMENT_KIND_HASH_MAP => "hash map",
     _ => "Other",
   }
 }

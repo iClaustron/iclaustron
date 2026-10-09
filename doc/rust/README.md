@@ -1,4 +1,4 @@
-# Plan: iClaustron, a Rust NDB API
+# Plan: iClaustron, a Rust API for NDB
 
 A months-long project to build an MIT-licensed client library for RonDB
 26.10 data nodes in C-like Rust, following the iClaustron module structure

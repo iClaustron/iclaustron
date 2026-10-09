@@ -57,8 +57,9 @@ Removed from the header: `ic_create_savepoint`, `ic_rollback_savepoint`,
 
 ## Row binding: records (replaces the 64-bit slot array)
 
-Decision: the primary row model is a **record**, an NdbRecord-like
-description of a C struct, so that a C programmer writes
+Decision: the primary row model is a **record**, a description of a C
+struct of the kind the reference API also uses, so that a C programmer
+writes
 
 ```c
 struct my_row {
@@ -117,8 +118,9 @@ conversion is needed on the hot path):
 
 Rationale: the design's 64-bit slot array needed pointer chasing for every
 string and a second allocation model; the record is one memcpy per field
-in and out of `TRANSID_AI`/`ATTRINFO`, maps directly onto C structs and
-mysqld rows, and is what RDRS and every heavy NDB API user already use.
+in and out of `ROW_DATA_REP`/`COLUMN_DATA_ORD`, maps directly onto C
+structs and mysqld rows, and is what RonDB's REST server and every heavy
+user of the reference API already use.
 The slot array can be added later as a convenience record type if wanted.
 
 Types: `IC_FIELD_TYPE` grows to the full RonDB list (05 §8.1). Temporal
@@ -192,7 +194,7 @@ superseded by records; `set_partition_id(s)` stays (scans, later).
 
 - `abort_option`: `AbortOnError` (default for writes), `IgnoreError`
   (default and only option for committed reads).
-- `batch_hint`: `None | BatchSafe | BatchUnsafe` → TCKEYREQ bits 22/23.
+- `batch_hint`: `None | BatchSafe | BatchUnsafe` → KEY_OP_REQ bits 22/23.
 - Callbacks fire on the thread calling `poll`/`flush`; a `None` callback
   leaves the query for `get_next_executed_query`.
 - **No protocol detail reaches the caller.** A reply the data node sent
@@ -213,12 +215,12 @@ superseded by records; `set_partition_id(s)` stays (scans, later).
 - Transaction id: high 32 bits = this connection's block number,
   low 32 bits = a per-connection counter; unique in the process.
 - `commit_transaction(trans, cb, user_ref)` piggybacks the commit flag on
-  the last defined unsent query, else sends `TC_COMMITREQ`.
-  `rollback_transaction` likewise with `TCROLLBACKREQ`.
+  the last defined unsent query, else sends `COMMIT_REQ`.
+  `rollback_transaction` likewise with `ROLLBACK_REQ`.
 - Completed transactions report `CommitState::{Committed, RolledBack}`
-  and the GCI.
-- Node failure: queries on a dead TC node fail with a temporary
-  node-failure error; `TCKEY_FAILCONF` reports "committed anyway".
+  and the global checkpoint the commit belongs to.
+- Node failure: queries on a dead coordinator node fail with a temporary
+  node-failure error; `TAKEOVER_CONF` reports "committed anyway".
 - **Savepoints removed** (no kernel counterpart; no use case).
 - **Joinable transactions** (`joinable` flag, `join_transaction`) are
   dropped from 0.1. If needed later they require routing replies by
@@ -238,18 +240,18 @@ happen in `ic_evaluate_where`.
 
 ## Metadata
 
-`table_bind`/`index_bind`/`table_unbind` perform `GET_TABINFOREQ` and fill
+`table_bind`/`index_bind`/`table_unbind` perform `TABLE_DESC_REQ` and fill
 `TableDef`/`FieldDef`/`IndexDef` (field ids, types, sizes, nullability,
 key order, distribution keys, hash map, read-backup/fully-replicated
-flags, charsets, defaults, autoincrement flag). `list_tables(db)`.
+flags, charsets, defaults, autoincrement flag). `list_objects(db)`.
 `MetadataTransaction`/`AlterTable`/`AlterTablespace` stay in the header
 for the DDL release; the working C DDL code is carried over then.
 
 ## Program scaffolding
 
 `ApidGlobal::connect(connectstring, GlobalOptions)` does connect, node id
-allocation, config fetch and thread start in one call (mirroring
-`Ndb_cluster_connection::connect` + `wait_until_ready`). `GlobalOptions`
+allocation, config fetch and thread start in one call (mirroring the
+reference API's connect followed by its wait until ready). `GlobalOptions`
 covers node id, receive thread count (fixed for the life of the global),
 heartbeat interval, adaptive-send limits, connect timeouts. The `ic_start_program`/`ic_start_apid_program`/
 `ic_run_apid_program`/`ic_stop_apid_program` helpers stay for programs

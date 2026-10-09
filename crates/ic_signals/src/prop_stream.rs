@@ -9,9 +9,9 @@
 //!
 //! ```text
 //!   head word      (value type << 16) | key
-//!   Uint32         one word
-//!   Uint64         two words, low then high
-//!   String/Binary  a length word in bytes, then that many bytes padded
+//!   number         one word
+//!   long number    two words, low then high
+//!   text or bytes  a length word in bytes, then that many bytes padded
 //!                  to whole words
 //! ```
 //!
@@ -28,20 +28,19 @@
 //! keys it does not know: a newer data node may send more than an older
 //! reader has heard of.
 //!
-//! Verify: `SimpleProperties.hpp`, the value types, and
-//! `SimpleProperties.cpp`, `Writer::add` and `Reader::readValue`.
+//! Verify: chapter 05 §17.8.
 
 use ic_port::err;
 use ic_port::IcError;
 
 /// A value of one word.
-pub const IC_SP_UINT32: u32 = 0;
+pub const IC_PROP_UINT32: u32 = 0;
 /// A string: its length in bytes, then the bytes.
-pub const IC_SP_STRING: u32 = 1;
+pub const IC_PROP_STRING: u32 = 1;
 /// Bytes that are not text: their length, then the bytes.
-pub const IC_SP_BINARY: u32 = 2;
+pub const IC_PROP_BINARY: u32 = 2;
 /// A value of two words, the low word first.
-pub const IC_SP_UINT64: u32 = 4;
+pub const IC_PROP_UINT64: u32 = 4;
 
 /// One property's value.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -102,7 +101,7 @@ impl<'a> PropertyReader<'a> {
     let head = u32::from_be(self.words[self.pos]);
     let key = (head & 0xFFFF) as u16;
     let value_type = head >> 16;
-    if value_type == IC_SP_UINT32 {
+    if value_type == IC_PROP_UINT32 {
       let value = self.number_at(self.pos + 1)?;
       self.pos += 2;
       return Ok(Some(Property {
@@ -110,7 +109,7 @@ impl<'a> PropertyReader<'a> {
         value: PropertyValue::Uint32(value),
       }));
     }
-    if value_type == IC_SP_UINT64 {
+    if value_type == IC_PROP_UINT64 {
       let low = self.number_at(self.pos + 1)? as u64;
       let high = self.number_at(self.pos + 2)? as u64;
       self.pos += 3;
@@ -119,7 +118,7 @@ impl<'a> PropertyReader<'a> {
         value: PropertyValue::Uint64((high << 32) | low),
       }));
     }
-    if value_type != IC_SP_STRING && value_type != IC_SP_BINARY {
+    if value_type != IC_PROP_STRING && value_type != IC_PROP_BINARY {
       return Err(bad);
     }
     let len = self.number_at(self.pos + 1)? as usize;
@@ -137,7 +136,7 @@ impl<'a> PropertyReader<'a> {
     }
     bytes.truncate(len);
     self.pos = start + num_words;
-    if value_type == IC_SP_BINARY {
+    if value_type == IC_PROP_BINARY {
       return Ok(Some(Property {
         key,
         value: PropertyValue::Binary(bytes),
@@ -180,13 +179,13 @@ impl PropertyWriter {
 
   /// Add a number of one word.
   pub fn add_u32(&mut self, key: u16, value: u32) {
-    self.words.push(head(IC_SP_UINT32, key));
+    self.words.push(head(IC_PROP_UINT32, key));
     self.words.push(value.to_be());
   }
 
   /// Add a number of two words.
   pub fn add_u64(&mut self, key: u16, value: u64) {
-    self.words.push(head(IC_SP_UINT64, key));
+    self.words.push(head(IC_PROP_UINT64, key));
     self.words.push((value as u32).to_be());
     self.words.push(((value >> 32) as u32).to_be());
   }
@@ -196,12 +195,12 @@ impl PropertyWriter {
   pub fn add_string(&mut self, key: u16, text: &str) {
     let mut bytes: Vec<u8> = text.as_bytes().to_vec();
     bytes.push(0);
-    self.add_bytes(IC_SP_STRING, key, &bytes);
+    self.add_bytes(IC_PROP_STRING, key, &bytes);
   }
 
   /// Add bytes.
   pub fn add_binary(&mut self, key: u16, bytes: &[u8]) {
-    self.add_bytes(IC_SP_BINARY, key, bytes);
+    self.add_bytes(IC_PROP_BINARY, key, bytes);
   }
 
   fn add_bytes(&mut self, value_type: u32, key: u16, bytes: &[u8]) {
@@ -264,7 +263,7 @@ mod tests {
   fn numbers_are_stored_big_endian_inside_native_words() {
     // Written by hand as a data node lays it out, not by our writer, so
     // that the writer and the reader cannot share a mistake.
-    let words = [((IC_SP_UINT32 << 16) | 2).to_be(), 0x0102_0304u32.to_be()];
+    let words = [((IC_PROP_UINT32 << 16) | 2).to_be(), 0x0102_0304u32.to_be()];
     let got = read_all(&words);
     assert_eq!(got[0].key, 2);
     assert_eq!(got[0].as_u32(), 0x0102_0304);

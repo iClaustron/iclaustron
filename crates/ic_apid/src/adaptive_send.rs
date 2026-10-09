@@ -44,8 +44,8 @@ pub const IC_MAX_SENDS_TRACKED: u32 = 8;
 /// How long a send may be held back for company, in nanoseconds. The C
 /// reads it from the link's configuration (`socket_max_wait_in_nanos`,
 /// zero for never); until that parameter is read here it is the grace
-/// period the NDB API's own adaptive send allows itself
-/// (`TransporterFacade::threadMainSend`), 200 µs.
+/// period the reference API's own adaptive send allows itself, 200 µs.
+/// Verify: chapter 05 §17.12.
 pub const IC_DEFAULT_MAX_SEND_WAIT_NANOS: u64 = 200_000;
 /// How often the count of sends allowed to wait is adjusted.
 pub const IC_ADAPTIVE_ADJUST_NANOS: u64 = 1_000_000;

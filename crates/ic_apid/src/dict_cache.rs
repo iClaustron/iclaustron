@@ -22,7 +22,7 @@
 //! An object stops being valid, and is let go of by the cache, when:
 //!
 //! 1. **The dictionary says the table changed.** Every data node sends
-//!    `ALTER_TABLE_REP` when a table is altered, and the master sends it
+//!    `TABLE_CHANGED_REP` when a table is altered, and the master sends it
 //!    when one is dropped, naming the table and the version that no
 //!    longer holds. The receive thread executes it here. An alteration
 //!    arrives once per data node, and only the first finds anything. A
@@ -55,26 +55,22 @@
 //! asking the dictionary. The receive thread takes it for a notice and
 //! when the last link goes, holding nothing else.
 //!
-//! Verify: `DictCache.cpp`, `GlobalDictCache::get_table`, `put`,
-//! `alter_table_rep` and `invalidate_all`; `ClusterMgr.cpp`, where the
-//! last link going clears the cache; `NdbDictionaryImpl.hpp`,
-//! `getIndexGlobal`; `NdbDictionaryImpl.cpp`, `internal_index_name`,
-//! `old_internal_index_name` and `create_index_obj_from_table`.
+//! Verify: chapter 05 §17.13.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use ic_ndb_signals::dict_tab_info;
-use ic_ndb_signals::dict_tab_info::AttributeInfo;
-use ic_ndb_signals::dict_tab_info::HashMapInfo;
-use ic_ndb_signals::dict_tab_info::TableInfo;
 use ic_port::err;
 use ic_port::sync::IcCond;
 use ic_port::sync::IcMutex;
 use ic_port::sync::IC_MUTEX_LEVEL_DICT;
 use ic_port::IcError;
+use ic_signals::table_props;
+use ic_signals::table_props::ColumnProps;
+use ic_signals::table_props::HashMapProps;
+use ic_signals::table_props::TableProps;
 
 use crate::apid_conn::ApidConnection;
 use crate::dict_client;
@@ -85,8 +81,8 @@ pub const IC_DICT_REFETCHES: u32 = 3;
 
 /// A table's description, shared by every thread that binds it.
 pub struct TableDef {
-  info: TableInfo,
-  hash_map: Option<Arc<HashMapInfo>>,
+  info: TableProps,
+  hash_map: Option<Arc<HashMapProps>>,
   valid: AtomicBool,
   /// By column id, the column's place in `info.attributes`, or
   /// `u32::MAX`: a column is found by index, not by a search, on paths
@@ -95,10 +91,10 @@ pub struct TableDef {
 }
 
 /// The place of each column in `attributes`, by column id.
-fn index_attributes(info: &TableInfo) -> Vec<u32> {
+fn index_attributes(info: &TableProps) -> Vec<u32> {
   let mut index: Vec<u32> = Vec::new();
   for (place, attr) in info.attributes.iter().enumerate() {
-    let id = attr.attribute_id as usize;
+    let id = attr.column_id as usize;
     if id >= index.len() {
       index.resize(id + 1, u32::MAX);
     }
@@ -122,8 +118,8 @@ impl std::fmt::Debug for TableDef {
 
 impl TableDef {
   pub(crate) fn new(
-    info: TableInfo,
-    hash_map: Option<Arc<HashMapInfo>>,
+    info: TableProps,
+    hash_map: Option<Arc<HashMapProps>>,
   ) -> TableDef {
     let attr_index = index_attributes(&info);
     TableDef {
@@ -135,7 +131,7 @@ impl TableDef {
   }
 
   /// Everything the dictionary said about the table.
-  pub fn info(&self) -> &TableInfo {
+  pub fn info(&self) -> &TableProps {
     &self.info
   }
 
@@ -163,20 +159,20 @@ impl TableDef {
   /// the attribute id signals name the column by.
   pub fn field_id(&self, name: &str) -> Result<u32, IcError> {
     match self.info.attribute(name) {
-      Some(attr) => Ok(attr.attribute_id),
+      Some(attr) => Ok(attr.column_id),
       None => Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
     }
   }
 
   /// A field, by its id.
-  pub fn field(&self, field_id: u32) -> Option<&AttributeInfo> {
+  pub fn field(&self, field_id: u32) -> Option<&ColumnProps> {
     let place = *self.attr_index.get(field_id as usize)?;
     self.info.attributes.get(place as usize)
   }
 
   /// Which fragment each key hash goes to, if the table is placed by a
   /// hash map.
-  pub fn hash_map(&self) -> Option<&HashMapInfo> {
+  pub fn hash_map(&self) -> Option<&HashMapProps> {
     self.hash_map.as_deref()
   }
 
@@ -194,7 +190,7 @@ impl TableDef {
 /// An index's description, for one version of its table, which it
 /// holds.
 pub struct IndexDef {
-  info: TableInfo,
+  info: TableProps,
   table: Arc<TableDef>,
   valid: AtomicBool,
 }
@@ -216,7 +212,7 @@ impl std::fmt::Debug for IndexDef {
 impl IndexDef {
   /// An index over one version of its table, as the dictionary
   /// described it.
-  pub(crate) fn new(info: TableInfo, table: Arc<TableDef>) -> IndexDef {
+  pub(crate) fn new(info: TableProps, table: Arc<TableDef>) -> IndexDef {
     IndexDef {
       info,
       table,
@@ -226,7 +222,7 @@ impl IndexDef {
 
   /// Everything the dictionary said about the index, which it describes
   /// as a table of its own.
-  pub fn info(&self) -> &TableInfo {
+  pub fn info(&self) -> &TableProps {
     &self.info
   }
 
@@ -263,12 +259,12 @@ impl IndexDef {
 
   /// A unique hash index, which a key operation can go through.
   pub fn is_unique(&self) -> bool {
-    self.info.table_type == dict_tab_info::IC_TABLE_TYPE_UNIQUE_HASH_INDEX
+    self.info.table_kind == table_props::IC_OBJECT_KIND_UNIQUE_INDEX
   }
 
   /// An ordered index, for range scans.
   pub fn is_ordered(&self) -> bool {
-    self.info.table_type == dict_tab_info::IC_TABLE_TYPE_ORDERED_INDEX
+    self.info.table_kind == table_props::IC_OBJECT_KIND_ORDERED_INDEX
   }
 
   /// False once the cache has let go of this object.
@@ -312,7 +308,7 @@ impl Entry {
 #[derive(Default)]
 struct CacheState {
   entries: BTreeMap<String, Entry>,
-  hash_maps: Vec<Arc<HashMapInfo>>,
+  hash_maps: Vec<Arc<HashMapProps>>,
 }
 
 /// What a thread found when it looked a name up.
@@ -388,7 +384,11 @@ impl DictCache {
     self.cond.broadcast();
   }
 
-  fn hash_map(&self, object_id: u32, version: u32) -> Option<Arc<HashMapInfo>> {
+  fn hash_map(
+    &self,
+    object_id: u32,
+    version: u32,
+  ) -> Option<Arc<HashMapProps>> {
     let state = self.state.lock();
     for map in &state.hash_maps {
       if map.object_id == object_id && map.version == version {
@@ -399,7 +399,7 @@ impl DictCache {
   }
 
   /// Keep a hash map, or the one another thread kept first.
-  fn add_hash_map(&self, map: HashMapInfo) -> Arc<HashMapInfo> {
+  fn add_hash_map(&self, map: HashMapProps) -> Arc<HashMapProps> {
     let mut state = self.state.lock();
     for kept in &state.hash_maps {
       if kept.object_id == map.object_id && kept.version == map.version {
@@ -578,9 +578,9 @@ fn fetch_table(
   name: &str,
 ) -> Result<TableDef, IcError> {
   let info = dict_client::get_table_named(conn, name)?;
-  let mut hash_map: Option<Arc<HashMapInfo>> = None;
-  if info.hash_map_object_id != dict_tab_info::IC_RNIL {
-    let id = info.hash_map_object_id;
+  let mut hash_map: Option<Arc<HashMapProps>> = None;
+  if info.hash_map_id != table_props::IC_NULL_PTR {
+    let id = info.hash_map_id;
     hash_map = match cache.hash_map(id, info.hash_map_version) {
       Some(map) => Some(map),
       None => {
@@ -664,10 +664,9 @@ fn fetch_index(
   table: &Arc<TableDef>,
 ) -> Result<IndexDef, IcError> {
   let info = dict_client::get_table_named(conn, name)?;
-  let is_index = info.table_type
-    == dict_tab_info::IC_TABLE_TYPE_UNIQUE_HASH_INDEX
-    || info.table_type == dict_tab_info::IC_TABLE_TYPE_ORDERED_INDEX;
-  if !is_index || info.primary_table_id != table.table_id() {
+  let is_index = info.table_kind == table_props::IC_OBJECT_KIND_UNIQUE_INDEX
+    || info.table_kind == table_props::IC_OBJECT_KIND_ORDERED_INDEX;
+  if !is_index || info.base_table_id != table.table_id() {
     return Err(IcError::new(err::IC_ERROR_NO_SUCH_TABLE));
   }
   Ok(IndexDef::new(info, Arc::clone(table)))
@@ -686,10 +685,10 @@ mod tests {
   }
 
   /// A description with every field at its default.
-  fn test_info() -> TableInfo {
-    let mut w = ic_ndb_signals::simple_properties::PropertyWriter::new();
-    w.add_string(dict_tab_info::IC_DTI_TABLE_NAME, "x/def/x");
-    dict_tab_info::parse_table_info(w.words()).expect("parsed")
+  fn test_info() -> TableProps {
+    let mut w = ic_signals::prop_stream::PropertyWriter::new();
+    w.add_string(table_props::IC_TP_TABLE_NAME, "x/def/x");
+    table_props::parse_table_info(w.words()).expect("parsed")
   }
 
   /// Fill a name as a fetching thread would.
@@ -783,7 +782,7 @@ mod tests {
     info.name = name.to_string();
     info.table_id = id;
     info.table_version = 1;
-    info.table_type = dict_tab_info::IC_TABLE_TYPE_UNIQUE_HASH_INDEX;
+    info.table_kind = table_props::IC_OBJECT_KIND_UNIQUE_INDEX;
     IndexDef::new(info, Arc::clone(table))
   }
 
@@ -842,7 +841,7 @@ mod tests {
   #[test]
   fn hash_maps_are_shared_by_id_and_version() {
     let cache = DictCache::new();
-    let map = HashMapInfo {
+    let map = HashMapProps {
       name: "DEFAULT-HASHMAP-3840-8".to_string(),
       object_id: 2,
       version: 1,

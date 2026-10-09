@@ -20,9 +20,9 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use ic_comm::connection::Connection;
-use ic_ndb_signals::header;
 use ic_port::err;
 use ic_port::IcError;
+use ic_signals::header;
 
 /// Words the buffer starts with, enough for several largest-sized
 /// messages before it has to grow.
@@ -419,11 +419,12 @@ pub fn check_receiver(
 #[cfg(test)]
 mod tests {
   use super::*;
-  use ic_ndb_signals::blocks::*;
-  use ic_ndb_signals::header::SignalHeader;
+  use ic_signals::blocks::*;
+  use ic_signals::header::SignalHeader;
 
-  fn a_signal(gsn: u16, data: &[u32]) -> Vec<u32> {
-    let header = SignalHeader::new(gsn, IC_BLOCK_QMGR, IC_BLOCK_API_CLUSTERMGR);
+  fn a_signal(sig_no: u16, data: &[u32]) -> Vec<u32> {
+    let header =
+      SignalHeader::new(sig_no, IC_BLOCK_MEMBERSHIP, IC_BLOCK_NODE_WATCH);
     let mut out: Vec<u32> = Vec::new();
     header::encode(&header, data, &[], false, &mut out).expect("encode");
     out
@@ -446,7 +447,7 @@ mod tests {
     assert!(reader.has_message());
     assert_eq!(reader.peek_len(), Some(signal.len()));
     let message = header::decode(reader.complete_words()).expect("decode");
-    assert_eq!(message.header.gsn(), 1);
+    assert_eq!(message.header.sig_no(), 1);
     assert_eq!(message.data, &[10, 20, 30]);
     let len = message.total_words;
     reader.consume(len);
@@ -487,7 +488,7 @@ mod tests {
       let len = {
         let message = header::decode(reader.complete_words()).expect("dec");
         seen += 1;
-        assert_eq!(message.header.gsn(), seen as u16);
+        assert_eq!(message.header.sig_no(), seen as u16);
         assert_eq!(message.data, &[seen; 3]);
         message.total_words
       };
@@ -510,7 +511,7 @@ mod tests {
     assert!(reader.has_message());
     let len = {
       let message = header::decode(reader.complete_words()).expect("dec");
-      assert_eq!(message.header.gsn(), 1);
+      assert_eq!(message.header.sig_no(), 1);
       message.total_words
     };
     reader.consume(len);
@@ -520,7 +521,7 @@ mod tests {
     reader.push_bytes(&second_bytes[5..]).expect("push");
     assert!(reader.has_message());
     let message = header::decode(reader.complete_words()).expect("dec");
-    assert_eq!(message.header.gsn(), 2);
+    assert_eq!(message.header.sig_no(), 2);
     assert_eq!(message.data, &[8, 9]);
   }
 
@@ -601,7 +602,7 @@ mod tests {
     let mut reader = SignalReader::new();
     reader.push_bytes(&as_bytes(&signal)).expect("push");
     let message = header::decode(reader.complete_words()).expect("decode");
-    assert!(check_receiver(&message, IC_BLOCK_API_CLUSTERMGR).is_ok());
+    assert!(check_receiver(&message, IC_BLOCK_NODE_WATCH).is_ok());
     assert!(check_receiver(&message, api_block_of_thread(0)).is_err());
   }
 }

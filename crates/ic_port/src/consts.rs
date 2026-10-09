@@ -7,10 +7,10 @@
 //! only served the cluster server and the other management programs are
 //! not carried over.
 
-/// NDB "null" reference value (RNIL).
-pub const IC_RNIL: u32 = 0xFFFF_FF00;
-/// NDB 16-bit "null" value (ZNIL).
-pub const IC_ZNIL: u32 = 0xFFFF;
+/// The null record pointer of the NDB protocol.
+pub const IC_NULL_PTR: u32 = 0xFFFF_FF00;
+/// The NDB protocol's 16-bit null value.
+pub const IC_NULL_16: u32 = 0xFFFF;
 /// All bits set, used as an undefined 32-bit value.
 pub const IC_MINUS_ONE: u32 = 0xFFFF_FFFF;
 /// Largest 32-bit value.
@@ -42,9 +42,9 @@ pub const IC_IP_ADDRESS_SIZE: usize = 128;
 /// Longest accepted configuration line.
 pub const IC_MAX_CONFIG_LINE_LEN: usize = 120;
 
-/// Default port of `ndb_mgmd` (the NDB management server).
+/// Default port of the management server.
 pub const IC_DEF_CLUSTER_SERVER_PORT: u16 = 1186;
-/// Default port of `ndb_mgmd` as text.
+/// Default port of the management server as text.
 pub const IC_DEF_CLUSTER_SERVER_PORT_STR: &str = "1186";
 /// Default port for iClaustron servers.
 pub const IC_DEF_PORT: u16 = 1187;
@@ -69,15 +69,16 @@ pub const IC_NDB_MAX_PRIO_LEVEL: u32 = 1;
 pub const IC_NDB_MAX_MAIN_MESSAGE_SIZE: u32 = 25;
 /// Kernel block numbers are below this value.
 pub const IC_NDB_MAX_MODULE_ID: u32 = 4096;
-/// First block number for API client threads (`MIN_API_BLOCK_NO`).
-/// Verify: RonDB `include/kernel/BlockNumbers.h:34`.
+/// First block number for API client threads.
+/// Verify: chapter 05 §17.1.
 pub const IC_NDB_MIN_MODULE_ID_FOR_THREADS: u32 = 32768;
-/// Block number that packed signals are addressed to (`API_PACKED`).
-/// Verify: RonDB `include/kernel/BlockNumbers.h:37`.
+/// Block number that packed signals are addressed to (`BUNDLE`).
+/// Verify: chapter 05 §17.1.
 pub const IC_NDB_PACKED_MODULE_ID: u32 = 2047;
-/// Fixed block number of the API cluster manager (`API_CLUSTERMGR`).
-/// Verify: RonDB `include/kernel/BlockNumbers.h:40`.
-pub const IC_NDB_API_CLUSTERMGR_MODULE_ID: u32 = 0x0FA2;
+/// Fixed block number of the block on an API node that watches the
+/// state of the other nodes (`NODE_WATCH`).
+/// Verify: chapter 05 §17.1.
+pub const IC_NDB_NODE_WATCH_MODULE_ID: u32 = 0x0FA2;
 /// Highest block number this library will address.
 pub const IC_MAX_MODULE_ID: u32 = 8192;
 /// Signal buffers preallocated per thread.
@@ -90,20 +91,20 @@ pub const IC_NDB_NORMAL_PRIO: u32 = 0;
 /// High NDB signal priority.
 pub const IC_NDB_HIGH_PRIO: u32 = 1;
 
-/// Kernel block QMGR (0xFC). Verify: `BlockNumbers.h`.
-pub const IC_NDB_QMGR_MODULE: u32 = 252;
-/// Kernel block DBTC (0xF5).
-pub const IC_NDB_TC_MODULE: u32 = 245;
-/// Kernel block DBDICT (0xFA).
+/// Kernel block MEMBERSHIP (0xFC). Verify: chapter 05 §17.1.
+pub const IC_NDB_MEMBERSHIP_MODULE: u32 = 252;
+/// Kernel block COORDINATOR (0xF5).
+pub const IC_NDB_COORD_MODULE: u32 = 245;
+/// Kernel block DICTIONARY (0xFA).
 pub const IC_NDB_DICT_MODULE: u32 = 250;
-/// Kernel block CMVMI (0xFE).
-pub const IC_NDB_CMVMI_MODULE: u32 = 254;
-/// Kernel block SUMA (0x101).
-pub const IC_NDB_SUMA_MODULE: u32 = 257;
-/// Kernel block DBINFO (0x107).
+/// Kernel block NODE_ADMIN (0xFE).
+pub const IC_NDB_NODE_ADMIN_MODULE: u32 = 254;
+/// Kernel block CHANGE_FEED (0x101).
+pub const IC_NDB_CHANGE_FEED_MODULE: u32 = 257;
+/// Kernel block INFO_TABLES (0x107).
 pub const IC_NDB_INFO_MODULE: u32 = 263;
-/// Kernel block TRPMAN (0x10A).
-pub const IC_NDB_TRPMAN_MODULE: u32 = 266;
+/// Kernel block LINK_ADMIN (0x10A).
+pub const IC_NDB_LINK_ADMIN_MODULE: u32 = 266;
 
 /// Seconds a thread waits before rechecking the stop flag.
 pub const IC_MAX_THREAD_WAIT_TIME: u32 = 60;
@@ -121,8 +122,8 @@ pub const IC_VERSION: u32 = 0x00_0100;
 /// iClaustron version string.
 pub const IC_VERSION_STR: &str = "iclaustron-0.1.0";
 /// NDB version announced to the cluster: RonDB 26.10.0 encoded as
-/// `(major << 16) | (minor << 8) | build`. Verify:
-/// RonDB `include/ndb_version.h.in:48-61`.
+/// `(major << 16) | (minor << 8) | build`.
+/// Verify: chapter 05 §17.1.
 pub const IC_NDB_VERSION: u32 = 0x1A_0A00;
 /// MySQL version announced to the cluster; RonDB uses the same number.
 pub const IC_MYSQL_VERSION: u32 = 0x1A_0A00;
@@ -136,7 +137,7 @@ pub const IC_PROTOCOL_BIT: u32 = 20;
 /// The largest node id the protocol itself can carry. A block
 /// reference packs the node id into its low 16 bits, so this cannot
 /// change without changing the protocol.
-/// Verify: RonDB `include/kernel/RefConvert.hpp`, `refToNode`.
+/// Verify: chapter 05 §17.1.
 pub const IC_MAX_NODE_ID_WIRE: u32 = 65535;
 
 /// The largest node id a cluster currently allows.
@@ -148,12 +149,12 @@ pub const IC_MAX_NODE_ID_WIRE: u32 = 65535;
 /// cluster with larger ids needs no change here. The constant exists
 /// only for a sanity check where no configuration is available yet,
 /// such as reading a connectstring.
-/// Verify: RonDB `include/kernel/ndb_limits.h:70`, `MAX_NODES_ID`.
+/// Verify: chapter 05 §17.1.
 pub const IC_MAX_NODE_ID: u32 = 8191;
 /// Highest node id a data node may have. Data nodes keep the small
 /// numbers, and this limit is set by how the kernel addresses them
 /// rather than by the size of a node id.
-/// Verify: `ndb_limits.h:62`, `MAX_DATA_NODE_ID`.
+/// Verify: chapter 05 §17.1.
 pub const IC_MAX_DATA_NODE_ID: u32 = 144;
 
 // Checked when the crate is compiled, not when tests are run. An API
@@ -164,7 +165,7 @@ const _: () = assert!(IC_MAX_NODE_ID >= 8191);
 const _: () = assert!(IC_MAX_NODE_ID < IC_MAX_NODE_ID_WIRE);
 const _: () = assert!(IC_MAX_DATA_NODE_ID < IC_MAX_NODE_ID);
 /// Highest number of data nodes in a RonDB cluster.
-/// Verify: `ndb_limits.h:44`, `ABS_MAX_NDB_NODES` less one.
+/// Verify: chapter 05 §17.1.
 pub const IC_MAX_NDB_DATA_NODES: u32 = 144;
 /// Highest number of user threads (connection objects) per process.
 pub const IC_MAX_THREAD_CONNECTIONS: u32 = 256;
@@ -174,8 +175,8 @@ pub const IC_MAX_APID_NUM_THREADS: u32 = 256;
 pub const IC_MAX_FILE_NAME_SIZE: usize = 255;
 /// Longest printed integer.
 pub const IC_MAX_INT_STRING: usize = 32;
-/// Largest row in bytes (`NDB_MAX_TUPLE_SIZE_IN_WORDS * 4`).
-/// Verify: RonDB `include/ndbapi/ndbapi_limits.h`.
+/// Largest row in bytes: the most words a row may hold, times four.
+/// Verify: chapter 05 §17.1.
 pub const IC_MAX_RECORD_SIZE: usize = 72000;
 /// Longest table name.
 pub const IC_MAX_TABLE_NAME_SIZE: usize = 512;

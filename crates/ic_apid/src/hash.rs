@@ -15,7 +15,7 @@
 //! exactly.
 //!
 //! **The hash** is the table's: MD5 for a table made before RonDB
-//! 22.10.1, XXH3 otherwise, as `HashFunctionFlag` says. What places the
+//! 22.10.1, XXH3 otherwise, as `IC_TP_HASH_FUNCTION` says. What places the
 //! key is the second word of the MD5 digest, or the high half of the
 //! XXH3 value. A table with RonDB's fanout partitioning hashes a base
 //! part and a detail part apart and combines them; that is not done
@@ -23,8 +23,8 @@
 //!
 //! **The partition** is the hash map's bucket at the hash modulo the
 //! map's length. The data nodes place a row the same way, and the
-//! `FRAGMENT` pseudo column reads back the partition a row landed in,
-//! which is how this was checked.
+//! `IC_COL_PARTITION` pseudo column reads back the partition a row
+//! landed in, which is how this was checked.
 //!
 //! **The node** comes from the table's replica data: the nodes holding
 //! each fragment. A read-backup table, which every table made by a
@@ -40,17 +40,11 @@
 //! yet. A wrong choice costs a hop inside the cluster, never a wrong
 //! answer: the coordinator forwards to wherever the row is.
 //!
-//! Verify: `Ndb.cpp`, `computeHash` with an `NdbRecord`, where the key
-//! is built and the second hash word taken, and `startTransaction` with
-//! a key, which goes on to `NdbImpl::select_node`; `rondb_hash.cpp`,
-//! `rondb_calc_hash`; `NdbDictionary.cpp`, where the hash map is looked
-//! up; `NdbDictionaryImpl.cpp`, `get_nodes` and
-//! `calculate_primary_replicas`; `ndb_cluster_connection.cpp`,
-//! `select_node`; `DbtupRoutines.cpp`, `read_pseudo`, `FRAGMENT`.
+//! Verify: chapter 05 §17.14.
 
-use ic_ndb_signals::dict_tab_info;
 use ic_port::err;
 use ic_port::IcError;
+use ic_signals::table_props;
 
 use crate::dict_cache::TableDef;
 use crate::record::Record;
@@ -116,7 +110,7 @@ fn distribution_fields(
       // Its collation's transform is needed first.
       return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
     }
-    let field = match key_rec.position_of(attr.attribute_id) {
+    let field = match key_rec.position_of(attr.column_id) {
       Some(position) => match key_rec.field(position) {
         Some(field) => field,
         None => return Err(IcError::new(err::IC_ERROR_KEY_RECORD)),
@@ -126,9 +120,9 @@ fn distribution_fields(
     let start = field.offset() as usize;
     let size = field.size() as usize;
     let value = &key_row[start..start + size];
-    let len = match attr.array_type {
-      dict_tab_info::IC_ARRAY_TYPE_SHORT_VAR => 1 + value[0] as usize,
-      dict_tab_info::IC_ARRAY_TYPE_MEDIUM_VAR => {
+    let len = match attr.array_kind {
+      table_props::IC_ARRAY_KIND_SHORT_VARSIZE => 1 + value[0] as usize,
+      table_props::IC_ARRAY_KIND_LONG_VARSIZE => {
         2 + value[0] as usize + 256 * value[1] as usize
       }
       _ => size,
@@ -159,7 +153,7 @@ pub fn partition_of(
   key_row: &[u8],
 ) -> Result<u32, IcError> {
   // A fanout of one, the default, is no fanout at all.
-  if table.info().partition_hash_fanout > 1 {
+  if table.info().fanout > 1 {
     return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
   }
   let map = match table.hash_map() {
@@ -332,25 +326,25 @@ pub fn primary_of(
 #[cfg(test)]
 mod tests {
   use super::*;
-  use ic_ndb_signals::dict_tab_info::parse_table_info;
-  use ic_ndb_signals::dict_tab_info::HashMapInfo;
-  use ic_ndb_signals::dict_tab_info::IC_ARRAY_TYPE_SHORT_VAR;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_ARRAY_TYPE;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_DKEY;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_END;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_EXT_LENGTH;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_EXT_PRECISION;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_EXT_TYPE;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_ID;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_KEY;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_NAME;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_HASH_FUNCTION;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_NO_OF_ATTRIBUTES;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_TABLE_NAME;
-  use ic_ndb_signals::dict_tab_info::IC_NDB_TYPE_INT;
-  use ic_ndb_signals::dict_tab_info::IC_NDB_TYPE_VARBINARY;
-  use ic_ndb_signals::dict_tab_info::IC_NDB_TYPE_VARCHAR;
-  use ic_ndb_signals::simple_properties::PropertyWriter;
+  use ic_signals::prop_stream::PropertyWriter;
+  use ic_signals::table_props::parse_table_info;
+  use ic_signals::table_props::HashMapProps;
+  use ic_signals::table_props::IC_ARRAY_KIND_SHORT_VARSIZE;
+  use ic_signals::table_props::IC_TP_COLUMN_ARRAY_KIND;
+  use ic_signals::table_props::IC_TP_COLUMN_COUNT;
+  use ic_signals::table_props::IC_TP_COLUMN_END;
+  use ic_signals::table_props::IC_TP_COLUMN_ID;
+  use ic_signals::table_props::IC_TP_COLUMN_IN_DIST_KEY;
+  use ic_signals::table_props::IC_TP_COLUMN_IN_KEY;
+  use ic_signals::table_props::IC_TP_COLUMN_LENGTH;
+  use ic_signals::table_props::IC_TP_COLUMN_NAME;
+  use ic_signals::table_props::IC_TP_COLUMN_PRECISION;
+  use ic_signals::table_props::IC_TP_COLUMN_TYPE;
+  use ic_signals::table_props::IC_TP_HASH_FUNCTION;
+  use ic_signals::table_props::IC_TP_TABLE_NAME;
+  use ic_signals::table_props::IC_TYPE_INT;
+  use ic_signals::table_props::IC_TYPE_VARBINARY;
+  use ic_signals::table_props::IC_TYPE_VARCHAR;
   use std::sync::Arc;
 
   /// `a INT` key and distribution key, `b VARBINARY(8)` key, `c INT`;
@@ -359,38 +353,38 @@ mod tests {
   /// default, one, which is no fanout.
   fn table(dkey_all: bool, new_hash: bool, charset: u32) -> Arc<TableDef> {
     let mut w = PropertyWriter::new();
-    w.add_string(IC_DTI_TABLE_NAME, "db/def/t");
-    w.add_u32(IC_DTI_NO_OF_ATTRIBUTES, 3);
+    w.add_string(IC_TP_TABLE_NAME, "db/def/t");
+    w.add_u32(IC_TP_COLUMN_COUNT, 3);
     if new_hash {
-      w.add_u32(IC_DTI_HASH_FUNCTION, 1);
+      w.add_u32(IC_TP_HASH_FUNCTION, 1);
     }
-    w.add_string(IC_DTI_ATTRIBUTE_NAME, "a");
-    w.add_u32(IC_DTI_ATTRIBUTE_ID, 0);
-    w.add_u32(IC_DTI_ATTRIBUTE_EXT_TYPE, IC_NDB_TYPE_INT);
-    w.add_u32(IC_DTI_ATTRIBUTE_EXT_LENGTH, 1);
-    w.add_u32(IC_DTI_ATTRIBUTE_KEY, 1);
-    w.add_u32(IC_DTI_ATTRIBUTE_DKEY, 1);
-    w.add_u32(IC_DTI_ATTRIBUTE_END, 0);
-    w.add_string(IC_DTI_ATTRIBUTE_NAME, "b");
-    w.add_u32(IC_DTI_ATTRIBUTE_ID, 1);
-    let mut kind = IC_NDB_TYPE_VARBINARY;
+    w.add_string(IC_TP_COLUMN_NAME, "a");
+    w.add_u32(IC_TP_COLUMN_ID, 0);
+    w.add_u32(IC_TP_COLUMN_TYPE, IC_TYPE_INT);
+    w.add_u32(IC_TP_COLUMN_LENGTH, 1);
+    w.add_u32(IC_TP_COLUMN_IN_KEY, 1);
+    w.add_u32(IC_TP_COLUMN_IN_DIST_KEY, 1);
+    w.add_u32(IC_TP_COLUMN_END, 0);
+    w.add_string(IC_TP_COLUMN_NAME, "b");
+    w.add_u32(IC_TP_COLUMN_ID, 1);
+    let mut kind = IC_TYPE_VARBINARY;
     if charset != 0 {
-      kind = IC_NDB_TYPE_VARCHAR;
+      kind = IC_TYPE_VARCHAR;
     }
-    w.add_u32(IC_DTI_ATTRIBUTE_EXT_TYPE, kind);
-    w.add_u32(IC_DTI_ATTRIBUTE_EXT_LENGTH, 8);
-    w.add_u32(IC_DTI_ATTRIBUTE_EXT_PRECISION, charset << 16);
-    w.add_u32(IC_DTI_ATTRIBUTE_ARRAY_TYPE, IC_ARRAY_TYPE_SHORT_VAR);
-    w.add_u32(IC_DTI_ATTRIBUTE_KEY, 1);
-    w.add_u32(IC_DTI_ATTRIBUTE_DKEY, dkey_all as u32);
-    w.add_u32(IC_DTI_ATTRIBUTE_END, 0);
-    w.add_string(IC_DTI_ATTRIBUTE_NAME, "c");
-    w.add_u32(IC_DTI_ATTRIBUTE_ID, 2);
-    w.add_u32(IC_DTI_ATTRIBUTE_EXT_TYPE, IC_NDB_TYPE_INT);
-    w.add_u32(IC_DTI_ATTRIBUTE_EXT_LENGTH, 1);
-    w.add_u32(IC_DTI_ATTRIBUTE_END, 0);
+    w.add_u32(IC_TP_COLUMN_TYPE, kind);
+    w.add_u32(IC_TP_COLUMN_LENGTH, 8);
+    w.add_u32(IC_TP_COLUMN_PRECISION, charset << 16);
+    w.add_u32(IC_TP_COLUMN_ARRAY_KIND, IC_ARRAY_KIND_SHORT_VARSIZE);
+    w.add_u32(IC_TP_COLUMN_IN_KEY, 1);
+    w.add_u32(IC_TP_COLUMN_IN_DIST_KEY, dkey_all as u32);
+    w.add_u32(IC_TP_COLUMN_END, 0);
+    w.add_string(IC_TP_COLUMN_NAME, "c");
+    w.add_u32(IC_TP_COLUMN_ID, 2);
+    w.add_u32(IC_TP_COLUMN_TYPE, IC_TYPE_INT);
+    w.add_u32(IC_TP_COLUMN_LENGTH, 1);
+    w.add_u32(IC_TP_COLUMN_END, 0);
     let info = parse_table_info(w.words()).expect("parsed");
-    let map = HashMapInfo {
+    let map = HashMapProps {
       name: "test map".to_string(),
       object_id: 1,
       version: 1,

@@ -9,7 +9,7 @@ rewrite it. Performance is not an excuse; nothing below costs performance.
 | Rust feature | Use | Why |
 |---|---|---|
 | `struct` with named fields | everywhere | same as C |
-| `enum` with unit variants, `#[repr(u32)]` | constants, states, GSNs | same as C `enum`, but exhaustive `match` catches missing cases |
+| `enum` with unit variants, `#[repr(u32)]` | constants, states, signal numbers | same as C `enum`, but exhaustive `match` catches missing cases |
 | `enum` with data | only for `Result`/`Option` and a few clearly documented message types | tagged unions are familiar from C `struct {tag; union}` |
 | `impl Type { fn method(&mut self) }` | replaces the `_OPS` vtables | `conn.read_key(...)` reads like `conn->ops->ic_read_key(conn, ...)` |
 | `Result<T, IcError>` and `?` | all fallible functions | `?` is "return on error"; one token, one meaning |
@@ -76,7 +76,7 @@ rewrite it. Performance is not an excuse; nothing below costs performance.
 ## Naming
 
 - Crates: `ic_port`, `ic_util`, `ic_comm`, `ic_protocol`, `ic_apic`,
-  `ic_ndb_signals`, `ic_apid`, `ic_capi` (see
+  `ic_signals`, `ic_apid`, `ic_capi` (see
   [03-module-map.md](03-module-map.md)).
 - Modules/files: the C file name without `ic_` and without extension:
   `util/ic_bitmap.c` → `ic_util/src/bitmap.rs`.
@@ -86,7 +86,7 @@ rewrite it. Performance is not an excuse; nothing below costs performance.
 - Functions: `ic_read_key` → `read_key` as a method on the owning type. The
   C ABI exports `ic_apid_conn_read_key` (object, then verb) so every export
   is unique without a vtable.
-- Constants: unchanged, upper case: `IC_RNIL`, `GSN_TCKEYREQ`.
+- Constants: unchanged, upper case: `IC_NULL_PTR`, `SIG_KEY_OP_REQ`.
 - Fields: unchanged snake_case. Keep the C field names so that the C header
   comments still describe the Rust struct.
 

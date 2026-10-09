@@ -18,7 +18,7 @@ use std::fmt;
 /// First iClaustron error code.
 pub const IC_FIRST_ERROR: i32 = 7000;
 /// Last iClaustron error code.
-pub const IC_LAST_ERROR: i32 = 7151;
+pub const IC_LAST_ERROR: i32 = 7152;
 
 /// Line was too long.
 pub const IC_ERROR_LINE_TOO_LONG: i32 = 7000;
@@ -111,7 +111,7 @@ pub const IC_ERROR_STOP_ORDERED: i32 = 7041;
 pub const IC_ACCEPT_ERROR: i32 = 7042;
 /// Unexpected end of file.
 pub const IC_END_OF_FILE: i32 = 7043;
-/// Protocol error in NDB MGM Protocol.
+/// Protocol error in the NDB management protocol.
 pub const IC_PROTOCOL_ERROR: i32 = 7044;
 /// Authentication error at connection setup.
 pub const IC_AUTHENTICATE_ERROR: i32 = 7045;
@@ -344,6 +344,8 @@ pub const IC_ERROR_VALUE_TOO_LONG: i32 = 7149;
 pub const IC_ERROR_TRANSACTION_ACTIVE: i32 = 7150;
 /// The query's transaction was rolled back, and the query with it.
 pub const IC_ERROR_TRANSACTION_ROLLED_BACK: i32 = 7151;
+/// The data node knows no such collation or character set.
+pub const IC_ERROR_NO_SUCH_COLLATION: i32 = 7152;
 
 /// What kind of thing went wrong (`IC_ERROR_CATEGORY`), in the header's
 /// order.
@@ -817,6 +819,7 @@ pub fn message(code: i32) -> &'static str {
     IC_ERROR_VALUE_TOO_LONG => "A value is longer than its field",
     IC_ERROR_TRANSACTION_ACTIVE => "The transaction or query is busy",
     IC_ERROR_TRANSACTION_ROLLED_BACK => "The transaction was rolled back",
+    IC_ERROR_NO_SUCH_COLLATION => "No such collation or character set",
     _ => "Unknown error code",
   }
 }

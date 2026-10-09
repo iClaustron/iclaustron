@@ -43,20 +43,20 @@ use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-use ic_ndb_signals::blocks;
-use ic_ndb_signals::gsn;
-use ic_ndb_signals::header;
-use ic_ndb_signals::header::FragmentInfo;
-use ic_ndb_signals::header::SignalHeader;
-use ic_ndb_signals::tc_key::IC_TCKEYCONF_NO_TRANSACTION;
-use ic_ndb_signals::tc_seize::TcReleaseReq;
-use ic_ndb_signals::tc_seize::TcSeizeConf;
-use ic_ndb_signals::tc_seize::TcSeizeRef;
-use ic_ndb_signals::tc_seize::TcSeizeReq;
-use ic_ndb_signals::tc_seize::IC_ANY_TC_INSTANCE;
 use ic_port::debug::IC_NDB_MESSAGE_LEVEL;
 use ic_port::err;
 use ic_port::IcError;
+use ic_signals::blocks;
+use ic_signals::coord_alloc::CoordAllocConf;
+use ic_signals::coord_alloc::CoordAllocRef;
+use ic_signals::coord_alloc::CoordAllocReq;
+use ic_signals::coord_alloc::CoordFreeReq;
+use ic_signals::coord_alloc::IC_ANY_COORD_INSTANCE;
+use ic_signals::header;
+use ic_signals::header::FragmentState;
+use ic_signals::header::SignalHeader;
+use ic_signals::key_ops::IC_KEY_OP_CONF_NO_TRANSACTION;
+use ic_signals::numbers;
 use ic_util::ptr_array::PtrArray;
 
 use crate::apid_global::ApidShared;
@@ -80,23 +80,24 @@ use crate::transaction::Transaction;
 /// acknowledgement flag. A reply's pointer then leads to its record and
 /// transaction by index, not by a search. Request numbers never carry
 /// this bit, so a record's pointer is never taken for one.
-const IC_TC_PTR_TAG: u32 = 0x8000_0000;
+const IC_COORD_PTR_TAG: u32 = 0x8000_0000;
 
 /// Our pointer for the record at `index`.
-fn tc_ptr_of(index: usize) -> u32 {
-  IC_TC_PTR_TAG | ((index as u32) << 1)
+fn coord_ptr_of(index: usize) -> u32 {
+  IC_COORD_PTR_TAG | ((index as u32) << 1)
 }
 
 /// The place of the record a pointer names, if it names one.
-pub(crate) fn tc_index_of(api_ptr: u32) -> Option<usize> {
-  if api_ptr & IC_TC_PTR_TAG == 0 || api_ptr == IC_TCKEYCONF_NO_TRANSACTION {
+pub(crate) fn coord_index_of(api_ptr: u32) -> Option<usize> {
+  if api_ptr & IC_COORD_PTR_TAG == 0 || api_ptr == IC_KEY_OP_CONF_NO_TRANSACTION
+  {
     return None;
   }
-  Some(((api_ptr & !IC_TC_PTR_TAG) >> 1) as usize)
+  Some(((api_ptr & !IC_COORD_PTR_TAG) >> 1) as usize)
 }
 
-/// How long seizing a transaction record waits for the coordinator.
-pub const IC_TC_SEIZE_WAIT_MS: u32 = 5_000;
+/// How long allocating a transaction record waits for the coordinator.
+pub const IC_COORD_ALLOC_WAIT_MS: u32 = 5_000;
 
 /// How long a poll leaves what the replies called for, such as commit
 /// acknowledgements, to go with the next send rather than write it
@@ -121,7 +122,7 @@ struct Expectation {
   /// wait, whichever node the replies come from.
   generation: u32,
   /// The signal numbers that answer the request.
-  gsns: Vec<u16>,
+  sig_nos: Vec<u16>,
   /// Replies are gathered until the request is forgotten, rather than
   /// the first one completing it.
   several: bool,
@@ -154,7 +155,7 @@ impl Expectations {
     request_id: u32,
     node_id: u32,
     generation: u32,
-    gsns: &[u16],
+    sig_nos: &[u16],
     several: bool,
     any_node: bool,
   ) {
@@ -162,7 +163,7 @@ impl Expectations {
       request_id,
       node_id,
       generation,
-      gsns: gsns.to_vec(),
+      sig_nos: sig_nos.to_vec(),
       several,
       any_node,
       replies: Vec::new(),
@@ -182,7 +183,7 @@ impl Expectations {
       if exp.open()
         && exp.request_id == first
         && from_node
-        && exp.gsns.contains(&signal.gsn)
+        && exp.sig_nos.contains(&signal.sig_no)
       {
         return true;
       }
@@ -204,7 +205,7 @@ impl Expectations {
       let answers = exp.open()
         && exp.request_id == first
         && from_node
-        && exp.gsns.contains(&signal.gsn);
+        && exp.sig_nos.contains(&signal.sig_no);
       if answers {
         self.list[i].replies.push(signal);
         return None;
@@ -306,22 +307,22 @@ impl Expectations {
   }
 }
 
-/// A transaction record at one node's coordinator, seized for this
+/// A transaction record at one node's coordinator, allocated for this
 /// thread. The data node frees an API node's records when it loses its
-/// link, so a record lives no longer than the link it was seized over.
+/// link, so a record lives no longer than the link it was allocated over.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct TcRecord {
+pub struct CoordRecord {
   /// The node whose coordinator holds it.
   pub node_id: u32,
-  /// The link it was seized over.
+  /// The link it was allocated over.
   pub(crate) generation: u32,
-  /// Our pointer for it, which `TCKEYCONF` names.
+  /// Our pointer for it, which `KEY_OP_CONF` names.
   /// Always even: commit and takeover confirmations reserve bit 0 for an ack.
   pub api_ptr: u32,
   /// The coordinator's pointer for it.
-  pub tc_ptr: u32,
+  pub coord_ptr: u32,
   /// The coordinator block to send to, its instance included.
-  pub tc_block: u16,
+  pub coord_block: u16,
   /// Where the connection keeps it, which never changes.
   pub(crate) index: u32,
   /// A transaction is using it.
@@ -332,15 +333,15 @@ pub struct TcRecord {
 }
 
 #[cfg(test)]
-impl TcRecord {
-  /// A record as a test needs one, seized nowhere.
-  pub(crate) fn for_test(node_id: u32) -> TcRecord {
-    TcRecord {
+impl CoordRecord {
+  /// A record as a test needs one, allocated nowhere.
+  pub(crate) fn for_test(node_id: u32) -> CoordRecord {
+    CoordRecord {
       node_id,
       generation: 1,
-      api_ptr: tc_ptr_of(0),
-      tc_ptr: 1,
-      tc_block: 0xF5,
+      api_ptr: coord_ptr_of(0),
+      coord_ptr: 1,
+      coord_block: 0xF5,
       index: 0,
       busy: true,
       lost: false,
@@ -366,12 +367,12 @@ pub struct ApidConnection {
   tables: HashMap<String, Arc<TableDef>>,
   /// The indexes this thread has bound, by `database/table/index`.
   indexes: HashMap<String, Arc<IndexDef>>,
-  /// Transaction records seized at the coordinators, as many per node
+  /// Transaction records allocated at the coordinators, as many per node
   /// as this thread has had transactions in flight there, at positions
   /// that never change.
-  tc_records: Vec<TcRecord>,
+  coord_records: Vec<CoordRecord>,
   /// By node id, the positions of the free ones.
-  free_tc: Vec<Vec<u32>>,
+  free_coord: Vec<Vec<u32>>,
   /// The low word of the next transaction id.
   trans_counter: u32,
   /// The started nodes as of the last transaction start, kept for its
@@ -386,7 +387,7 @@ pub struct ApidConnection {
   /// The transactions not yet done, by the coordinator record pointer
   /// their replies name.
   /// By the place of the record it uses, each transaction in flight: a
-  /// reply's pointer leads here by index (`tc_index_of`).
+  /// reply's pointer leads here by index (`coord_index_of`).
   active: Vec<Option<TransId>>,
   active_count: usize,
   /// Signals packed for a node and link generation, not yet handed to it.
@@ -470,8 +471,8 @@ impl ApidConnection {
       unexpected: 0,
       tables: HashMap::new(),
       indexes: HashMap::new(),
-      tc_records: Vec::new(),
-      free_tc: Vec::new(),
+      coord_records: Vec::new(),
+      free_coord: Vec::new(),
       trans_counter,
       started_scratch: Vec::new(),
       queries: PtrArray::new(),
@@ -512,7 +513,7 @@ impl ApidConnection {
   pub fn next_request_id(&mut self) -> u32 {
     let id = self.next_request_id;
     // Kept clear of the bit that marks a record's pointer, and of zero.
-    let mut next = self.next_request_id.wrapping_add(1) & !IC_TC_PTR_TAG;
+    let mut next = self.next_request_id.wrapping_add(1) & !IC_COORD_PTR_TAG;
     if next == 0 {
       next = 1;
     }
@@ -573,7 +574,7 @@ impl ApidConnection {
       IC_NDB_MESSAGE_LEVEL,
       "-> node {} {} ({} words, {} sections) queued",
       node_id,
-      gsn::gsn_name(header.gsn()).unwrap_or("unknown"),
+      numbers::sig_name(header.sig_no()).unwrap_or("unknown"),
       data.len(),
       sections.len()
     );
@@ -765,7 +766,7 @@ impl ApidConnection {
     self.send_queued(true)
   }
 
-  /// Send a request, and say which signals answer it: `gsns`, echoing
+  /// Send a request, and say which signals answer it: `sig_nos`, echoing
   /// `request_id` in their first data word. The reply is collected by
   /// [`poll`](Self::poll) and handed out by [`take_reply`](Self::take_reply).
   pub fn send_expecting(
@@ -775,7 +776,7 @@ impl ApidConnection {
     data: &[u32],
     sections: &[&[u32]],
     request_id: u32,
-    gsns: &[u16],
+    sig_nos: &[u16],
   ) -> Result<(), IcError> {
     let node = match self.shared.node(node_id) {
       Some(node) => Arc::clone(node),
@@ -792,12 +793,12 @@ impl ApidConnection {
     // cannot be taken before this is recorded.
     self
       .expectations
-      .add(request_id, node_id, generation, gsns, false, false);
+      .add(request_id, node_id, generation, sig_nos, false, false);
     Ok(())
   }
 
   /// Say that a request about to be sent to `node_id` is answered by
-  /// several signals, `gsns`, echoing `request_id` in their first data
+  /// several signals, `sig_nos`, echoing `request_id` in their first data
   /// word, gathered until the request is forgotten. With `any_node`
   /// they may come from any node, as a row comes from the node that read
   /// it; the loss of the link to `node_id` still ends the wait. Said
@@ -808,7 +809,7 @@ impl ApidConnection {
     &mut self,
     request_id: u32,
     node_id: u32,
-    gsns: &[u16],
+    sig_nos: &[u16],
     any_node: bool,
   ) -> Result<(), IcError> {
     let generation = match self.shared.node(node_id) {
@@ -817,7 +818,7 @@ impl ApidConnection {
     };
     self
       .expectations
-      .add(request_id, node_id, generation, gsns, true, any_node);
+      .add(request_id, node_id, generation, sig_nos, true, any_node);
     Ok(())
   }
 
@@ -915,7 +916,7 @@ impl ApidConnection {
   ///
   /// The request's number is taken from its first data word, where most
   /// requests carry the number their reply echoes. One that carries it
-  /// elsewhere, such as `TCRELEASEREQ`, which leads with the
+  /// elsewhere, such as `COORD_FREE_REQ`, which leads with the
   /// coordinator's record, is sent with [`send_expecting`] and waited
   /// for with [`wait_for`].
   ///
@@ -927,14 +928,15 @@ impl ApidConnection {
     header: &SignalHeader,
     data: &[u32],
     sections: &[&[u32]],
-    gsns: &[u16],
+    sig_nos: &[u16],
     wait_ms: u32,
   ) -> Result<ReceivedSignal, IcError> {
     let request_id = match data.first() {
       Some(first) => *first,
       None => return Err(IcError::new(err::IC_ERROR_INCONSISTENT_DATA)),
     };
-    self.send_expecting(node_id, header, data, sections, request_id, gsns)?;
+    self
+      .send_expecting(node_id, header, data, sections, request_id, sig_nos)?;
     self.wait_for(request_id, wait_ms)
   }
 
@@ -1001,12 +1003,11 @@ impl ApidConnection {
 
   // ---- Transactions ----
 
-  /// A new transaction id (`Ndb::allocate_transaction_id`): this
-  /// thread's block number in bits 52 to 63, our node id in bits 40 to
-  /// 51, and a count in the low word. The count goes on from where the
-  /// last connection with this block number left it, so an id is not
-  /// used twice. Verify: `Ndbif.cpp`, where the first id is made;
-  /// `Ndbinit.cpp`, where the count is kept for the block.
+  /// A new transaction id: this thread's block number in bits 52 to 63,
+  /// our node id in bits 40 to 51, and a count in the low word. The
+  /// count goes on from where the last connection with this block
+  /// number left it, so an id is not used twice.
+  /// Verify: chapter 05 §17.12.
   pub fn next_transaction_id(&mut self) -> u64 {
     let low = self.trans_counter;
     self.trans_counter = self.trans_counter.wrapping_add(1);
@@ -1016,27 +1017,27 @@ impl ApidConnection {
   }
 
   /// A transaction record at `node_id`'s coordinator for a transaction
-  /// to use: a free one this thread holds, or a new one seized. Given
-  /// back with [`free_tc_record`](Self::free_tc_record).
+  /// to use: a free one this thread holds, or a new one allocated. Given
+  /// back with [`free_coord_record`](Self::free_coord_record).
   ///
-  /// A free record seized over a link that has since been replaced is
+  /// A free record allocated over a link that has since been replaced is
   /// lost, as the coordinator freed it when the link went, and is
-  /// dropped as it comes up. One seized over the current link while
+  /// dropped as it comes up. One allocated over the current link while
   /// the link is down is handed out, and the send fails as any send
   /// would. Nothing here looks at more than the record handed out: a
   /// thread with hundreds of transactions in flight starts each in
   /// constant time.
-  pub fn tc_record(&mut self, node_id: u32) -> Result<TcRecord, IcError> {
+  pub fn coord_record(&mut self, node_id: u32) -> Result<CoordRecord, IcError> {
     let generation = match self.shared.node(node_id) {
       Some(node) => node.published.generation(),
       None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_NODE)),
     };
     let slot = node_id as usize;
-    if slot >= self.free_tc.len() {
-      self.free_tc.resize_with(slot + 1, Vec::new);
+    if slot >= self.free_coord.len() {
+      self.free_coord.resize_with(slot + 1, Vec::new);
     }
-    while let Some(index) = self.free_tc[slot].pop() {
-      let rec = &mut self.tc_records[index as usize];
+    while let Some(index) = self.free_coord[slot].pop() {
+      let rec = &mut self.coord_records[index as usize];
       if rec.generation == generation {
         rec.busy = true;
         return Ok(*rec);
@@ -1044,48 +1045,51 @@ impl ApidConnection {
       rec.lost = true;
     }
     // The record's place is taken now, before the request goes, so that
-    // a seize started meanwhile, by a callback run while this one waits,
+    // a allocate started meanwhile, by a callback run while this one waits,
     // cannot take it too. It stays lost, never handed out, unless the
     // coordinator confirms it.
-    let index = self.tc_records.len();
-    let api_ptr = tc_ptr_of(index);
-    self.tc_records.push(TcRecord {
+    let index = self.coord_records.len();
+    let api_ptr = coord_ptr_of(index);
+    self.coord_records.push(CoordRecord {
       node_id,
       generation,
       api_ptr,
-      tc_ptr: 0,
-      tc_block: 0,
+      coord_ptr: 0,
+      coord_block: 0,
       index: index as u32,
       busy: true,
       lost: true,
     });
-    let seize = TcSeizeReq {
-      api_connect_ptr: api_ptr,
-      api_block_ref: self.block_ref(),
-      instance: IC_ANY_TC_INSTANCE,
+    let allocate = CoordAllocReq {
+      client_ptr: api_ptr,
+      client_block_ref: self.block_ref(),
+      instance: IC_ANY_COORD_INSTANCE,
     };
     let header = SignalHeader::new(
-      gsn::IC_GSN_TCSEIZEREQ,
+      numbers::IC_SIG_COORD_ALLOC_REQ,
       self.block_number(),
-      blocks::IC_BLOCK_DBTC,
+      blocks::IC_BLOCK_COORDINATOR,
     );
-    let replies = [gsn::IC_GSN_TCSEIZECONF, gsn::IC_GSN_TCSEIZEREF];
+    let replies = [
+      numbers::IC_SIG_COORD_ALLOC_CONF,
+      numbers::IC_SIG_COORD_ALLOC_REF,
+    ];
     let reply = self.call(
       node_id,
       &header,
-      &seize.encode(),
+      &allocate.encode(),
       &[],
       &replies,
-      IC_TC_SEIZE_WAIT_MS,
+      IC_COORD_ALLOC_WAIT_MS,
     )?;
-    if reply.gsn == gsn::IC_GSN_TCSEIZEREF {
-      let refusal = TcSeizeRef::decode(&reply.data)?;
+    if reply.sig_no == numbers::IC_SIG_COORD_ALLOC_REF {
+      let refusal = CoordAllocRef::decode(&reply.data)?;
       return Err(IcError::new(refusal.error_code as i32));
     }
-    let conf = TcSeizeConf::decode(&reply.data)?;
-    let rec = &mut self.tc_records[index];
-    rec.tc_ptr = conf.tc_connect_ptr;
-    rec.tc_block = blocks::ref_to_block(conf.tc_block_ref);
+    let conf = CoordAllocConf::decode(&reply.data)?;
+    let rec = &mut self.coord_records[index];
+    rec.coord_ptr = conf.coord_ptr;
+    rec.coord_block = blocks::ref_to_block(conf.coord_block_ref);
     rec.lost = false;
     Ok(*rec)
   }
@@ -1124,8 +1128,8 @@ impl ApidConnection {
   }
 
   /// Give a transaction record back once its transaction is over.
-  pub fn free_tc_record(&mut self, rec: &TcRecord) {
-    let held = match self.tc_records.get_mut(rec.index as usize) {
+  pub fn free_coord_record(&mut self, rec: &CoordRecord) {
+    let held = match self.coord_records.get_mut(rec.index as usize) {
       Some(held) => held,
       None => return,
     };
@@ -1134,17 +1138,17 @@ impl ApidConnection {
     }
     held.busy = false;
     let slot = held.node_id as usize;
-    if slot >= self.free_tc.len() {
-      self.free_tc.resize_with(slot + 1, Vec::new);
+    if slot >= self.free_coord.len() {
+      self.free_coord.resize_with(slot + 1, Vec::new);
     }
-    self.free_tc[slot].push(rec.index);
+    self.free_coord[slot].push(rec.index);
   }
 
   /// Stop using a transaction record whose state is not known, such as
   /// one whose transaction timed out. The coordinator keeps it until the
   /// link goes.
-  pub fn lose_tc_record(&mut self, rec: &TcRecord) {
-    if let Some(held) = self.tc_records.get_mut(rec.index as usize) {
+  pub fn lose_coord_record(&mut self, rec: &CoordRecord) {
+    if let Some(held) = self.coord_records.get_mut(rec.index as usize) {
       if held.api_ptr == rec.api_ptr {
         held.lost = true;
       }
@@ -1163,22 +1167,25 @@ impl ApidConnection {
   }
 
   /// Give back every record whose link still stands, without waiting
-  /// for the answers: the connection is going. TCRELEASEREQ also makes
+  /// for the answers: the connection is going. COORD_FREE_REQ also makes
   /// the coordinator clean up unfinished work before freeing the record.
-  fn release_tc_records(&mut self) {
+  fn release_coord_records(&mut self) {
     let own_ref = self.block_ref();
     let block = self.block_number();
-    for rec in &self.tc_records {
+    for rec in &self.coord_records {
       if !self.link_is(rec.node_id, rec.generation) {
         continue;
       }
-      let release = TcReleaseReq {
-        tc_connect_ptr: rec.tc_ptr,
-        api_block_ref: own_ref,
-        api_connect_ptr: rec.api_ptr,
+      let release = CoordFreeReq {
+        coord_ptr: rec.coord_ptr,
+        client_block_ref: own_ref,
+        client_ptr: rec.api_ptr,
       };
-      let header =
-        SignalHeader::new(gsn::IC_GSN_TCRELEASEREQ, block, rec.tc_block);
+      let header = SignalHeader::new(
+        numbers::IC_SIG_COORD_FREE_REQ,
+        block,
+        rec.coord_block,
+      );
       if let Some(node) = self.shared.node(rec.node_id) {
         let _ = node.send_for_generation(
           rec.generation,
@@ -1215,8 +1222,9 @@ impl ApidConnection {
   }
 
   /// An index's description (`ic_apid_conn_index_bind`), for the table's
-  /// current version. The name is the index's own, as `ndb_desc` lists
-  /// it, such as `uk$unique` for the hash part of a unique key.
+  /// current version. The name is the index's own, as the reference's
+  /// table description tool lists it, such as `uk$unique` for the hash
+  /// part of a unique key.
   pub fn index_bind(
     &mut self,
     database: &str,
@@ -1271,7 +1279,7 @@ impl ApidConnection {
   /// request waits for. The rest, which is nearly everything, is
   /// executed in place.
   fn receive_view(&mut self, signal: &SignalView<'_>) {
-    let whole = signal.fragment_info == FragmentInfo::Whole;
+    let whole = signal.fragment_state == FragmentState::Whole;
     if !whole || self.expectations.claims(signal) {
       self.receive(signal.to_owned());
       return;
@@ -1286,7 +1294,7 @@ impl ApidConnection {
     ic_port::debug_print!(
       IC_NDB_MESSAGE_LEVEL,
       "No request expects {} from node {} to block {:#06x}",
-      gsn::gsn_name(signal.gsn).unwrap_or("an unknown signal"),
+      numbers::sig_name(signal.sig_no).unwrap_or("an unknown signal"),
       signal.sender_node_id,
       signal.receiver_block
     );
@@ -1349,7 +1357,7 @@ impl Drop for ApidConnection {
   fn drop(&mut self) {
     // Acknowledgements left to go with a send that will not come.
     let _ = self.send_queued(true);
-    self.release_tc_records();
+    self.release_coord_records();
     self
       .shared
       .thread_table
@@ -1365,23 +1373,23 @@ mod tests {
   #[test]
   fn a_record_pointer_leads_back_to_its_place() {
     for index in [0usize, 1, 7, 800, 1 << 20] {
-      let ptr = tc_ptr_of(index);
+      let ptr = coord_ptr_of(index);
       assert_eq!(ptr & 1, 0, "bit 0 is the acknowledgement flag");
-      assert_eq!(tc_index_of(ptr), Some(index));
+      assert_eq!(coord_index_of(ptr), Some(index));
       // A confirmation with the flag set names the same record.
-      assert_eq!(tc_index_of(ptr | 1), Some(index));
+      assert_eq!(coord_index_of(ptr | 1), Some(index));
     }
     // Neither a request number nor "no transaction" names a record.
-    assert_eq!(tc_index_of(12345), None);
-    assert_eq!(tc_index_of(IC_TCKEYCONF_NO_TRANSACTION), None);
+    assert_eq!(coord_index_of(12345), None);
+    assert_eq!(coord_index_of(IC_KEY_OP_CONF_NO_TRANSACTION), None);
   }
 
   const CONF: u16 = 190;
   const REF: u16 = 23;
 
-  fn reply(gsn: u16, node: u32, first: u32) -> ReceivedSignal {
+  fn reply(sig_no: u16, node: u32, first: u32) -> ReceivedSignal {
     ReceivedSignal {
-      gsn,
+      sig_no,
       sender_node_id: node,
       data: vec![first, 17],
       ..ReceivedSignal::default()
@@ -1465,7 +1473,7 @@ mod tests {
     let mut exp = Expectations::default();
     exp.add(0, 1, 3, &[CONF], false, false);
     let empty = ReceivedSignal {
-      gsn: CONF,
+      sig_no: CONF,
       sender_node_id: 1,
       ..ReceivedSignal::default()
     };

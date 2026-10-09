@@ -21,27 +21,27 @@
 //! connection and does its own sending and receiving. The send and
 //! receive threads of the full design are built on top of it.
 
-use ic_apic::conf_param::IC_CFG_CONNECTION_SERVER_PORT;
+use ic_apic::conf_param::IC_PARAM_LINK_PORT;
 use ic_apic::data::ClusterConfig;
 use ic_apic::data::TcpLinkConfig;
 use ic_apic::mgm_client::MgmClient;
 use ic_comm::connection::ConnectConfig;
 use ic_comm::connection::Connection;
-use ic_ndb_signals::blocks;
-use ic_ndb_signals::gsn;
-use ic_ndb_signals::header;
-use ic_ndb_signals::header::FragmentInfo;
-use ic_ndb_signals::header::SignalHeader;
-use ic_ndb_signals::qmgr::ApiRegConf;
-use ic_ndb_signals::qmgr::ApiRegRef;
-use ic_ndb_signals::qmgr::ApiRegReq;
-use ic_ndb_signals::qmgr::NodeState;
 use ic_port::consts::IC_MYSQL_VERSION;
 use ic_port::consts::IC_NDB_VERSION;
 use ic_port::debug::IC_HEARTBEAT_LEVEL;
 use ic_port::debug::IC_NDB_MESSAGE_LEVEL;
 use ic_port::err;
 use ic_port::IcError;
+use ic_signals::blocks;
+use ic_signals::header;
+use ic_signals::header::FragmentState;
+use ic_signals::header::SignalHeader;
+use ic_signals::membership::HeartbeatConf;
+use ic_signals::membership::HeartbeatRef;
+use ic_signals::membership::HeartbeatReq;
+use ic_signals::membership::NodeState;
+use ic_signals::numbers;
 
 use crate::handshake;
 use crate::signal_reader::SignalReader;
@@ -104,7 +104,7 @@ pub fn resolve_port(
   let value = mgm.get_connection_parameter(
     link.node_1,
     link.node_2,
-    IC_CFG_CONNECTION_SERVER_PORT,
+    IC_PARAM_LINK_PORT,
   )?;
   let port = value.unsigned_abs();
   if port == 0 || port > u16::MAX as u32 {
@@ -136,7 +136,7 @@ pub fn resolve_port(
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ReceivedSignal {
   /// Which signal it is.
-  pub gsn: u16,
+  pub sig_no: u16,
   /// The block it is addressed to, which is what routing goes by: a
   /// user thread's block, or one of our fixed blocks.
   pub receiver_block: u16,
@@ -148,7 +148,7 @@ pub struct ReceivedSignal {
   /// split a large signal. A fragment's data ends with the numbers of
   /// the sections it carries and a fragment id; see
   /// [`fragments`](crate::fragments).
-  pub fragment_info: FragmentInfo,
+  pub fragment_state: FragmentState,
   /// The signal data words.
   pub data: Vec<u32>,
   /// The sections that were present, in order.
@@ -175,11 +175,11 @@ impl ReceivedSignal {
       i += 1;
     }
     SignalView {
-      gsn: self.gsn,
+      sig_no: self.sig_no,
       receiver_block: self.receiver_block,
       sender_block: self.sender_block,
       sender_node_id: self.sender_node_id,
-      fragment_info: self.fragment_info,
+      fragment_state: self.fragment_state,
       data: &self.data,
       sections,
       num_sections: i,
@@ -196,7 +196,7 @@ impl ReceivedSignal {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SignalView<'a> {
   /// Which signal it is.
-  pub gsn: u16,
+  pub sig_no: u16,
   /// The block it is addressed to.
   pub receiver_block: u16,
   /// The block that sent it, for replying.
@@ -204,7 +204,7 @@ pub struct SignalView<'a> {
   /// The node that sent it.
   pub sender_node_id: u32,
   /// Where it stands in a train of fragments.
-  pub fragment_info: FragmentInfo,
+  pub fragment_state: FragmentState,
   /// The signal data words.
   pub data: &'a [u32],
   /// The sections, the first `num_sections` of them present.
@@ -231,11 +231,11 @@ impl SignalView<'_> {
       i += 1;
     }
     ReceivedSignal {
-      gsn: self.gsn,
+      sig_no: self.sig_no,
       receiver_block: self.receiver_block,
       sender_block: self.sender_block,
       sender_node_id: self.sender_node_id,
-      fragment_info: self.fragment_info,
+      fragment_state: self.fragment_state,
       data: self.data.to_vec(),
       sections,
     }
@@ -294,9 +294,9 @@ impl NodeConnection {
     let connect_config = ConnectConfig {
       server_name: link.server_host.clone(),
       server_port: port,
-      tcp_maxseg: link.tcp_maxseg_size,
-      tcp_receive_buffer_size: link.tcp_rcv_buf_size,
-      tcp_send_buffer_size: link.tcp_snd_buf_size,
+      tcp_maxseg: link.socket_max_segment,
+      tcp_receive_buffer_size: link.socket_recv_buffer,
+      tcp_send_buffer_size: link.socket_send_buffer,
       connect_timeout_ms: 10_000,
       ..ConnectConfig::default()
     };
@@ -305,14 +305,14 @@ impl NodeConnection {
     let mut reader = SignalReader::new();
     reader.push_bytes(&transporter.leftover)?;
     let heartbeat = match config.data_node(node_id) {
-      Some(node) => node.api_heartbeat_interval_ms,
+      Some(node) => node.api_heartbeat_ms,
       None => 0,
     };
     let mut node = NodeConnection {
       node_id,
       own_node_id,
       block_ref: blocks::number_to_ref(
-        blocks::IC_BLOCK_API_CLUSTERMGR,
+        blocks::IC_BLOCK_NODE_WATCH,
         own_node_id,
       ),
       use_checksum: link.checksum,
@@ -361,7 +361,7 @@ impl NodeConnection {
       IC_NDB_MESSAGE_LEVEL,
       "-> node {} {} ({} words, {} sections)",
       self.node_id,
-      gsn::gsn_name(header.gsn()).unwrap_or("unknown"),
+      numbers::sig_name(header.sig_no()).unwrap_or("unknown"),
       data.len(),
       sections.len()
     );
@@ -372,15 +372,15 @@ impl NodeConnection {
   /// Send a heartbeat, which is also what tells a data node we are
   /// still here.
   pub fn send_heartbeat(&mut self) -> Result<(), IcError> {
-    let request = ApiRegReq {
+    let request = HeartbeatReq {
       block_ref: self.block_ref,
       version: IC_NDB_VERSION,
       mysql_version: IC_MYSQL_VERSION,
     };
     let header = SignalHeader::new(
-      gsn::IC_GSN_API_REGREQ,
-      blocks::IC_BLOCK_API_CLUSTERMGR,
-      blocks::IC_BLOCK_QMGR,
+      numbers::IC_SIG_HEARTBEAT_REQ,
+      blocks::IC_BLOCK_NODE_WATCH,
+      blocks::IC_BLOCK_MEMBERSHIP,
     );
     self.send_signal(&header, &request.encode(), &[])
   }
@@ -398,18 +398,18 @@ impl NodeConnection {
       if self.reader.has_message() {
         let words = self.reader.complete_words();
         let message = header::decode(words)?;
-        let gsn_value = message.header.gsn();
+        let sig_value = message.header.sig_no();
         let data = message.data.to_vec();
         let len = message.total_words;
         ic_port::debug_print!(
           IC_NDB_MESSAGE_LEVEL,
           "<- node {} {} ({} words)",
           self.node_id,
-          gsn::gsn_name(gsn_value).unwrap_or("unknown"),
+          numbers::sig_name(sig_value).unwrap_or("unknown"),
           data.len()
         );
         self.reader.consume(len);
-        return Ok(Some((gsn_value, data)));
+        return Ok(Some((sig_value, data)));
       }
       let waited =
         ic_port::time::millis_elapsed(deadline, ic_port::time::gethrtime());
@@ -443,12 +443,12 @@ impl NodeConnection {
       }
       let left = (wait_ms as u64 - waited) as u32;
       let received = self.receive_signal(left)?;
-      let (gsn_value, data) = match received {
+      let (sig_value, data) = match received {
         Some(pair) => pair,
         None => continue,
       };
-      if gsn_value == gsn::IC_GSN_API_REGCONF {
-        let conf = ApiRegConf::decode(&data)?;
+      if sig_value == numbers::IC_SIG_HEARTBEAT_CONF {
+        let conf = HeartbeatConf::decode(&data)?;
         ic_port::debug_print!(
           IC_HEARTBEAT_LEVEL,
           "Node {} registered us: start level {:?}, node group {}",
@@ -464,8 +464,8 @@ impl NodeConnection {
         self.node_state = Some(conf.node_state);
         return Ok(());
       }
-      if gsn_value == gsn::IC_GSN_API_REGREF {
-        let refusal = ApiRegRef::decode(&data)?;
+      if sig_value == numbers::IC_SIG_HEARTBEAT_REF {
+        let refusal = HeartbeatRef::decode(&data)?;
         ic_port::ic_printf!(
           "Node {} refused us: {:?}",
           self.node_id,
@@ -478,7 +478,7 @@ impl NodeConnection {
       ic_port::debug_print!(
         IC_HEARTBEAT_LEVEL,
         "Ignoring signal {} while registering with node {}",
-        gsn::gsn_name(gsn_value).unwrap_or("unknown"),
+        numbers::sig_name(sig_value).unwrap_or("unknown"),
         self.node_id
       );
     }
@@ -513,11 +513,11 @@ impl NodeConnection {
 
   /// Take what a signal says about the node, if it is one that speaks
   /// about node state.
-  pub fn apply_signal(&mut self, gsn_value: u16, data: &[u32]) -> bool {
-    if gsn_value != gsn::IC_GSN_API_REGCONF {
+  pub fn apply_signal(&mut self, sig_value: u16, data: &[u32]) -> bool {
+    if sig_value != numbers::IC_SIG_HEARTBEAT_CONF {
       return false;
     }
-    let conf = match ApiRegConf::decode(data) {
+    let conf = match HeartbeatConf::decode(data) {
       Ok(conf) => conf,
       Err(_) => return false,
     };
@@ -559,12 +559,12 @@ pub fn take_signals(
     let len = {
       let words = reader.complete_words();
       let message = header::decode(words)?;
-      let gsn_value = message.header.gsn();
+      let sig_value = message.header.sig_no();
       ic_port::debug_print!(
         IC_NDB_MESSAGE_LEVEL,
         "<- node {} {} ({} words, {} section(s))",
         node_id,
-        gsn::gsn_name(gsn_value).unwrap_or("unknown"),
+        numbers::sig_name(sig_value).unwrap_or("unknown"),
         message.data.len(),
         message.header.num_sections
       );
@@ -575,11 +575,11 @@ pub fn take_signals(
         index += 1;
       }
       out.push(ReceivedSignal {
-        gsn: gsn_value,
+        sig_no: sig_value,
         receiver_block: message.header.receiver_block,
         sender_block: message.header.sender_block,
         sender_node_id: node_id,
-        fragment_info: message.header.fragment_info,
+        fragment_state: message.header.fragment_state,
         data: message.data.to_vec(),
         sections,
       });
@@ -610,7 +610,7 @@ mod tests {
     // whether it is there, so an absent one has to read as empty
     // rather than panic.
     let signal = ReceivedSignal {
-      gsn: 26,
+      sig_no: 26,
       data: vec![1, 2, 3],
       ..ReceivedSignal::default()
     };
@@ -621,7 +621,7 @@ mod tests {
   #[test]
   fn a_signal_hands_back_the_sections_it_carries() {
     let signal = ReceivedSignal {
-      gsn: 26,
+      sig_no: 26,
       data: vec![1, 2, 3],
       sections: vec![vec![0x10], vec![0x20, 0x21]],
       ..ReceivedSignal::default()

@@ -7,7 +7,7 @@
 //!
 //! A connectstring names the management servers to ask for the cluster
 //! configuration. The forms accepted are those a RonDB operator already
-//! uses with `ndb_mgm` and `mysqld`:
+//! uses with the management client and the MySQL server:
 //!
 //! ```text
 //! localhost

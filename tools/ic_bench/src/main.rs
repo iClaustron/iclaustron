@@ -88,11 +88,11 @@ use ic_apid::query::WriteKind;
 use ic_apid::record::Record;
 use ic_apid::transaction::CommitState;
 use ic_apid::transaction::TransactionHint;
-use ic_ndb_signals::dict_tab_info;
 use ic_port::options::OptionEntry;
 use ic_port::options::OptionKind;
 use ic_port::options::OptionParser;
 use ic_port::IcError;
+use ic_signals::table_props;
 
 /// How long one batch may take before it counts as stuck.
 const IC_BENCH_BATCH_WAIT_NANOS: u64 = 10_000_000_000;
@@ -767,12 +767,12 @@ fn check_columns(def: &Arc<TableDef>) -> Result<(), String> {
   for attr in &def.info().attributes {
     if attr.primary_key {
       key_columns += 1;
-      if !is_integer(attr.ext_type) {
+      if !is_integer(attr.type_code) {
         return Err(format!("The key column {} is not an integer", attr.name));
       }
       continue;
     }
-    if attr.nullable || is_integer(attr.ext_type) || is_bytes(attr) {
+    if attr.nullable || is_integer(attr.type_code) || is_bytes(attr) {
       continue;
     }
     return Err(format!(
@@ -800,15 +800,15 @@ fn put_integer(rec: &Record, position: u32, value: i64, row: &mut [u8]) {
 }
 
 /// A binary or character column, which takes `--bytes` bytes.
-fn is_bytes(attr: &dict_tab_info::AttributeInfo) -> bool {
+fn is_bytes(attr: &table_props::ColumnProps) -> bool {
   matches!(
-    attr.ext_type,
-    dict_tab_info::IC_NDB_TYPE_CHAR
-      | dict_tab_info::IC_NDB_TYPE_BINARY
-      | dict_tab_info::IC_NDB_TYPE_VARCHAR
-      | dict_tab_info::IC_NDB_TYPE_VARBINARY
-      | dict_tab_info::IC_NDB_TYPE_LONGVARCHAR
-      | dict_tab_info::IC_NDB_TYPE_LONGVARBINARY
+    attr.type_code,
+    table_props::IC_TYPE_CHAR
+      | table_props::IC_TYPE_BINARY
+      | table_props::IC_TYPE_VARCHAR
+      | table_props::IC_TYPE_VARBINARY
+      | table_props::IC_TYPE_LONGVARCHAR
+      | table_props::IC_TYPE_LONGVARBINARY
   )
 }
 
@@ -818,7 +818,7 @@ fn is_bytes(attr: &dict_tab_info::AttributeInfo) -> bool {
 /// filled once.
 fn put_bytes(
   rec: &Record,
-  attr: &dict_tab_info::AttributeInfo,
+  attr: &table_props::ColumnProps,
   position: u32,
   bytes: usize,
   row: &mut [u8],
@@ -829,9 +829,9 @@ fn put_bytes(
   };
   let at = field.offset() as usize;
   let size = field.size() as usize;
-  let head = match attr.array_type {
-    dict_tab_info::IC_ARRAY_TYPE_SHORT_VAR => 1,
-    dict_tab_info::IC_ARRAY_TYPE_MEDIUM_VAR => 2,
+  let head = match attr.array_kind {
+    table_props::IC_ARRAY_KIND_SHORT_VARSIZE => 1,
+    table_props::IC_ARRAY_KIND_LONG_VARSIZE => 2,
     _ => 0,
   };
   if head + bytes > size {
@@ -863,10 +863,10 @@ fn put_bytes(
   Ok(())
 }
 
-fn is_integer(ext_type: u32) -> bool {
+fn is_integer(type_code: u32) -> bool {
   let integers =
-    dict_tab_info::IC_NDB_TYPE_TINYINT..=dict_tab_info::IC_NDB_TYPE_BIGUNSIGNED;
-  integers.contains(&ext_type)
+    table_props::IC_TYPE_TINYINT..=table_props::IC_TYPE_BIGUNSIGNED;
+  integers.contains(&type_code)
 }
 
 /// The key, and for a write every other column, into a query's rows.
@@ -884,7 +884,7 @@ fn fill_query(
     None => return Err(IcError::new(ic_port::err::IC_ERROR_NO_SUCH_FIELD)),
   };
   for attr in &def.info().attributes {
-    let position = match rec.position_of(attr.attribute_id) {
+    let position = match rec.position_of(attr.column_id) {
       Some(position) => position,
       None => continue,
     };
@@ -899,7 +899,7 @@ fn fill_query(
       put_integer(rec, position, key, query.attr_row_mut());
     } else if !values_too {
       continue;
-    } else if is_integer(attr.ext_type) {
+    } else if is_integer(attr.type_code) {
       put_integer(rec, position, key * 10, query.attr_row_mut());
     } else {
       rec.set_null(query.attr_row_mut(), position, true)?;

@@ -4,7 +4,7 @@
 
 //! The heartbeat thread (`legacy-c/api/ic_apid_heartbeat.ic`).
 //!
-//! It sends `API_REGREQ` to every connected data node on schedule, and
+//! It sends `HEARTBEAT_REQ` to every connected data node on schedule, and
 //! notices a node that keeps its socket open but has stopped answering,
 //! which is how a hung process or a network dropping packets shows. The
 //! answers themselves are executed by the receive thread that owns the
@@ -20,23 +20,22 @@
 //! a row without answering, the thread asks the node's receive thread to
 //! drop the link. It never touches the link itself.
 //!
-//! Verify the counting against `ClusterMgr.cpp`, the missed heartbeat
-//! test in `threadMain`: a counter goes up at the end of every check
-//! interval and back to zero on every answer, and the node is lost when
-//! it reaches four.
+//! The counting is the reference's: a counter goes up at the end of
+//! every check interval and back to zero on every answer, and the node
+//! is lost when it reaches four. Verify: chapter 05 §17.12.
 
 use std::sync::Arc;
 
-use ic_ndb_signals::blocks;
-use ic_ndb_signals::gsn;
-use ic_ndb_signals::header::SignalHeader;
-use ic_ndb_signals::qmgr::ApiRegReq;
 use ic_port::consts::IC_MYSQL_VERSION;
 use ic_port::consts::IC_NDB_VERSION;
 use ic_port::debug::IC_HEARTBEAT_LEVEL;
 use ic_port::err;
 use ic_port::time::IcTimer;
 use ic_port::IcError;
+use ic_signals::blocks;
+use ic_signals::header::SignalHeader;
+use ic_signals::membership::HeartbeatReq;
+use ic_signals::numbers;
 use ic_util::threadpool::ThreadState;
 
 use crate::apid_global::period_nanos;
@@ -154,18 +153,18 @@ fn keep_time(
 }
 
 fn send_heartbeat(shared: &ApidShared, node: &NodeShared) {
-  let request = ApiRegReq {
+  let request = HeartbeatReq {
     block_ref: blocks::number_to_ref(
-      blocks::IC_BLOCK_API_CLUSTERMGR,
+      blocks::IC_BLOCK_NODE_WATCH,
       shared.own_node_id(),
     ),
     version: IC_NDB_VERSION,
     mysql_version: IC_MYSQL_VERSION,
   };
   let header = SignalHeader::new(
-    gsn::IC_GSN_API_REGREQ,
-    blocks::IC_BLOCK_API_CLUSTERMGR,
-    blocks::IC_BLOCK_QMGR,
+    numbers::IC_SIG_HEARTBEAT_REQ,
+    blocks::IC_BLOCK_NODE_WATCH,
+    blocks::IC_BLOCK_MEMBERSHIP,
   );
   // A failed write has already asked for the link to be dropped.
   if let Err(e) = node.send(&header, &request.encode(), &[]) {

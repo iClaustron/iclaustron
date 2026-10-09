@@ -18,7 +18,7 @@
 //!   link's reading half. It routes what arrives to the user thread it
 //!   is for, executes what is about the node it came from, and is the
 //!   one writer of every node's published state.
-//! - **a heartbeat thread** ([`heartbeat`]) sends `API_REGREQ` to every
+//! - **a heartbeat thread** ([`heartbeat`]) sends `HEARTBEAT_REQ` to every
 //!   connected node and asks for a link to be dropped when its node has
 //!   stopped answering.
 //!
@@ -68,10 +68,6 @@ use ic_apic::data::ClusterConfig;
 use ic_apic::mgm_client;
 use ic_apic::mgm_client::MgmClient;
 use ic_comm::connection::Connection;
-use ic_ndb_signals::gsn;
-use ic_ndb_signals::header;
-use ic_ndb_signals::header::SignalHeader;
-use ic_ndb_signals::qmgr::NodeState;
 use ic_port::debug::IC_COMM_LEVEL;
 use ic_port::debug::IC_HEARTBEAT_LEVEL;
 use ic_port::debug::IC_NDB_MESSAGE_LEVEL;
@@ -82,6 +78,10 @@ use ic_port::sync::IC_MUTEX_LEVEL_NODE_CONN;
 use ic_port::time;
 use ic_port::time::IcTimer;
 use ic_port::IcError;
+use ic_signals::header;
+use ic_signals::header::SignalHeader;
+use ic_signals::membership::NodeState;
+use ic_signals::numbers;
 use ic_util::connectstring::ConnectString;
 use ic_util::threadpool::ThreadPool;
 
@@ -108,22 +108,22 @@ pub const IC_MAX_RETRY_MS: u32 = 10_000;
 /// that a late or lost round still leaves the interval with heartbeats
 /// in it.
 ///
-/// A deliberate difference: the C++ API sends twice per interval, and
-/// the author of the protocol judges that too seldom (2026-09-19).
+/// A deliberate difference: the reference API sends twice per interval,
+/// and the author of the protocol judges that too seldom (2026-09-19).
 /// Sending more often than the other side expects is always safe; the
 /// data node only ever counts intervals in which it heard nothing.
-/// Verify the C++ rule: `ClusterMgr.cpp`, `get_send_heartbeat_interval`.
+/// Verify: chapter 05 §17.12.
 pub const IC_HEARTBEATS_PER_INTERVAL: u32 = 3;
 
 // Fewer than three is the rule this constant exists to prevent.
 const _: () = assert!(IC_HEARTBEATS_PER_INTERVAL >= 3);
 
 /// The shortest check interval, whatever a node reports.
-/// Verify: `ClusterMgr.hpp`, the minimum heartbeat interval.
+/// Verify: chapter 05 §17.12.
 pub const IC_MIN_HEARTBEAT_INTERVAL_MS: u32 = 100;
 /// A node is lost at this many check intervals in a row without an
 /// answer, which is at least three whole intervals of silence.
-/// Verify: `ClusterMgr.cpp`, the missed heartbeat test in `threadMain`.
+/// Verify: chapter 05 §17.12.
 pub const IC_MAX_MISSED_HEARTBEATS: u32 = 4;
 
 /// Stack for a connect thread. Small, since there is one per data node,
@@ -515,7 +515,7 @@ impl NodeShared {
       IC_NDB_MESSAGE_LEVEL,
       "-> node {} {} ({} words, {} sections)",
       self.node_id,
-      gsn::gsn_name(header.gsn()).unwrap_or("unknown"),
+      numbers::sig_name(header.sig_no()).unwrap_or("unknown"),
       data.len(),
       sections.len()
     );
@@ -1212,7 +1212,7 @@ impl ApidGlobal {
     let mut nodes: Vec<Arc<NodeShared>> = Vec::new();
     for node_id in config.connectable_data_nodes() {
       let interval = match config.data_node(node_id) {
-        Some(node) => node.api_heartbeat_interval_ms,
+        Some(node) => node.api_heartbeat_ms,
         None => 0,
       };
       nodes.push(Arc::new(NodeShared::new(
@@ -1571,7 +1571,7 @@ mod tests {
   #[test]
   fn sending_without_a_link_says_what_is_known() {
     let node = test_node(2, 30000);
-    let header = SignalHeader::new(gsn::IC_GSN_API_REGREQ, 0x0FA2, 0xFC);
+    let header = SignalHeader::new(numbers::IC_SIG_HEARTBEAT_REQ, 0x0FA2, 0xFC);
     let e = node.send(&header, &[1, 2, 3], &[]).expect_err("no link");
     assert_eq!(e.code, err::IC_ERROR_LINK_LOST);
     node.set_membership(LinkStatus::AwaitingTakeover);

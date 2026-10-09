@@ -10,7 +10,7 @@
 //! What it needs is a table's shape: its id and version, which every
 //! operation on it names, and its columns with their types, sizes and
 //! keys. It asks the dictionary of a started data node with
-//! `GET_TABINFOREQ` and reads the answer.
+//! `TABLE_DESC_REQ` and reads the answer.
 //!
 //! **Retrying, as the reference does.** A dictionary that is busy says
 //! so, and the question is asked again; so is one whose node went away
@@ -31,26 +31,26 @@
 //! fragment a key hash belongs to: [`get_hash_map`] fetches it by the id
 //! the table names. The reference does both in one call.
 //!
-//! Verify: `NdbDictionaryImpl.cpp`, `NdbDictInterface::getTable` and
-//! `dictSignal`; `Dbdict.cpp`, `execLIST_TABLES_REQ`, which has no
-//! refusal to send.
+//! The dictionary has no refusal to send for a list request.
+//!
+//! Verify: chapter 05 §17.13.
 
-use ic_ndb_signals::blocks;
-use ic_ndb_signals::dict_tab_info;
-use ic_ndb_signals::dict_tab_info::HashMapInfo;
-use ic_ndb_signals::dict_tab_info::TableInfo;
-use ic_ndb_signals::get_tab_info;
-use ic_ndb_signals::get_tab_info::GetTabInfoConf;
-use ic_ndb_signals::get_tab_info::GetTabInfoRef;
-use ic_ndb_signals::get_tab_info::GetTabInfoReq;
-use ic_ndb_signals::gsn;
-use ic_ndb_signals::header::SignalHeader;
-use ic_ndb_signals::list_tables;
-use ic_ndb_signals::list_tables::ListTablesReq;
-use ic_ndb_signals::list_tables::ListedObject;
 use ic_port::debug::IC_NDB_MESSAGE_LEVEL;
 use ic_port::err;
 use ic_port::IcError;
+use ic_signals::blocks;
+use ic_signals::header::SignalHeader;
+use ic_signals::list_objects;
+use ic_signals::list_objects::ListObjectsReq;
+use ic_signals::list_objects::ListedObject;
+use ic_signals::numbers;
+use ic_signals::table_desc;
+use ic_signals::table_desc::TableDescConf;
+use ic_signals::table_desc::TableDescRef;
+use ic_signals::table_desc::TableDescReq;
+use ic_signals::table_props;
+use ic_signals::table_props::HashMapProps;
+use ic_signals::table_props::TableProps;
 
 use crate::apid_conn::ApidConnection;
 use crate::node_connect::ReceivedSignal;
@@ -63,10 +63,12 @@ pub const IC_DICT_ATTEMPTS: u32 = 100;
 pub const IC_DICT_SCHEMA: &str = "def";
 
 /// What answers a request for a description.
-const IC_TABINFO_REPLIES: [u16; 2] =
-  [gsn::IC_GSN_GET_TABINFO_CONF, gsn::IC_GSN_GET_TABINFOREF];
+const IC_TABLE_DESC_REPLIES: [u16; 2] = [
+  numbers::IC_SIG_TABLE_DESC_CONF,
+  numbers::IC_SIG_TABLE_DESC_REF,
+];
 /// What answers a request for a list. The dictionary never refuses one.
-const IC_LIST_REPLIES: [u16; 1] = [gsn::IC_GSN_LIST_TABLES_CONF];
+const IC_LIST_REPLIES: [u16; 1] = [numbers::IC_SIG_LIST_OBJECTS_CONF];
 
 /// What to ask the dictionary for.
 enum Asking<'a> {
@@ -98,7 +100,7 @@ pub fn get_table(
   conn: &mut ApidConnection,
   database: &str,
   table: &str,
-) -> Result<TableInfo, IcError> {
+) -> Result<TableProps, IcError> {
   get_table_named(conn, &internal_name(database, table))
 }
 
@@ -106,21 +108,21 @@ pub fn get_table(
 pub fn get_table_named(
   conn: &mut ApidConnection,
   name: &str,
-) -> Result<TableInfo, IcError> {
+) -> Result<TableProps, IcError> {
   let answer = fetch(conn, Asking::ByName(name))?;
   // A description that cannot be read would read the same way again,
   // so it is not asked for again.
-  dict_tab_info::parse_table_info(answer.section(0))
+  table_props::parse_table_info(answer.section(0))
 }
 
 /// Fetch a table or an index by id. An index is described as a table of
-/// its own, whose `primary_table_id` names the table it indexes.
+/// its own, whose `base_table_id` names the table it indexes.
 pub fn get_table_by_id(
   conn: &mut ApidConnection,
   table_id: u32,
-) -> Result<TableInfo, IcError> {
+) -> Result<TableProps, IcError> {
   let answer = fetch(conn, Asking::ById(table_id))?;
-  dict_tab_info::parse_table_info(answer.section(0))
+  table_props::parse_table_info(answer.section(0))
 }
 
 /// The objects that depend on a table: its indexes, and others such as
@@ -130,10 +132,10 @@ pub fn list_dependents(
   table_id: u32,
 ) -> Result<Vec<ListedObject>, IcError> {
   let answer = fetch(conn, Asking::DependentsOf(table_id))?;
-  list_tables::parse_listed_objects(answer.section(0), answer.section(1))
+  list_objects::parse_listed_objects(answer.section(0), answer.section(1))
 }
 
-/// Fetch a hash map, by the id a table names in `hash_map_object_id`.
+/// Fetch a hash map, by the id a table names in `hash_map_id`.
 ///
 /// A key operation needs its table's hash map, to find the fragment and
 /// so the node a key belongs to. The reference fetches it as part of
@@ -142,9 +144,9 @@ pub fn list_dependents(
 pub fn get_hash_map(
   conn: &mut ApidConnection,
   object_id: u32,
-) -> Result<HashMapInfo, IcError> {
+) -> Result<HashMapProps, IcError> {
   let answer = fetch(conn, Asking::ById(object_id))?;
-  dict_tab_info::parse_hash_map_info(answer.section(0))
+  table_props::parse_hash_map_info(answer.section(0))
 }
 
 /// Ask until answered, or until asking again is pointless.
@@ -191,42 +193,45 @@ fn fetch_once(
   let node_id = started[attempt as usize % started.len()];
   let request_id = conn.next_request_id();
   let own_ref = conn.block_ref();
-  let mut gsn_value = gsn::IC_GSN_GET_TABINFOREQ;
+  let mut sig_value = numbers::IC_SIG_TABLE_DESC_REQ;
   if let Asking::DependentsOf(_) = asking {
-    gsn_value = gsn::IC_GSN_LIST_TABLES_REQ;
+    sig_value = numbers::IC_SIG_LIST_OBJECTS_REQ;
   }
-  let header =
-    SignalHeader::new(gsn_value, conn.block_number(), blocks::IC_BLOCK_DBDICT);
+  let header = SignalHeader::new(
+    sig_value,
+    conn.block_number(),
+    blocks::IC_BLOCK_DICTIONARY,
+  );
   // A lost link, a timeout or a failed send all leave the question
   // worth asking again, of another node if need be.
   let answer = match asking {
     Asking::ByName(name) => {
-      let request = GetTabInfoReq::by_name(request_id, own_ref, name);
-      let section = get_tab_info::name_section(name);
+      let request = TableDescReq::by_name(request_id, own_ref, name);
+      let section = table_desc::name_section(name);
       let sections: [&[u32]; 1] = [&section];
       conn.call(
         node_id,
         &header,
         &request.encode(),
         &sections,
-        &IC_TABINFO_REPLIES,
+        &IC_TABLE_DESC_REPLIES,
         IC_DICT_WAIT_MS,
       )
     }
     Asking::ById(object_id) => {
-      let request = GetTabInfoReq::by_id(request_id, own_ref, *object_id);
+      let request = TableDescReq::by_id(request_id, own_ref, *object_id);
       conn.call(
         node_id,
         &header,
         &request.encode(),
         &[],
-        &IC_TABINFO_REPLIES,
+        &IC_TABLE_DESC_REPLIES,
         IC_DICT_WAIT_MS,
       )
     }
     Asking::DependentsOf(table_id) => {
       let request =
-        ListTablesReq::dependents_of(request_id, own_ref, *table_id);
+        ListObjectsReq::dependents_of(request_id, own_ref, *table_id);
       conn.call(
         node_id,
         &header,
@@ -246,23 +251,23 @@ fn fetch_once(
 /// What a whole answer amounts to. It is already known to answer this
 /// request: the connection matched it by its number.
 fn answer_of(whole: ReceivedSignal) -> Attempt {
-  if whole.gsn == gsn::IC_GSN_GET_TABINFO_CONF {
+  if whole.sig_no == numbers::IC_SIG_TABLE_DESC_CONF {
     return description_of(whole);
   }
-  if whole.gsn == gsn::IC_GSN_GET_TABINFOREF {
-    return match GetTabInfoRef::decode(&whole.data) {
+  if whole.sig_no == numbers::IC_SIG_TABLE_DESC_REF {
+    return match TableDescRef::decode(&whole.data) {
       Ok(refusal) => refused(&refusal),
       Err(e) => Attempt::Again(e),
     };
   }
   // A list. Its count is not checked, since once joined it is the
-  // first piece's alone; see `list_tables`.
+  // first piece's alone; see `list_objects`.
   Attempt::Done(whole)
 }
 
 /// A whole description: check it is complete.
 fn description_of(whole: ReceivedSignal) -> Attempt {
-  let conf = match GetTabInfoConf::decode(&whole.data) {
+  let conf = match TableDescConf::decode(&whole.data) {
     Ok(conf) => conf,
     Err(e) => return Attempt::Again(e),
   };
@@ -274,13 +279,13 @@ fn description_of(whole: ReceivedSignal) -> Attempt {
 }
 
 /// What a refusal amounts to.
-fn refused(refusal: &GetTabInfoRef) -> Attempt {
+fn refused(refusal: &TableDescRef) -> Attempt {
   let code = refusal.error_code;
-  if code == get_tab_info::IC_GET_TABINFO_ERR_BUSY {
+  if code == table_desc::IC_TABLE_DESC_ERR_BUSY {
     return Attempt::Again(IcError::new(err::IC_ERROR_DICT_REFUSED));
   }
-  if code == get_tab_info::IC_GET_TABINFO_ERR_NOT_DEFINED
-    || code == get_tab_info::IC_GET_TABINFO_ERR_NO_SUCH_ID
+  if code == table_desc::IC_TABLE_DESC_ERR_NOT_DEFINED
+    || code == table_desc::IC_TABLE_DESC_ERR_NO_SUCH_ID
   {
     return Attempt::Failed(IcError::new(err::IC_ERROR_NO_SUCH_TABLE));
   }
@@ -311,23 +316,23 @@ fn retry_pause_ms(attempt: u32, chance: u32) -> u32 {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_END;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_EXT_LENGTH;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_EXT_TYPE;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_NAME;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_NO_OF_ATTRIBUTES;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_TABLE_NAME;
-  use ic_ndb_signals::dict_tab_info::IC_NDB_TYPE_INT;
-  use ic_ndb_signals::simple_properties::PropertyWriter;
+  use ic_signals::prop_stream::PropertyWriter;
+  use ic_signals::table_props::IC_TP_COLUMN_COUNT;
+  use ic_signals::table_props::IC_TP_COLUMN_END;
+  use ic_signals::table_props::IC_TP_COLUMN_LENGTH;
+  use ic_signals::table_props::IC_TP_COLUMN_NAME;
+  use ic_signals::table_props::IC_TP_COLUMN_TYPE;
+  use ic_signals::table_props::IC_TP_TABLE_NAME;
+  use ic_signals::table_props::IC_TYPE_INT;
 
   fn description() -> Vec<u32> {
     let mut w = PropertyWriter::new();
-    w.add_string(IC_DTI_TABLE_NAME, "ictest/def/t1");
-    w.add_u32(IC_DTI_NO_OF_ATTRIBUTES, 1);
-    w.add_string(IC_DTI_ATTRIBUTE_NAME, "id");
-    w.add_u32(IC_DTI_ATTRIBUTE_EXT_TYPE, IC_NDB_TYPE_INT);
-    w.add_u32(IC_DTI_ATTRIBUTE_EXT_LENGTH, 1);
-    w.add_u32(IC_DTI_ATTRIBUTE_END, 0);
+    w.add_string(IC_TP_TABLE_NAME, "ictest/def/t1");
+    w.add_u32(IC_TP_COLUMN_COUNT, 1);
+    w.add_string(IC_TP_COLUMN_NAME, "id");
+    w.add_u32(IC_TP_COLUMN_TYPE, IC_TYPE_INT);
+    w.add_u32(IC_TP_COLUMN_LENGTH, 1);
+    w.add_u32(IC_TP_COLUMN_END, 0);
     w.words().to_vec()
   }
 
@@ -344,7 +349,7 @@ mod tests {
   fn a_whole_answer_gives_the_table() {
     let words = description();
     let signal = ReceivedSignal {
-      gsn: gsn::IC_GSN_GET_TABINFO_CONF,
+      sig_no: numbers::IC_SIG_TABLE_DESC_CONF,
       data: conf(7, words.len()),
       sections: vec![words],
       ..ReceivedSignal::default()
@@ -352,7 +357,7 @@ mod tests {
     match answer_of(signal) {
       Attempt::Done(answer) => {
         let words = answer.section(0);
-        let info = dict_tab_info::parse_table_info(words).expect("table");
+        let info = table_props::parse_table_info(words).expect("table");
         assert_eq!(info.table_name(), "t1");
         assert_eq!(info.attributes.len(), 1);
       }
@@ -364,7 +369,7 @@ mod tests {
   fn a_description_shorter_than_it_says_is_asked_for_again() {
     let words = description();
     let signal = ReceivedSignal {
-      gsn: gsn::IC_GSN_GET_TABINFO_CONF,
+      sig_no: numbers::IC_SIG_TABLE_DESC_CONF,
       data: conf(7, words.len() + 5),
       sections: vec![words],
       ..ReceivedSignal::default()
@@ -381,15 +386,16 @@ mod tests {
   fn a_list_is_answered_by_its_own_signal() {
     // Two objects, no names asked for.
     let signal = ReceivedSignal {
-      gsn: gsn::IC_GSN_LIST_TABLES_CONF,
+      sig_no: numbers::IC_SIG_LIST_OBJECTS_CONF,
       data: vec![7, 2],
       sections: vec![vec![0, 14, 3, 0, 15, 6]],
       ..ReceivedSignal::default()
     };
     match answer_of(signal) {
       Attempt::Done(answer) => {
-        let objects = list_tables::parse_listed_objects(answer.section(0), &[])
-          .expect("list");
+        let objects =
+          list_objects::parse_listed_objects(answer.section(0), &[])
+            .expect("list");
         assert_eq!(objects.len(), 2);
         assert_eq!(objects[1].object_type, 6);
       }
@@ -399,9 +405,9 @@ mod tests {
 
   #[test]
   fn a_refusal_signal_is_read_as_one() {
-    let code = get_tab_info::IC_GET_TABINFO_ERR_NOT_DEFINED;
+    let code = table_desc::IC_TABLE_DESC_ERR_NOT_DEFINED;
     let signal = ReceivedSignal {
-      gsn: gsn::IC_GSN_GET_TABINFOREF,
+      sig_no: numbers::IC_SIG_TABLE_DESC_REF,
       // A current refusal: the error code is its sixth word.
       data: vec![7, 0, 0, 0, 0, code, 0],
       ..ReceivedSignal::default()
@@ -411,18 +417,18 @@ mod tests {
 
   #[test]
   fn a_missing_table_is_final_and_a_busy_dictionary_is_not() {
-    let missing = GetTabInfoRef {
-      sender_data: 7,
-      error_code: get_tab_info::IC_GET_TABINFO_ERR_NOT_DEFINED,
+    let missing = TableDescRef {
+      caller_data: 7,
+      error_code: table_desc::IC_TABLE_DESC_ERR_NOT_DEFINED,
       error_line: 0,
     };
     match refused(&missing) {
       Attempt::Failed(e) => assert_eq!(e.code, err::IC_ERROR_NO_SUCH_TABLE),
       _ => panic!("a missing table is final"),
     }
-    let busy = GetTabInfoRef {
-      sender_data: 7,
-      error_code: get_tab_info::IC_GET_TABINFO_ERR_BUSY,
+    let busy = TableDescRef {
+      caller_data: 7,
+      error_code: table_desc::IC_TABLE_DESC_ERR_BUSY,
       error_line: 0,
     };
     assert!(matches!(refused(&busy), Attempt::Again(_)));

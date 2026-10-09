@@ -5,46 +5,44 @@
 //! Cluster membership: the heartbeat we send to each data node and what
 //! it tells us in return.
 //!
-//! An API node sends `API_REGREQ` to the cluster manager block of every
-//! data node it is connected to. The answer, `API_REGCONF`, is how we
+//! An API node sends `HEARTBEAT_REQ` to the membership block of every
+//! data node it is connected to. The answer, `HEARTBEAT_CONF`, is how we
 //! learn whether that node is started, which node group it is in, and
 //! which other nodes it can see. Missing several answers in a row is
 //! how we learn a node has died, and a data node that stops hearing
 //! from us declares us dead in the same way.
 //!
-//! Verify: RonDB 26.10
-//! `include/kernel/signaldata/ApiRegSignalData.hpp:34` and
-//! `include/kernel/NodeState.hpp:113`.
+//! Verify: chapter 05 §17.7.
 
 use ic_port::err;
 use ic_port::IcError;
 
-/// Words of signal data in an `API_REGREQ`.
-pub const IC_API_REGREQ_LEN: usize = 3;
-/// Words of signal data in an `API_REGREF`.
-pub const IC_API_REGREF_LEN: usize = 4;
-/// Words in the node state carried by an `API_REGCONF`.
-/// Verify: `NodeState.hpp:113`, `DataLength`.
+/// Words of signal data in a `HEARTBEAT_REQ`.
+pub const IC_HEARTBEAT_REQ_LEN: usize = 3;
+/// Words of signal data in a `HEARTBEAT_REF`.
+pub const IC_HEARTBEAT_REF_LEN: usize = 4;
+/// Words in the node state carried by a `HEARTBEAT_CONF`.
+/// Verify: chapter 05 §17.7.
 pub const IC_NODE_STATE_LEN: usize = 16;
-/// Words of signal data in an `API_REGCONF`.
-pub const IC_API_REGCONF_LEN: usize = 6 + IC_NODE_STATE_LEN;
+/// Words of signal data in a `HEARTBEAT_CONF`.
+pub const IC_HEARTBEAT_CONF_LEN: usize = 6 + IC_NODE_STATE_LEN;
 /// Words of the connected-node bitmap inside the node state.
 ///
 /// This is 256 bits, and stays 256 bits however far node ids rise: it
 /// only has to cover data nodes, which keep the low numbers.
-/// Verify: `NodeState.hpp`, `NodeBitmask255::Size`.
+/// Verify: chapter 05 §17.7.
 pub const IC_CONNECTED_NODES_WORDS: usize = 8;
 
 /// How far through starting a node is.
-/// Verify: `NodeState.hpp`, `StartLevel`.
+/// Verify: chapter 05 §17.7.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[repr(u32)]
 pub enum StartLevel {
   /// Not started at all.
   #[default]
   Nothing = 0,
-  /// The virtual machine is up but nothing else.
-  Cmvmi = 1,
+  /// The node's process is up, but nothing else yet.
+  ProcessUp = 1,
   /// Starting, and not yet able to serve us.
   Starting = 2,
   /// Started and serving.
@@ -65,7 +63,7 @@ impl StartLevel {
   /// The level a word names.
   pub fn from_u32(value: u32) -> StartLevel {
     match value {
-      1 => StartLevel::Cmvmi,
+      1 => StartLevel::ProcessUp,
       2 => StartLevel::Starting,
       3 => StartLevel::Started,
       4 => StartLevel::SingleUser,
@@ -95,28 +93,28 @@ impl StartLevel {
 }
 
 /// Why a data node refused our heartbeat.
-/// Verify: `ApiRegSignalData.hpp`, `ApiRegRef::ErrorCode`.
+/// Verify: chapter 05 §17.7.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
-pub enum ApiRegRefError {
+pub enum HeartbeatRefError {
   /// We claimed to be a kind of node we are not configured as.
-  WrongType = 1,
+  WrongNodeKind = 1,
   /// Our version and the node's cannot work together.
-  UnsupportedVersion = 2,
+  VersionMismatch = 2,
   /// This node id is not in the cluster's configuration.
-  UnconfiguredNode = 3,
+  NotInConfig = 3,
   /// Something the node reported that we do not know about.
   Unknown = 0,
 }
 
-impl ApiRegRefError {
+impl HeartbeatRefError {
   /// The reason a word names.
-  pub fn from_u32(value: u32) -> ApiRegRefError {
+  pub fn from_u32(value: u32) -> HeartbeatRefError {
     match value {
-      1 => ApiRegRefError::WrongType,
-      2 => ApiRegRefError::UnsupportedVersion,
-      3 => ApiRegRefError::UnconfiguredNode,
-      _ => ApiRegRefError::Unknown,
+      1 => HeartbeatRefError::WrongNodeKind,
+      2 => HeartbeatRefError::VersionMismatch,
+      3 => HeartbeatRefError::NotInConfig,
+      _ => HeartbeatRefError::Unknown,
     }
   }
 }
@@ -137,7 +135,7 @@ pub struct NodeState {
   /// True when the whole cluster is shutting down.
   pub system_shutdown: bool,
   /// True when the cluster is in single user mode.
-  pub single_user_mode: bool,
+  pub single_user: bool,
   /// The one API node allowed in single user mode.
   pub single_user_api: u32,
   /// Which nodes this node can see, as a bitmap over node ids.
@@ -165,7 +163,7 @@ impl NodeState {
       start_phase: words[3],
       restart_type: words[4],
       system_shutdown: words[3] != 0,
-      single_user_mode: words[6] != 0,
+      single_user: words[6] != 0,
       single_user_api: words[7],
       connected_nodes: connected,
     })
@@ -198,7 +196,7 @@ impl NodeState {
 
 /// Our heartbeat to a data node.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct ApiRegReq {
+pub struct HeartbeatReq {
   /// Our block reference, so the node knows where to answer.
   pub block_ref: u32,
   /// Our NDB version.
@@ -207,29 +205,30 @@ pub struct ApiRegReq {
   pub mysql_version: u32,
 }
 
-impl ApiRegReq {
+impl HeartbeatReq {
   /// The words of signal data this carries.
-  pub fn encode(&self) -> [u32; IC_API_REGREQ_LEN] {
+  pub fn encode(&self) -> [u32; IC_HEARTBEAT_REQ_LEN] {
     [self.block_ref, self.version, self.mysql_version]
   }
 }
 
 /// A data node's answer to our heartbeat.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct ApiRegConf {
-  /// The cluster manager block that answered.
-  pub qmgr_ref: u32,
+pub struct HeartbeatConf {
+  /// The membership block that answered.
+  pub membership_ref: u32,
   /// The node's NDB version.
   pub version: u32,
   /// How often the node expects to hear from us, in hundredths of a
-  /// second. Use [`heartbeat_interval_ms`](ApiRegConf::heartbeat_interval_ms)
+  /// second. Use
+  /// [`heartbeat_interval_ms`](HeartbeatConf::heartbeat_interval_ms)
   /// rather than this field directly.
   ///
-  /// The configuration states `HeartbeatIntervalDbApi` in
-  /// milliseconds, and the signal carries a tenth of it: a cluster
-  /// configured for 30000 ms answers 3000 here. Confirmed against a
-  /// live RonDB 26.10 cluster, and matching the C++ cluster manager,
-  /// which multiplies this field by ten.
+  /// The configuration states `api_heartbeat_ms` in milliseconds, and
+  /// the signal carries a tenth of it: a cluster configured for 30000 ms
+  /// answers 3000 here. Confirmed against a live RonDB 26.10 cluster,
+  /// and matching the reference API, which multiplies this field by
+  /// ten. Verify: chapter 05 §17.7.
   pub api_heartbeat_interval: u32,
   /// The node's MySQL version.
   pub mysql_version: u32,
@@ -242,19 +241,19 @@ pub struct ApiRegConf {
   pub node_state: NodeState,
 }
 
-impl ApiRegConf {
+impl HeartbeatConf {
   /// How often the node expects to hear from us, in milliseconds.
   pub fn heartbeat_interval_ms(&self) -> u32 {
     self.api_heartbeat_interval * 10
   }
 
   /// Read the answer out of the words of a signal.
-  pub fn decode(words: &[u32]) -> Result<ApiRegConf, IcError> {
-    if words.len() < IC_API_REGCONF_LEN {
+  pub fn decode(words: &[u32]) -> Result<HeartbeatConf, IcError> {
+    if words.len() < IC_HEARTBEAT_CONF_LEN {
       return Err(IcError::new(err::IC_ERROR_INCONSISTENT_DATA));
     }
-    Ok(ApiRegConf {
-      qmgr_ref: words[0],
+    Ok(HeartbeatConf {
+      membership_ref: words[0],
       version: words[1],
       api_heartbeat_interval: words[2],
       mysql_version: words[3],
@@ -265,9 +264,9 @@ impl ApiRegConf {
   }
 
   /// Write the answer as a data node would, for tests.
-  pub fn encode(&self) -> [u32; IC_API_REGCONF_LEN] {
-    let mut words = [0u32; IC_API_REGCONF_LEN];
-    words[0] = self.qmgr_ref;
+  pub fn encode(&self) -> [u32; IC_HEARTBEAT_CONF_LEN] {
+    let mut words = [0u32; IC_HEARTBEAT_CONF_LEN];
+    words[0] = self.membership_ref;
     words[1] = self.version;
     words[2] = self.api_heartbeat_interval;
     words[3] = self.mysql_version;
@@ -278,7 +277,7 @@ impl ApiRegConf {
     words[7] = state.dynamic_id;
     words[8] = state.start_phase;
     words[9] = state.restart_type;
-    words[11] = u32::from(state.single_user_mode);
+    words[11] = u32::from(state.single_user);
     words[12] = state.single_user_api;
     let mut i: usize = 0;
     while i < IC_CONNECTED_NODES_WORDS {
@@ -292,9 +291,9 @@ impl ApiRegConf {
 
 /// A data node's refusal of our heartbeat.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct ApiRegRef {
-  /// The cluster manager block that refused.
-  pub qmgr_ref: u32,
+pub struct HeartbeatRef {
+  /// The membership block that refused.
+  pub membership_ref: u32,
   /// The node's NDB version.
   pub version: u32,
   /// Why it refused.
@@ -303,14 +302,14 @@ pub struct ApiRegRef {
   pub mysql_version: u32,
 }
 
-impl ApiRegRef {
+impl HeartbeatRef {
   /// Read the refusal out of the words of a signal.
-  pub fn decode(words: &[u32]) -> Result<ApiRegRef, IcError> {
-    if words.len() < IC_API_REGREF_LEN {
+  pub fn decode(words: &[u32]) -> Result<HeartbeatRef, IcError> {
+    if words.len() < IC_HEARTBEAT_REF_LEN {
       return Err(IcError::new(err::IC_ERROR_INCONSISTENT_DATA));
     }
-    Ok(ApiRegRef {
-      qmgr_ref: words[0],
+    Ok(HeartbeatRef {
+      membership_ref: words[0],
       version: words[1],
       error_code: words[2],
       mysql_version: words[3],
@@ -318,19 +317,19 @@ impl ApiRegRef {
   }
 
   /// Why the node refused.
-  pub fn reason(&self) -> ApiRegRefError {
-    ApiRegRefError::from_u32(self.error_code)
+  pub fn reason(&self) -> HeartbeatRefError {
+    HeartbeatRefError::from_u32(self.error_code)
   }
 }
 
-/// Words of signal data in an `NF_COMPLETEREP`.
-/// Verify: `NFCompleteRep.hpp`, `SignalLength`.
-pub const IC_NF_COMPLETEREP_LEN: usize = 5;
+/// Words of signal data in a `NODE_LOST_DONE_REP`.
+/// Verify: chapter 05 §17.7.
+pub const IC_NODE_LOST_DONE_REP_LEN: usize = 5;
 
-/// Words of signal data in the modern `NODE_FAILREP`, whose bitmap of
+/// Words of signal data in the modern `NODE_LOST_REP`, whose bitmap of
 /// failed nodes travels in a section rather than in the signal.
-/// Verify: `NodeFailRep.hpp`, `SignalLength`.
-pub const IC_NODE_FAILREP_LEN: usize = 3;
+/// Verify: chapter 05 §17.7.
+pub const IC_NODE_LOST_REP_LEN: usize = 3;
 
 /// One or more nodes have failed.
 ///
@@ -340,13 +339,13 @@ pub const IC_NODE_FAILREP_LEN: usize = 3;
 /// forms it follows the three words inside the signal, sized either for
 /// data nodes alone or for every node. The length is always the signal
 /// data length less three.
-/// Verify: `NodeFailRep.hpp`, `getNodeMaskLength`.
+/// Verify: chapter 05 §17.7.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct NodeFailRep {
+pub struct NodeLostRep {
   /// Which failure this is, counting up as nodes fail.
   pub fail_number: u32,
   /// The master data node, set only when the report comes from the
-  /// start and stop block rather than the cluster manager.
+  /// start control block rather than the membership block.
   pub master_node_id: u32,
   /// How many nodes the bitmap names.
   pub num_nodes: u32,
@@ -354,21 +353,21 @@ pub struct NodeFailRep {
   pub failed_nodes: Vec<u32>,
 }
 
-impl NodeFailRep {
+impl NodeLostRep {
   /// Read the report. `section` is section 0 of the signal, which is
   /// where the bitmap lives unless the signal carries it inline.
-  pub fn decode(data: &[u32], section: &[u32]) -> Result<NodeFailRep, IcError> {
-    if data.len() < IC_NODE_FAILREP_LEN {
+  pub fn decode(data: &[u32], section: &[u32]) -> Result<NodeLostRep, IcError> {
+    if data.len() < IC_NODE_LOST_REP_LEN {
       return Err(IcError::new(err::IC_ERROR_INCONSISTENT_DATA));
     }
     // Anything past the three fixed words is the bitmap; if there is
     // nothing past them, it came in the section.
-    let bitmap: &[u32] = if data.len() > IC_NODE_FAILREP_LEN {
-      &data[IC_NODE_FAILREP_LEN..]
+    let bitmap: &[u32] = if data.len() > IC_NODE_LOST_REP_LEN {
+      &data[IC_NODE_LOST_REP_LEN..]
     } else {
       section
     };
-    Ok(NodeFailRep {
+    Ok(NodeLostRep {
       fail_number: data[0],
       master_node_id: data[1],
       num_nodes: data[2],
@@ -405,15 +404,14 @@ pub fn nodes_in_bitmap(bitmap: &[u32]) -> Vec<u32> {
 /// **The block field does not say "whole node" by being zero.** Inside
 /// a data node these reports travel block to block and zero has that
 /// meaning there, but the one that reaches an API node is sent by the
-/// cluster manager block with its own reference in the field. An API
+/// membership block with its own reference in the field. An API
 /// node acts on the failed node id alone and ignores the block. An
 /// earlier version of this decoder tested for zero and would have
 /// ignored every real report.
-/// Verify: `NFCompleteRep.hpp`; `QmgrMain.cpp`, `execNDB_FAILCONF`
-/// (the send to API nodes); `ClusterMgr.cpp`, `execNF_COMPLETEREP`
-/// (the receiver, which reads only the failed node id).
+/// The reference's receiver reads only the failed node id.
+/// Verify: chapter 05 §17.7.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct NfCompleteRep {
+pub struct NodeLostDoneRep {
   /// The block that finished. Informational: see the note above.
   pub block_no: u32,
   /// The node reporting.
@@ -424,13 +422,13 @@ pub struct NfCompleteRep {
   pub from: u32,
 }
 
-impl NfCompleteRep {
+impl NodeLostDoneRep {
   /// Read the report.
-  pub fn decode(data: &[u32]) -> Result<NfCompleteRep, IcError> {
-    if data.len() < IC_NF_COMPLETEREP_LEN {
+  pub fn decode(data: &[u32]) -> Result<NodeLostDoneRep, IcError> {
+    if data.len() < IC_NODE_LOST_DONE_REP_LEN {
       return Err(IcError::new(err::IC_ERROR_INCONSISTENT_DATA));
     }
-    Ok(NfCompleteRep {
+    Ok(NodeLostDoneRep {
       block_no: data[0],
       node_id: data[1],
       failed_node_id: data[2],
@@ -446,18 +444,18 @@ mod tests {
 
   #[test]
   fn a_heartbeat_carries_three_words() {
-    let request = ApiRegReq {
-      block_ref: number_to_ref(IC_BLOCK_API_CLUSTERMGR, 192),
+    let request = HeartbeatReq {
+      block_ref: number_to_ref(IC_BLOCK_NODE_WATCH, 192),
       version: 0x1A_0A00,
       mysql_version: 0x1A_0A00,
     };
     let words = request.encode();
-    assert_eq!(words.len(), IC_API_REGREQ_LEN);
+    assert_eq!(words.len(), IC_HEARTBEAT_REQ_LEN);
     assert_eq!(ref_to_node(words[0]), 192);
-    assert_eq!(ref_to_block(words[0]), IC_BLOCK_API_CLUSTERMGR);
+    assert_eq!(ref_to_block(words[0]), IC_BLOCK_NODE_WATCH);
   }
 
-  fn started_node(node_group: u32, connected: &[u32]) -> ApiRegConf {
+  fn started_node(node_group: u32, connected: &[u32]) -> HeartbeatConf {
     let mut state = NodeState {
       start_level: StartLevel::Started,
       node_group,
@@ -469,8 +467,8 @@ mod tests {
       let word = (*node_id / 32) as usize;
       state.connected_nodes[word] |= 1 << (*node_id & 31);
     }
-    ApiRegConf {
-      qmgr_ref: number_to_ref(IC_BLOCK_QMGR, 2),
+    HeartbeatConf {
+      membership_ref: number_to_ref(IC_BLOCK_MEMBERSHIP, 2),
       version: 0x1A_0A00,
       api_heartbeat_interval: 3000,
       mysql_version: 0x1A_0A00,
@@ -484,11 +482,11 @@ mod tests {
   fn an_answer_round_trips() {
     let original = started_node(0, &[1, 2, 192]);
     let words = original.encode();
-    assert_eq!(words.len(), IC_API_REGCONF_LEN);
+    assert_eq!(words.len(), IC_HEARTBEAT_CONF_LEN);
     assert_eq!(words.len(), 22);
-    let decoded = ApiRegConf::decode(&words).expect("decode");
-    assert_eq!(decoded.qmgr_ref, original.qmgr_ref);
-    assert_eq!(ref_to_node(decoded.qmgr_ref), 2);
+    let decoded = HeartbeatConf::decode(&words).expect("decode");
+    assert_eq!(decoded.membership_ref, original.membership_ref);
+    assert_eq!(ref_to_node(decoded.membership_ref), 2);
     assert_eq!(decoded.api_heartbeat_interval, 3000);
     // The configuration would call this 30000 milliseconds.
     assert_eq!(decoded.heartbeat_interval_ms(), 30000);
@@ -504,7 +502,7 @@ mod tests {
   fn the_connected_bitmap_is_read() {
     let conf = started_node(0, &[1, 2, 192]);
     let words = conf.encode();
-    let decoded = ApiRegConf::decode(&words).expect("decode");
+    let decoded = HeartbeatConf::decode(&words).expect("decode");
     let state = decoded.node_state;
     assert!(state.is_connected_to(1));
     assert!(state.is_connected_to(2));
@@ -532,15 +530,20 @@ mod tests {
 
   #[test]
   fn a_refusal_says_why() {
-    let words = [number_to_ref(IC_BLOCK_QMGR, 2), 0x1A_0A00, 2, 0x1A_0A00];
-    let refusal = ApiRegRef::decode(&words).expect("decode");
-    assert_eq!(refusal.reason(), ApiRegRefError::UnsupportedVersion);
+    let words = [
+      number_to_ref(IC_BLOCK_MEMBERSHIP, 2),
+      0x1A_0A00,
+      2,
+      0x1A_0A00,
+    ];
+    let refusal = HeartbeatRef::decode(&words).expect("decode");
+    assert_eq!(refusal.reason(), HeartbeatRefError::VersionMismatch);
     let words = [0, 0, 3, 0];
-    let refusal = ApiRegRef::decode(&words).expect("decode");
-    assert_eq!(refusal.reason(), ApiRegRefError::UnconfiguredNode);
+    let refusal = HeartbeatRef::decode(&words).expect("decode");
+    assert_eq!(refusal.reason(), HeartbeatRefError::NotInConfig);
     let words = [0, 0, 77, 0];
-    let refusal = ApiRegRef::decode(&words).expect("decode");
-    assert_eq!(refusal.reason(), ApiRegRefError::Unknown);
+    let refusal = HeartbeatRef::decode(&words).expect("decode");
+    assert_eq!(refusal.reason(), HeartbeatRefError::Unknown);
   }
 
   fn bitmap_of(nodes: &[u32], words: usize) -> Vec<u32> {
@@ -555,7 +558,7 @@ mod tests {
   fn a_failure_report_in_any_of_its_three_shapes() {
     // Modern: three words and the bitmap in a section.
     let section = bitmap_of(&[2], 64);
-    let report = NodeFailRep::decode(&[7, 1, 1], &section).expect("modern");
+    let report = NodeLostRep::decode(&[7, 1, 1], &section).expect("modern");
     assert_eq!(report.fail_number, 7);
     assert_eq!(report.master_node_id, 1);
     assert_eq!(report.num_nodes, 1);
@@ -564,35 +567,35 @@ mod tests {
     // Older, data nodes only: the bitmap follows the three words.
     let mut data = vec![7u32, 1, 2];
     data.extend_from_slice(&bitmap_of(&[2, 3], 2));
-    let report = NodeFailRep::decode(&data, &[]).expect("inline short");
+    let report = NodeLostRep::decode(&data, &[]).expect("inline short");
     assert_eq!(report.failed_nodes, vec![2, 3]);
 
     // Older, every node: a longer bitmap, same place.
     let mut data = vec![7u32, 1, 2];
     data.extend_from_slice(&bitmap_of(&[2, 192], 64));
-    let report = NodeFailRep::decode(&data, &[]).expect("inline long");
+    let report = NodeLostRep::decode(&data, &[]).expect("inline long");
     assert_eq!(report.failed_nodes, vec![2, 192]);
 
     // An inline bitmap wins over a section, since a signal carrying
     // both would be malformed and the inline one is what it claims.
-    let report = NodeFailRep::decode(&data, &section).expect("both");
+    let report = NodeLostRep::decode(&data, &section).expect("both");
     assert_eq!(report.failed_nodes, vec![2, 192]);
-    assert!(NodeFailRep::decode(&[7, 1], &section).is_err());
+    assert!(NodeLostRep::decode(&[7, 1], &section).is_err());
   }
 
   #[test]
   fn a_takeover_report_names_the_node_that_is_done() {
-    // As a data node sends it to us: its cluster manager block in the
-    // first word, not zero. The failed node id is what matters.
-    let qmgr_ref = number_to_ref(IC_BLOCK_QMGR, 1);
+    // As a data node sends it to us: its membership block in the first
+    // word, not zero. The failed node id is what matters.
+    let membership_ref = number_to_ref(IC_BLOCK_MEMBERSHIP, 1);
     let report =
-      NfCompleteRep::decode(&[qmgr_ref, 1, 2, 0, 4870]).expect("dec");
-    assert_eq!(report.block_no, qmgr_ref);
+      NodeLostDoneRep::decode(&[membership_ref, 1, 2, 0, 4870]).expect("dec");
+    assert_eq!(report.block_no, membership_ref);
     assert_eq!(report.node_id, 1);
     assert_eq!(report.failed_node_id, 2);
     assert_eq!(report.from, 4870);
     // One word short is not a report.
-    assert!(NfCompleteRep::decode(&[qmgr_ref, 1, 2, 0]).is_err());
+    assert!(NodeLostDoneRep::decode(&[membership_ref, 1, 2, 0]).is_err());
   }
 
   #[test]
@@ -607,9 +610,9 @@ mod tests {
 
   #[test]
   fn short_signals_are_refused() {
-    assert!(ApiRegConf::decode(&[0u32; 21]).is_err());
-    assert!(ApiRegRef::decode(&[0u32; 3]).is_err());
+    assert!(HeartbeatConf::decode(&[0u32; 21]).is_err());
+    assert!(HeartbeatRef::decode(&[0u32; 3]).is_err());
     assert!(NodeState::decode(&[0u32; 15]).is_err());
-    assert!(ApiRegConf::decode(&[0u32; 22]).is_ok());
+    assert!(HeartbeatConf::decode(&[0u32; 22]).is_ok());
   }
 }

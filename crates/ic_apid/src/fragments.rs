@@ -5,7 +5,7 @@
 //!
 //! A data node splits a signal that is too large to send in one piece,
 //! which is over 7400 words, into pieces of 3840 words, or of 120 from
-//! a debug build of the data node. One exception is `TRANSID_AI`, the
+//! a debug build of the data node. One exception is `ROW_DATA_REP`, the
 //! row data of a read, which a debug build already splits over 240
 //! words. The pieces arrive in order on one link, marked first, middle
 //! and last, and every piece is laid out the same way:
@@ -25,9 +25,9 @@
 //! original's when the kernel's fragmenting send split it, which copies
 //! the data into every piece. A block may also split an answer by hand
 //! and put values of each piece's own in the data: the dictionary's
-//! `LIST_TABLES_CONF` carries the count of objects in that piece. A
+//! `LIST_OBJECTS_CONF` carries the count of objects in that piece. A
 //! handler for such a signal takes those values from the joined
-//! sections instead; `list_tables` counts objects by section length.
+//! sections instead; `list_objects` counts objects by section length.
 //!
 //! The C does no reassembly on the receiving side at all: iClaustron
 //! only ever sent fragmented signals, for schema changes. This follows
@@ -37,20 +37,18 @@
 //! not by the receive thread, which only routes. Every fragment of a
 //! reply goes to the same block, so it all lands in one inbox.
 //!
-//! Verify: `SimulatedBlock.cpp`, `sendFirstFragment` and
-//! `sendNextLinearFragment`; `ndb_limits.h`, `MAX_SIZE_SINGLE_SIGNAL`;
-//! `SimulatedBlock.hpp`, `FRAGMENT_WORD_SIZE`, whose comment says
-//! splitting starts above the piece size, which the code does not do;
-//! `NdbApiSignal.hpp`, `getFragmentId` and
-//! `getFragmentSectionNumber`; `NdbDictionaryImpl.cpp`,
-//! `execGET_TABINFO_CONF`, which relies on every fragment carrying the
-//! original signal data.
+//! The note beside the reference's piece size says splitting starts
+//! above that size, which the code does not do: it splits only above
+//! 7400 words. The reference's client relies on every fragment carrying
+//! the original signal data when it reads a table description.
+//!
+//! Verify: chapter 05 §17.12.
 
-use ic_ndb_signals::header::FragmentInfo;
-use ic_ndb_signals::header::IC_MAX_SECTIONS;
 use ic_port::debug::IC_NDB_MESSAGE_LEVEL;
 use ic_port::err;
 use ic_port::IcError;
+use ic_signals::header::FragmentState;
+use ic_signals::header::IC_MAX_SECTIONS;
 
 use crate::node_connect::ReceivedSignal;
 
@@ -98,7 +96,7 @@ impl FragmentAssembler {
     &mut self,
     signal: ReceivedSignal,
   ) -> Result<Option<ReceivedSignal>, IcError> {
-    if signal.fragment_info == FragmentInfo::Whole {
+    if signal.fragment_state == FragmentState::Whole {
       return Ok(Some(signal));
     }
     let bad = IcError::new(err::IC_ERROR_INCONSISTENT_DATA);
@@ -121,7 +119,7 @@ impl FragmentAssembler {
     }
     let position =
       self.find(signal.sender_node_id, signal.sender_block, fragment_id);
-    if signal.fragment_info == FragmentInfo::First {
+    if signal.fragment_state == FragmentState::First {
       if let Some(index) = position {
         // A first fragment for a signal already begun: the rest of the
         // old one never came.
@@ -133,11 +131,11 @@ impl FragmentAssembler {
         );
       }
       let mut original = ReceivedSignal {
-        gsn: signal.gsn,
+        sig_no: signal.sig_no,
         receiver_block: signal.receiver_block,
         sender_block: signal.sender_block,
         sender_node_id: signal.sender_node_id,
-        fragment_info: FragmentInfo::Whole,
+        fragment_state: FragmentState::Whole,
         data: signal.data[..data_len].to_vec(),
         sections: Vec::new(),
       };
@@ -160,7 +158,7 @@ impl FragmentAssembler {
       &section_numbers,
       &signal.sections,
     );
-    if signal.fragment_info != FragmentInfo::Last {
+    if signal.fragment_state != FragmentState::Last {
       return Ok(None);
     }
     let done = self.in_progress.remove(index);
@@ -226,12 +224,12 @@ fn append_sections(
 mod tests {
   use super::*;
 
-  const GSN: u16 = 190;
+  const SIG_NO: u16 = 190;
 
   /// A fragment as a data node sends it: the original data, then the
   /// section numbers and the fragment id.
   fn fragment(
-    position: FragmentInfo,
+    position: FragmentState,
     data: &[u32],
     carried: &[(u32, Vec<u32>)],
     fragment_id: u32,
@@ -244,10 +242,10 @@ mod tests {
     }
     words.push(fragment_id);
     ReceivedSignal {
-      gsn: GSN,
+      sig_no: SIG_NO,
       sender_node_id: 1,
       sender_block: 0xFA,
-      fragment_info: position,
+      fragment_state: position,
       data: words,
       sections,
       ..ReceivedSignal::default()
@@ -258,7 +256,7 @@ mod tests {
   fn a_whole_signal_passes_straight_through() {
     let mut assembler = FragmentAssembler::new();
     let signal = ReceivedSignal {
-      gsn: GSN,
+      sig_no: SIG_NO,
       data: vec![1, 2, 3],
       ..ReceivedSignal::default()
     };
@@ -270,9 +268,9 @@ mod tests {
   fn three_fragments_make_one_signal() {
     let conf = [9, 17, 0, 7, 2, 0xFA0001];
     let mut assembler = FragmentAssembler::new();
-    let first = fragment(FragmentInfo::First, &conf, &[(0, vec![1, 2, 3])], 5);
-    let middle = fragment(FragmentInfo::Middle, &conf, &[(0, vec![4, 5])], 5);
-    let last = fragment(FragmentInfo::Last, &conf, &[(0, vec![6, 7])], 5);
+    let first = fragment(FragmentState::First, &conf, &[(0, vec![1, 2, 3])], 5);
+    let middle = fragment(FragmentState::Middle, &conf, &[(0, vec![4, 5])], 5);
+    let last = fragment(FragmentState::Last, &conf, &[(0, vec![6, 7])], 5);
     assert!(assembler.add(first).expect("first").is_none());
     assert!(assembler.add(middle).expect("middle").is_none());
     let whole = assembler.add(last).expect("last").expect("done");
@@ -280,17 +278,17 @@ mod tests {
     assert_eq!(whole.data, conf.to_vec());
     assert_eq!(whole.sections.len(), 1);
     assert_eq!(whole.sections[0], vec![1, 2, 3, 4, 5, 6, 7]);
-    assert_eq!(whole.fragment_info, FragmentInfo::Whole);
+    assert_eq!(whole.fragment_state, FragmentState::Whole);
     assert_eq!(assembler.in_progress(), 0);
   }
 
   #[test]
   fn fragments_of_two_signals_do_not_mix() {
     let mut assembler = FragmentAssembler::new();
-    let a1 = fragment(FragmentInfo::First, &[1], &[(0, vec![10])], 5);
-    let b1 = fragment(FragmentInfo::First, &[2], &[(0, vec![20])], 6);
-    let a2 = fragment(FragmentInfo::Last, &[1], &[(0, vec![11])], 5);
-    let b2 = fragment(FragmentInfo::Last, &[2], &[(0, vec![21])], 6);
+    let a1 = fragment(FragmentState::First, &[1], &[(0, vec![10])], 5);
+    let b1 = fragment(FragmentState::First, &[2], &[(0, vec![20])], 6);
+    let a2 = fragment(FragmentState::Last, &[1], &[(0, vec![11])], 5);
+    let b2 = fragment(FragmentState::Last, &[2], &[(0, vec![21])], 6);
     assert!(assembler.add(a1).expect("a1").is_none());
     assert!(assembler.add(b1).expect("b1").is_none());
     let a = assembler.add(a2).expect("a2").expect("a");
@@ -304,12 +302,12 @@ mod tests {
     // The kernel sends the highest-numbered section first.
     let mut assembler = FragmentAssembler::new();
     let first = fragment(
-      FragmentInfo::First,
+      FragmentState::First,
       &[7],
       &[(2, vec![30]), (1, vec![20])],
       9,
     );
-    let last = fragment(FragmentInfo::Last, &[7], &[(0, vec![10])], 9);
+    let last = fragment(FragmentState::Last, &[7], &[(0, vec![10])], 9);
     assert!(assembler.add(first).expect("first").is_none());
     let whole = assembler.add(last).expect("last").expect("done");
     assert_eq!(whole.sections.len(), 3);
@@ -321,14 +319,14 @@ mod tests {
   #[test]
   fn a_fragment_without_its_first_is_an_error() {
     let mut assembler = FragmentAssembler::new();
-    let stray = fragment(FragmentInfo::Last, &[1], &[(0, vec![1])], 5);
+    let stray = fragment(FragmentState::Last, &[1], &[(0, vec![1])], 5);
     assert!(assembler.add(stray).is_err());
   }
 
   #[test]
   fn a_section_number_out_of_range_is_an_error() {
     let mut assembler = FragmentAssembler::new();
-    let bad = fragment(FragmentInfo::First, &[1], &[(3, vec![1])], 5);
+    let bad = fragment(FragmentState::First, &[1], &[(3, vec![1])], 5);
     assert!(assembler.add(bad).is_err());
   }
 }

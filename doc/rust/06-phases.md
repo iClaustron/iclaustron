@@ -15,11 +15,11 @@ release is at the end of Phase 7.
 | 3 | Transport, threads, membership, node failure | 4 | 12 |
 | 4 | Dictionary and records | 3 | 15 |
 | 5 | Transactions and key operations | 4–5 | 20 |
-| 6 | Our own names; key operations completed: tables with BLOB columns, the reply timeout, unique keys, every row size | 4–5 | 25 |
-| 7 | C API, documentation, examples in Rust and C, release 0.1 | 3–4 | 29 |
-| 8 | 0.2: the executor, scans (asynchronous, synchronous, through the executor), latin1 | 8–9 | 38 |
-| 9 | 0.3: basic interpreter, AUTO_INCREMENT, tables without a primary key | 4–5 | 43 |
-| 10 | Later: TLS, location domains, BLOBs, UTF-8, the C++ header, events, DDL, SPJ, … | open | |
+| 6 | Our own names; the Wireshark dissector; key operations completed: tables with BLOB columns, the reply timeout, unique keys, every row size | 5–6 | 26 |
+| 7 | C API, documentation, examples in Rust and C, release 0.1 | 3–4 | 30 |
+| 8 | 0.2: the executor, scans (asynchronous, synchronous, through the executor), character sets from the data nodes | 8–9 | 39 |
+| 9 | 0.3: basic interpreter, AUTO_INCREMENT, tables without a primary key | 4–5 | 44 |
+| 10 | Later: TLS, location domains, BLOBs, UTF-8, the C++ header, events, DDL, pushdown joins, … | open | |
 
 **Replanned 2026-10-08** by the author. 0.1 is now the key operations
 made complete and the C API with its documentation and examples; the
@@ -70,46 +70,47 @@ its `MODULE.md` with the "Rust notes for C readers" section.
 - `mgm_client.rs`: connect, `get nodeid`, `get config_v2`, `get status`,
   `get connection parameter`; keep the connection for later use.
 - `conf_blob.rs`: v2 decode into generic sections; `conf_param.rs`: the
-  API-node subset table verified against 26.10
-  `mgmapi_config_parameters.h`; `data.rs`: typed config.
+  API-node subset table verified against 26.10's parameter ids
+  (chapter 05 §5.2); `data.rs`: typed config.
 - `tools/ic_config_dump`.
-- Exit: node id allocated from a live 26.10 `ndb_mgmd`; every node and
-  TCP section printed; the typed config matches `ndb_config` output for
-  the parameters we type.
+- Exit: node id allocated from a live 26.10 management server; every
+  node and TCP section printed; the typed config matches the output of
+  the reference's configuration tool for the parameters we type.
 - Proof: `cargo run -p ic_config_dump -- localhost:1186`;
   `cargo test -p ic_apic`.
 
 ## Phase 3 — Transport, threads, membership, node failure (4 weeks)
 
-- `ic_ndb_signals`: header codec, block references, GSN table,
-  `qmgr.rs`; fuzz target for the header decoder.
+- `ic_signals`: header codec, block references, signal table,
+  `membership.rs`; fuzz target for the header decoder.
 - `ic_apid`: translate send threads, receive threads (receive + route
   only), heartbeat thread, adaptive send, `global.rs`, `program.rs`,
   `connection.rs` (`poll`/`send`/`flush`). Implement the 4-integer hello
   and the TLS-capable auth line (cleartext).
-- Node failure: missed heartbeats, `NODE_FAILREP`, `NF_COMPLETEREP`,
-  per-thread node-down notices, reconnect with backoff, `API_REGREF`
+- Node failure: missed heartbeats, `NODE_LOST_REP`, `NODE_LOST_DONE_REP`,
+  per-thread node-down notices, reconnect with backoff, `HEARTBEAT_REF`
   handling.
 - Exit: the port of `test_api_basic` connects to all data nodes of a
-  2-node cluster, receives `API_REGCONF` from each, stays connected for 10
-  minutes, survives `ndb_mgm -e "<id> RESTART"` and an `ndb_mgmd` restart,
-  reconnects; unknown GSNs are logged and dropped; `IC_DEBUG` signal
-  tracing prints every signal.
+  2-node cluster, receives `HEARTBEAT_CONF` from each, stays connected
+  for 10 minutes, survives a data node restarted from the management
+  client and a restart of the management server, reconnects; unknown
+  signal numbers are logged and dropped; `IC_DEBUG` signal tracing
+  prints every signal.
 - Proof: `IC_TEST_CONNECTSTRING=localhost:1186 cargo test -p ic_apid
   --features integration connect`.
 
 ## Phase 4 — Dictionary and records (3 weeks)
 
-- `dict.rs` codecs: `GET_TABINFOREQ/CONF/REF`, SimpleProperties,
-  DictTabInfo keys and defaults for 26.10, `LIST_TABLES`.
+- `dict.rs` codecs: `TABLE_DESC_REQ/CONF/REF`, the property stream,
+  TableProps keys and defaults for 26.10, `LIST_OBJECTS`.
 - `dict_client.rs`: `table_bind`/`index_bind` send and parse; hash map
   fetch; global cache with ref counts and versions.
 - `record.rs`: `FieldSpec` → `Record` with validation; default record;
   full `FieldType` list with sizes.
 - `tools/ic_desc`.
-- Exit: `ic_desc` matches `ndb_desc` for a table with every column type, a
-  unique index and an ordered index; `ALTER TABLE` bumps the version and
-  the next bind refetches.
+- Exit: `ic_desc` matches the reference's table description tool for a
+  table with every column type, a unique index and an ordered index;
+  `ALTER TABLE` bumps the version and the next bind refetches.
 - Proof: integration group `dict`.
 
 ## Phase 5 — Transactions and key operations (4–5 weeks)
@@ -118,13 +119,13 @@ its `MODULE.md` with the "Rust notes for C readers" section.
   key assembly from a record,
   fanout tables, hash map lookup, replica selection (read backup, fully
   replicated).
-- `transaction.rs`: TC seize per thread per node, ids, start/execute/
-  commit flags, completion accounting (05 §6.6), `TC_COMMITREQ`,
-  `TCROLLBACKREQ`, `TC_COMMIT_ACK`, node-failure outcomes,
-  `TC_DEADLOCK_REP`.
-- `tc.rs` codecs; `tc_handlers.rs`; `row_codec.rs` (record ↔ KEYINFO,
-  ATTRINFO, `TRANSID_AI`) for every type; `query.rs`; unique key
-  operations via `TCINDXREQ`.
+- `transaction.rs`: coordinator records allocated per thread per node,
+  ids, start/execute/commit flags, completion accounting (05 §6.6),
+  `COMMIT_REQ`, `ROLLBACK_REQ`, `COMMIT_MARKER_FREE_ORD`, node-failure
+  outcomes, `DEADLOCK_FOUND_REP`.
+- `coord.rs` codecs; `coord_handlers.rs`; `row_codec.rs` (record ↔
+  `KEY_DATA_ORD`, `COLUMN_DATA_ORD`, `ROW_DATA_REP`) for every type;
+  `query.rs`; unique key operations via `UNIQUE_OP_REQ`.
 - Error table with classification and our own messages.
 - `tools/ic_bench` (PK read, PK write). As built (2026-09-22): one
   thread, `--depth` batches (two by default) of `--batch` (200 by
@@ -149,9 +150,10 @@ its `MODULE.md` with the "Rust notes for C readers" section.
   on the API side, with one socket write per operation, which was the
   send path before step 4 of the thread plan.
 
-  **What that cost, 2026-09-22.** `flexAsynch` (the NDB API's own
-  tool) on the same cluster, two threads, 100 transactions in flight
-  per thread and ten reads in each, did 1 425 000 reads per second,
+  **What that cost, 2026-09-22.** The reference's benchmark (a tool of
+  the reference API) on the same cluster, two threads, 100 transactions
+  in flight per thread and ten reads in each, did 1 425 000 reads per
+  second,
   and the author saw the data nodes use about four times the CPU for
   `ic_bench` at a quarter of the rate. One packet per operation is the
   reason: each packet costs a data node a receive, an execution round
@@ -167,7 +169,7 @@ its `MODULE.md` with the "Rust notes for C readers" section.
   the same figures, as a thread sending alone in lock step never has
   its sends held. That is 2.4× the reads and 2.1× the updates from one
   write per node instead of one per operation. The data nodes felt it
-  more: `top` showed `ndbmtd` at 400% during the read run before and
+  more: `top` showed the data node at 400% during the read run before and
   135% after, which is 12.9 µs of data-node CPU per read down to 1.8,
   seven times less per operation.
 
@@ -178,14 +180,15 @@ its `MODULE.md` with the "Rust notes for C readers" section.
   is where one client thread saturates with this build: `ic_bench`
   uses about the same CPU at depths 2 and 4, and depth 4 only
   lengthens the queue. The data nodes are not the limit: at depth 4
-  `ndbmtd` carried half its depth-2 load for 90% of the work, and at
-  depth 1 the same load as at depth 4 for 85% of it, so the cost per
+  the data node carried half its depth-2 load for 90% of the work, and
+  at depth 1 the same load as at depth 4 for 85% of it, so the cost per
   operation there depends on how the traffic bunches, and more in
   flight per client is cheaper for them. Per thread the client rate is
-  above the `flexAsynch` run's 713 000, which had ten reads per
-  transaction. The like-for-like `flexAsynch` run (one thread, one read
-  per transaction, `-t 1 -p 100 -c 1 -o 1`) is still to be made, and
-  so is the split of the client's CPU between its user thread and its
+  above the 713 000 of the reference's benchmark, which had ten reads
+  per transaction. The like-for-like run of that benchmark (one thread,
+  one read per transaction, 100 transactions in flight, one a round) is
+  still to be made, and so is the split of the client's CPU between its
+  user thread and its
   receive thread, which decides whether more user threads scale before
   step 5 of the thread plan (several receive threads).
 
@@ -193,7 +196,7 @@ its `MODULE.md` with the "Rust notes for C readers" section.
   seconds of the depth-2 read run, one sample a millisecond): the
   receive thread was idle 73% of the time, in `kevent`, and the user
   thread busy 92% of it. Of the user thread's time, 31% was in
-  `tc_record`, which scanned every coordinator record this thread
+  `coord_record`, which scanned every coordinator record this thread
   held, and checked every record's link, to find a free one; about
   13% in freeing a transaction, which scanned the active list to take
   it out, and in naming the transaction a reply is for, which scanned
@@ -217,11 +220,12 @@ its `MODULE.md` with the "Rust notes for C readers" section.
   4. A round costs both sides a fixed part, the write, the receive,
   the execution round and the reply packets, and 200 operations a
   packet amortise it far better than 50. That one thread is above the
-  whole two-thread `flexAsynch` run, which had ten reads a transaction
-  against our one, so the phase-5 exit criterion holds for one thread
-  pending the like-for-like run. Still to settle: the data nodes' CPU
-  per operation rose with the load at batch 100 (4× the CPU for 2× the
-  work at depth 4). The `ndbmtd` reading settled it: batch 200 at
+  whole two-thread run of the reference's benchmark, which had ten
+  reads a transaction against our one, so the phase-5 exit criterion
+  holds for one thread pending the like-for-like run. Still to settle:
+  the data nodes' CPU per operation rose with the load at batch 100 (4×
+  the CPU for 2× the work at depth 4). The data nodes' CPU reading
+  settled it: batch 200 at
   depth 2, half the packets of batch 100 at depth 4 for the same 400
   in flight, took the nodes from 260% to 180% while the rate rose 20%,
   about 40% less data-node CPU per read. The nodes' cost is per round,
@@ -248,14 +252,15 @@ its `MODULE.md` with the "Rust notes for C readers" section.
   of started nodes that every transaction start allocated was made a
   buffer the connection keeps.
 
-  **Against the C++ NDB API, 2026-09-22.** `flexAsynch` run like for
-  like on the same cluster, one read per transaction and the same
-  operations in flight, delivered slightly fewer reads per second than
-  `ic_bench` and used slightly less CPU doing it: the same work at the
-  same cost, within the noise of one machine. The phase-5 exit
-  criterion, within 2× of the C++ API on one thread, is met at parity.
-  Phase 7's 20% target is now a statement about CPU per operation, and
-  the sample says where ours goes: the quarter in allocation.
+  **Against the reference API, 2026-09-22.** The reference's benchmark,
+  run like for like on the same cluster, one read per transaction and
+  the same operations in flight, delivered slightly fewer reads per
+  second than `ic_bench` and used slightly less CPU doing it: the same
+  work at the same cost, within the noise of one machine. The phase-5
+  exit criterion, within 2× of the reference API on one thread, is met
+  at parity. Phase 7's 20% target is now a statement about CPU per
+  operation, and the sample says where ours goes: the quarter in
+  allocation.
 
   **Allocation removal, first try, 2026-09-23, rolled back.** Taking
 the send side's allocations away (the sections into buffers kept per
@@ -481,7 +486,7 @@ rows. The code went back to the version measured at 1.73 million.
   KB until fixed; free pages are now taken most recently sealed first.
   Signals of 256 words and up go by reference
   (`set_large_signal_words`). The limit, measured, 2026-09-23: at
-  512-byte rows, a `TRANSID_AI` of about 138 words, copying and not
+  512-byte rows, a `ROW_DATA_REP` of about 138 words, copying and not
   copying gave the same at one thread and at four; at 1 KB rows, about
   266 words, not copying was ahead, 821 against 833 ns at one thread
   (every run), and at four threads 0.5% less CPU, 2% more rate and
@@ -490,12 +495,12 @@ rows. The code went back to the version measured at 1.73 million.
   spread of a page's release over threads that copying small signals
   avoids did not show at four threads at either size.
 - Exit: integration groups `pk`, `uk`, `types`, `failure` pass; a 1-thread
-  asynchronous PK read benchmark is within 2× of the C++ NDB API (the
+  asynchronous PK read benchmark is within 2× of the reference API (the
   20 % target is Phase 7). Met as of 2026-09-23: the benchmark at
   parity on 2026-09-22, and the integration groups `connect`, `dict`,
   `pk`, `uk`, `types` and `failure` passing against the two-node
   cluster (chapter 08). Writing them found one protocol fault the
-  tools had never reached: `TC_COMMITREQ` and `TCROLLBACKREQ` carried
+  tools had never reached: `COMMIT_REQ` and `ROLLBACK_REQ` carried
   our pointer for the transaction where the coordinator wants its own,
   so a commit or rollback with nothing left to send got no reply; every
   commit until then had ridden on a query's commit flag. The `failure`
@@ -507,7 +512,9 @@ rows. The code went back to the version measured at 1.73 million.
 
 Replanned 2026-10-08. What a key-operation user needs before the C API
 fixes the surface, with the rename first: the code is 25 000 lines
-today, and nothing has been published under the old names.
+today, and nothing has been published under the old names. Step 6.7,
+the dissector, comes second, right after the rename: every later step
+learns its protocol from the wire through it.
 
 ### 6.1 Our own names (1 week)
 
@@ -526,8 +533,8 @@ would have no suffix gets `_ORD` for an order, to which nothing comes
 back, or `_REP` for a report. Constants are `IC_SIG_<NAME>`, Rust types
 CamelCase (`KeyOpReq`), blocks `IC_BLOCK_<NAME>`.
 
-First draft of the names, by number, for the author's review before the
-rename (open question Q11):
+The names, by number, drafted and applied on 2026-10-08 (Q11: the
+author may still change any of them, which is one more rename):
 
 | Group | Number → our name |
 |---|---|
@@ -536,54 +543,58 @@ rename (open question Q11):
 | Key operations | 12, 10, 11 `KEY_OP_REQ`/`_CONF`/`_REF`; 519, 520, 521 `UNIQUE_OP_REQ`/`_CONF`/`_REF`; 5 `ROW_DATA_REP`; 6 `KEY_DATA_ORD`; 4 `COLUMN_DATA_ORD` |
 | Ending a transaction | 19, 17, 18 `COMMIT_REQ`/`_CONF`/`_REF`; 15, 13, 14 `ROLLBACK_REQ`/`_CONF`/`_REF`; 16 `TRANS_ABORTED_REP`; 469 `COMMIT_MARKER_FREE_ORD`; 8, 9 `TAKEOVER_CONF`/`_REF`; 980 `DEADLOCK_FOUND_REP` |
 | Scans | 32 `SCAN_REQ`, 29 `SCAN_CONF`, 31 `SCAN_REF`, 28 `SCAN_MORE_REQ`, 33 `SCAN_ROW_KEY_REP` |
-| Dictionary | 24, 190, 23 `TABLE_DESC_REQ`/`_CONF`/`_REF`; 193, 194 `LIST_OBJECTS_REQ`/`_CONF`; 606 `TABLE_CHANGED_REP` |
+| Dictionary | 24, 190, 23 `TABLE_DESC_REQ`/`_CONF`/`_REF`; 193, 194 `LIST_OBJECTS_REQ`/`_CONF`; 606 `TABLE_CHANGED_REP`; 984, 985, 986 `COLLATION_DESC_REQ`/`_CONF`/`_REF` |
 | Blocks (hex) | F5 `COORDINATOR`, F7 `LOCAL_OPS`, F9 `ROW_STORE`, F8 `HASH_INDEX`, 102 `ORDERED_INDEX`, F6 `DISTRIBUTION`, FA `DICTIONARY`, FB `START_CONTROL`, FC `MEMBERSHIP`, FD `FILE_IO`, FE `NODE_ADMIN`, FF `INDEX_BUILD`, 100 `UTILITY`, 101 `CHANGE_FEED`, 109 `JOIN`, 10A `LINK_ADMIN`, F4 `ARCHIVE`, 10B–111 `READ_WORKER_FIRST`…`_LAST`, 7FF `BUNDLE`, FA2 `NODE_WATCH`, FA3 `CONFIG_SERVICE`; 8000 is `IC_FIRST_USER_THREAD_BLOCK` |
-| Configuration (parameter id) | 129 `TimeoutCheckPeriod`, 130 `IdleTransactionLimit`, 131 `LockWaitLimit`, 800 `ScanBatchBytesTotal`, 801 `ScanBatchBytes`, 802 `ScanBatchRows`; the other parameters `ic_apic` decodes likewise |
+| Configuration (parameter id) | 129 `timeout_check_period`, 130 `idle_transaction_limit`, 131 `lock_wait_limit`, 800 `scan_batch_bytes_total`, 801 `scan_batch_bytes`, 802 `scan_batch_rows`, 119 `api_heartbeat_ms`, 101 `replica_count`; every parameter `ic_apic` decodes has one, constants `IC_PARAM_*` |
 
-Beyond signals and blocks, the same for a signal's fields (by meaning:
-the coordinator's record, our query's id, the flags word, the two halves
-of the transaction id), the dictionary's property keys (`IC_DTI_*`
-today) under a prefix of ours, the property stream, the signal header,
-the column header and the three pseudo-columns (read every column, read
-by mask, the partition), and the modules of `ic_ndb_signals`
-(`tc_key.rs` becomes `key_ops.rs`, `tc_seize.rs` `coord_records.rs`,
-`qmgr.rs` `membership.rs`, `get_tab_info.rs` `table_desc.rs`,
-`dict_tab_info.rs` `table_props.rs`, `gsn.rs` `numbers.rs`, and so on),
-with the crate becoming `ic_signals`. In `ic_apid`, `TcRecord` becomes
-`CoordRecord` and its kin likewise.
+Beyond signals and blocks the same holds, as built:
+- **Crate and modules:** `ic_signals`, with `numbers`, `key_ops`,
+  `coord_alloc`, `membership`, `table_props`, `table_desc`,
+  `list_objects`, `table_change`, `prop_stream`, `column_header`,
+  `bundle`, `blocks` and `header`.
+- **Types:** `KeyOpReq`, `KeyOpConf`, `KeyOpRef`, `KeyOpFlags`,
+  `KeyOpResult`, `TransCommitConf`, `TransEndRef`, `RollbackConf`,
+  `TakeoverConf`, `TakeoverRef`, `TransAbortedRep`, `RowDataRep`,
+  `CoordAllocReq`/`Conf`/`Ref`, `CoordFreeReq`/`Conf`/`Ref`,
+  `HeartbeatReq`/`Conf`/`Ref`, `NodeLostRep`, `NodeLostDoneRep`,
+  `TableDescReq`/`Conf`/`Ref`, `ListObjectsReq`/`Conf`,
+  `TableChangedRep`, `BundlePart`, `TableProps`, `ColumnProps`,
+  `HashMapProps`, `FragmentState`; in `ic_apid` `CoordRecord`; in
+  `ic_port` the error table's `ErrorEntry` and `ErrorClass`.
+- **Fields** by meaning: `coord_ptr` (the coordinator's record),
+  `client_ptr` (our pointer for it), `query_ref`, `flags_word`,
+  `info_word`, `trans_id_lo` and `trans_id_hi`, `caller_data` and
+  `caller_ref`; a table's and a column's properties likewise
+  (`column_count`, `key_column_count`, `type_code`, `array_kind`, ...).
+- **Constants:** dictionary keys `IC_TP_*`, column types `IC_TYPE_*`
+  (the names the C header already used), kinds of array, object and
+  fragment `IC_ARRAY_KIND_*`, `IC_OBJECT_KIND_*`, `IC_FRAGMENT_KIND_*`,
+  configuration parameters `IC_PARAM_*` with snake_case display names,
+  which `ic_config_dump` prints. `ic_desc` prints labels of our own.
 
 What stays is what travels on the wire (author, 2026-10-08): numbers,
 word layouts, error codes, configuration parameter ids and section
-types, the management protocol's text, and the stored names we look up
-(the counter table `sys/def/SYSTAB_0`, the hidden key column `$PK`).
-Configuration parameter names do not travel, only their ids, so they
-are ours like signal and block names. SQL names an application writes
-(collations, `AUTO_INCREMENT`) are MySQL's language and are used as
-they are. "RonDB" and "NDB" name what we interoperate with. `legacy-c/`
-is not touched: it is iClaustron's old code, reference only, never
-built.
+types, the management protocol's text, the handshake's strings, and
+the stored names we look up (the counter table `sys/def/SYSTAB_0`, the
+hidden key column `$PK`). SQL names an application writes (collations,
+`AUTO_INCREMENT`, partition-balance options) are MySQL's language and
+are used as they are. "RonDB" and "NDB" name what we interoperate with.
+`legacy-c/` is not touched: it is iClaustron's old code, reference
+only, never built.
 
-The work:
-- `ic_ndb_signals` and every user of it: about 170 lines with signal
-  numbers, 56 with block numbers, 300 with signal structures, 314 with
-  dictionary keys, ten module files.
-- `ic_apic`'s parameter table: the 41 display names and the `IC_CFG_*`
-  constants, whose names follow RonDB's today; `ic_config_dump` prints
-  ours, and chapter 05 maps them by parameter id.
-- The 191 `Verify:` lines in 32 code files: each fact is put into
-  chapter 05 where it is not there yet, with a bare file:line, and the
-  comment then cites the chapter 05 section.
-- Chapter 05: every RonDB function, class, constant and signal name
-  replaced by ours or by a description; citations bare file:line; the
-  table above kept there as the cross-reference by number.
-- Chapters 02, 04, 06 (phases 0–5 included), 08, 12, the architecture
-  page and the slides, with the PDF built again: the record model is
-  described in our own words rather than likened to the reference's
-  class, and tools we compared against are described, not named.
-- `cargo xtask names`: reads signal and block names from a RonDB tree
-  given by `IC_RONDB_TREE` at check time and finds none of them in
-  `crates/`, `tools/`, `include/` or `doc/`. The list is never stored
-  in this repository.
+Citations: the code's comments cite chapter 05, and chapter 05 §17
+holds, module by module, the facts the code relies on with their bare
+RonDB file:line. Chapter 05 is the only file that cites RonDB.
+
+`cargo xtask names` (`xtask/src/names.rs`) reads, when it runs, the
+names of signals, blocks, signal layouts, dictionary keys,
+configuration constants and parameters, the reference API's classes
+and the tree's programs from a RonDB tree given by `IC_RONDB_TREE`, and
+finds none of them in `crates/`, `tools/`, `xtask/`, `include/`, `doc/`
+or `README.md`; words that are ordinary English or Rust, or travel on
+the wire, are listed with reasons in `xtask/names-allow.txt`. The list
+of RonDB names is never stored here.
+
 - Exit: `cargo xtask names` is clean; every unit test and integration
   group passes unchanged; a traffic capture taken before the rename
   replays byte for byte after it.
@@ -612,8 +623,8 @@ The work:
   waits forever and keeps its coordinator record. The reference gives
   up after a time and reports 4012, outcome unknown; so will we.
 - The time is the larger of 120 s and, over the data nodes in the
-  configuration, the largest `TimeoutCheckPeriod` (parameter 129) +
-  `LockWaitLimit` (131) (chapter 05 §16.6). `ic_apic`
+  configuration, the largest `timeout_check_period` (parameter 129) +
+  `lock_wait_limit` (131) (chapter 05 §16.6). `ic_apic`
   decodes both parameters; `GlobalOptions` may override (tests use a
   second).
 - A transaction notes when it last sent with replies outstanding.
@@ -636,10 +647,10 @@ The work:
 ### 6.4 latin1: moved to phase 8
 
 Moved by the author, 2026-10-08: character sets wait until later in the
-process, and are now step 8.6, before the ordered range scans whose
-merge first needs them. Until then a key with a character column works
-in any character set and is placed round robin, which costs a hop, not
-a wrong answer.
+process. They are now step 8.6, and come from the data nodes rather than
+from a module written here. Until then a key with a character column
+works in any character set and is placed round robin, which costs a hop,
+not a wrong answer.
 
 ### 6.5 Unique keys done properly (1.5 weeks)
 
@@ -747,9 +758,83 @@ Changes:
   fragmented request between plain ones in one batch, two in one
   batch, one rolled back before it was sent.
 
+### 6.7 The wire made readable: a Wireshark dissector (2 weeks, second in order)
+
+Decided by the author, 2026-10-08: protocols are developed mainly by
+listening to the network, not by reading the reference's source. A
+dissector of our own turns what a capture holds into text a person
+reads, in our names.
+
+- **What it decodes:**
+  - the management protocol (port 1186 by default): requests and
+    replies line by line, and the configuration blob's header;
+  - the signal protocol, recognised by its handshake (the `ndbd` lines
+    and the node-id hello) on whatever port a data node was given: the
+    three header words, the byte-order and fragment bits, the signal id
+    and checksum when the link has them, the data words and the
+    sections; bundled signals (block 0x7FF) taken apart;
+  - each signal by number with our name, and the fields we know by
+    meaning (the coordinator's record, our query's id, the flags word
+    bit by bit, the transaction id, the row data); a signal we have no
+    name for is shown as its number and words.
+- **Where:** not in this repository (author, 2026-10-08). The
+  dissector is written in C, as Wireshark's own dissectors are, in a
+  Wireshark source tree of its own beside this one, under Wireshark's
+  licence, and Wireshark is built from that tree. Its tables of signal
+  and block names use our names, kept in step with `ic_signals` by hand,
+  since chapter 05 quotes what it prints. Its protocol filter name is
+  `ndb`.
+- **How it is used:** a capture on the loopback device of the
+  development cluster (`tcpdump -i lo0 -w run.pcapng` on the Mac, `-i
+  lo` on Linux) while the reference API, a MySQL server or our own tools
+  do the operation; then `tshark -r run.pcapng -O ndb` for text
+  that can be compared and quoted. A fact learned this way goes into
+  chapter 05 with the name of the capture it came from; small captures
+  are kept under `doc/rust/captures/`. What the wire does not show, the
+  author is asked; the reference's source is read only to settle what
+  neither shows.
+- **With chapter 08's captured-traffic tests:** `tools/ic_capture` reads
+  such capture files and writes the replay vectors from them, instead
+  of being a proxy of its own.
+- Exit: a capture of `ic_bench` and one of the reference's benchmark
+  against the development cluster, decoded with every signal named and
+  every known field shown; the rename's byte-for-byte check (6.1) made
+  with it, our tools from before and after the rename sending the same
+  bytes.
+
+As built, first version (2026-10-08, not yet compiled): the tree is
+`/Users/mikael/github/wireshark`, branch `ndb-dissector`, and the
+dissector `epan/dissectors/packet-ndb.c`. It decodes text lines on both
+kinds of connection, a signal link found by its first line, and from
+each side's hello the messages, reassembled across TCP segments: the
+three header words bit by bit, signal id, data, sections and checksum
+(checked); bundles taken apart; fragments shown with their fragment id
+but not yet put together. Fields are named for the key operation,
+transaction, takeover, heartbeat (with the data node's state),
+coordinator record, table description, object list and collation
+signals, and column data is taken apart header by header (id, size,
+value; reading every column, columns by bitmap, the packed row that
+comes back); the others show their words. Still to come: putting
+fragments together, the scan signals' fields, the table description's
+properties, and the management protocol's configuration blob.
+
+First capture (2026-10-09, the development cluster, 51,682 frames): the
+messages start on each side right after its hello, and the first byte
+of a message is text whenever the link carries signal ids and checksums
+(0x34 is `4`). So the dissector ends a side's text at its hello: a line
+of numbers after the client asked for a link (`ndbd …` toward a data
+node, `transporter connect` toward the management server). A capture
+that misses the hello falls back to the first line holding bytes that
+are not text. Framed this way, all 46 directions of the capture's 23
+links, 26,587 messages, frame without a gap and every checksum holds.
+Data node to data node links carry the link instance in the hello's
+fourth number (`2 1 1 0` to `2 1 1 4` for the five links from node 2
+to node 1); both data nodes link to the management server (node 3)
+through port 1186 with `transporter connect`.
+
 Exit for the phase: the groups `connect`, `dict`, `pk`, `uk`, `types`,
-`failure`, `blob_guard`, `timeout` and `big_rows` pass, and
-`cargo xtask names` is clean.
+`failure`, `blob_guard`, `timeout` and `big_rows` pass, `cargo xtask
+names` is clean, and the dissector decodes every signal phase 6 sends.
 
 ## Phase 7 — C API, documentation, examples, release 0.1 (3–4 weeks)
 
@@ -792,12 +877,16 @@ Exit for the phase: the groups `connect`, `dict`, `pk`, `uk`, `types`,
   adaptive send, receive thread count); measuring the key hash against
   the C; raising the user threads per process from 256 to 4 711, which
   the synchronous style with a connection per thread needs, and lifting
-  the limit of four management servers with it.
+  the limit of four management servers with it. Before the limit passes
+  4 096, the transaction id must carry bit 12 of the block index in bit
+  38 and bit 12 of the node id in bit 39, as the reference does
+  (chapter 05 §17.12); ours keeps 12 bits of each, so two threads would
+  make the same ids (found 2026-10-08).
 - Moved to phase 10: the C++ header and the smoke bindings in other
   languages (Q6), which were in this phase before.
 - Exit: the 0.1 success criteria of chapter 01, as revised 2026-10-08.
 
-## Phase 8 — 0.2: the executor, scans and latin1 (8–9 weeks)
+## Phase 8 — 0.2: the executor, scans and character sets (8–9 weeks)
 
 ### 8.1 The executor (2 weeks)
 
@@ -817,10 +906,11 @@ be shown to fit it once it exists, so it comes first:
   connections of their own, and against `ic_model`'s prediction
   (chapter 12).
 
-### 8.2 The protocol, read and written down (1 week)
+### 8.2 The protocol, seen and written down (1 week)
 
-Chapter 05 §7 rewritten from reading; §16.4 holds what was gathered and
-what in §7 is wrong: `SCAN_REQ` (32), its flags and sections;
+Chapter 05 §7 rewritten from captures of the reference's scans read with
+the dissector (6.7) and from the author's answers; §16.4 holds what an
+earlier reading of the source gathered, and what in §7 is wrong: `SCAN_REQ` (32), its flags and sections;
 `SCAN_CONF` (29), per receiver; `SCAN_REF` (31), and when a close is
 still owed; `SCAN_MORE_REQ` (28), per receiver and to close;
 `SCAN_ROW_KEY_REP` (33) for takeover; batch sizes, timeouts, node
@@ -836,8 +926,9 @@ failure.
   object map that the routing of `ROW_DATA_REP` and `SCAN_ROW_KEY_REP`
   tells apart from queries; the transaction id and the generation are
   checked as for queries.
-- Batch sizes from the API's configuration (`ScanBatchRows` 802,
-  `ScanBatchBytes` 801, `ScanBatchBytesTotal` 800) or the scan's own; at most 992
+- Batch sizes from the API's configuration (`scan_batch_rows` 802,
+  `scan_batch_bytes` 801, `scan_batch_bytes_total` 800) or the scan's
+  own; at most 992
   rows a batch when locking, for takeover, and 4 000 for committed
   reads.
 - The consumer sets the pace: a receiver is asked for more only when
@@ -848,12 +939,12 @@ failure.
 - Close at any time; a `SCAN_REF` that owes a close gets one; the
   record is kept until the close is confirmed; rows that come late are
   dropped by generation.
-- Errors: 296 when a parked scan passes `IdleTransactionLimit` (130);
+- Errors: 296 when a parked scan passes `idle_transaction_limit` (130);
   274 and 266 for locks; 270 when a reading node fails (temporary: the
   scan starts again and rows come again); 4028 when the coordinator's
   node fails; a deadline of the client's closes the scan.
 - Full table scans in every lock mode; a scan pruned to one partition
-  by its distribution key (with 8.6's latin1 hash) or by partition id.
+  by its distribution key (with 8.6's character-set hash) or by partition id.
 
 ### 8.4 Three ways to consume a scan (1 week)
 
@@ -877,117 +968,84 @@ Takeover: rows with their keys (`SCAN_ROW_KEY_REP`), and a `KEY_OP_REQ`
 on the owning transaction carrying the takeover words, sent before that
 receiver is asked for more.
 
-### 8.6 latin1 (1 week, and the author's module)
+### 8.6 Character sets from the data nodes (1 week, with RonDB's new request)
 
-- Where the character set matters: hashing a distribution key with a
-  character column, for exact placement, and merging rows from several
-  fragments in order in an ordered index scan (8.7). Values pass as
-  bytes: the coordinator transforms and hashes a key itself, so a key
-  operation is right with any character set; only our choice of node
-  depends on our hash.
-- The encoding is public: MySQL's latin1 is CP1252, the Windows West
-  European code page, as Unicode publishes it, with the five positions
-  CP1252 leaves unassigned passed through as the same code points. That
-  serves text conversion. The collations are not public: their weight
-  bytes and order are MySQL's own and published nowhere else, apart
-  from latin1_bin, whose weights are the bytes. The hash needs the
-  exact weights, the merge the exact order.
-- So the author writes the collation module, `crates/ic_util/src/latin1.rs`,
-  to the assignment below. Everything that uses it, and its tests, are
-  written from its contract alone.
-
-The assignment. The eight collations are all that RonDB 26.10 has for
-latin1; the numbers are what the dictionary gives a column as its
-character set:
-
-```rust
-// crates/ic_util/src/latin1.rs
-use std::cmp::Ordering;
-
-use ic_port::IcError;
-
-/// A latin1 collation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Latin1Collation {
-  German1Ci, //  5  latin1_german1_ci
-  SwedishCi, //  8  latin1_swedish_ci, latin1's default
-  DanishCi,  // 15  latin1_danish_ci
-  German2Ci, // 31  latin1_german2_ci
-  Bin,       // 47  latin1_bin
-  GeneralCi, // 48  latin1_general_ci
-  GeneralCs, // 49  latin1_general_cs
-  SpanishCi, // 94  latin1_spanish_ci
-}
-
-impl Latin1Collation {
-  /// The collation a column's character set number names; `None` if
-  /// it is not one of the eight.
-  pub fn from_number(number: u32) -> Option<Latin1Collation>;
-
-  /// The character set number; the inverse of `from_number`.
-  pub fn number(self) -> u32;
-
-  /// The most weight bytes one character becomes: 2 for `German2Ci`,
-  /// which expands ä, ö, ü, ß, Ä, Ö and Ü to two letters, 1 for the
-  /// others.
-  pub fn max_weights_per_char(self) -> u32;
-
-  /// The bytes a key column is hashed by. `value` is the column's data:
-  /// a CHAR's whole field as stored, trailing spaces included, or a
-  /// VARCHAR's bytes after its length bytes. `out` is exactly
-  /// `max_weights_per_char() * L` bytes, L being the column's largest
-  /// data length in bytes. Writes the weights of `value` in order from
-  /// `out[0]`, then fills the rest of `out` with 0x20.
-  /// `IC_ERROR_VALUE_TOO_LONG` if the weights do not fit.
-  pub fn hash_weights(self, value: &[u8], out: &mut [u8]) -> Result<(), IcError>;
-
-  /// Order two values as the data nodes' ordered indexes do. Trailing
-  /// spaces do not count: the shorter value compares as if padded with
-  /// spaces.
-  pub fn compare(self, a: &[u8], b: &[u8]) -> Ordering;
-}
-```
-
-What the functions must meet (chapter 05 §16.2):
-- Every latin1 collation pads with spaces (none is "no pad"), and every
-  one gives the space the weight 0x20, the byte the padding uses; so
-  `"a"` and `"a  "` hash alike.
-- `Bin` gives each byte itself as its weight.
-- For every collation, `compare(a, b)` is `Equal` exactly when
-  `hash_weights` writes the same bytes for `a` and for `b` into an
-  `out` of the same length.
-
-Written around it, from the contract:
-- Tests: the numbers round trip and nothing else maps; `Bin` is the
-  identity; `compare` is reflexive, antisymmetric and transitive over
-  all bytes; `Equal` exactly when the weights are equal, over all byte
-  pairs; trailing spaces never count; the `_ci` collations take ASCII
-  letters in either case as equal, `GeneralCs` and `Bin` do not;
-  `German2Ci` takes "ä" as "ae". And the end-to-end check: for each
-  collation, CHAR and VARCHAR keys covering all 256 byte values, case
-  variants and trailing spaces, inserted through MySQL into a table of
-  many partitions: our hash's partition equals the one the data node
-  reports for each row (`key_op::read_partition`, which nothing calls
-  yet), and keys the collation calls equal land together.
-- `hash.rs`: a latin1 column in a distribution key, of a table or of a
-  unique index, is hashed through `hash_weights`. The key buffer on the
-  stack spills to the heap past 128 bytes (a VARCHAR(255) under german2
-  takes 510). Any other character set keeps falling back to round
-  robin, which costs a hop inside the cluster, not a wrong answer.
-- `text_row.rs`, for the tools: latin1 text in and out through the
-  CP1252 table; a character latin1 cannot hold is refused; trailing
-  spaces trimmed from CHAR only (today from VARCHAR too); utf8mb3 and
-  utf8mb4 shown as text, other character sets as hex.
-- Exit: integration group `latin1` passes for all eight collations; a
-  latin1 CHAR or VARCHAR distribution key gets a partition hint.
+Decided by the author, 2026-10-08, in place of the hand-written latin1
+module planned earlier the same day:
+- **What a character set is needed for:** hashing a distribution key
+  with a character column, for exact placement, and merging the rows of
+  an ordered index scan in order (8.7). Values pass as bytes; the
+  coordinator hashes a key itself, so a key operation is right with any
+  character set, and only our choice of node and our merge need the
+  collation.
+- **Where it comes from:** the data nodes. RonDB 26.04 main gets, in a
+  separate task, a request that describes a character set and its
+  collations as the table description request describes a table: the
+  encoding, the weights and the ordering. iClaustron asks for one the
+  first time a column names a character set it has not seen, as
+  `table_bind` does for a table, and keeps it in the global dictionary
+  (the shared dictionary cache) for every thread.
+- **What may be compiled in:** character sets whose tables are public
+  standards, with the source named in the code: the binary set (each
+  byte is its own weight), the CP1252 code page as Unicode publishes it
+  (MySQL's latin1 encoding, for text conversion), Unicode's own data.
+  What MySQL alone defines, the weights and order of its collations,
+  comes only from the data nodes.
+- **The request, as RonDB 26.04 main has it (2026-10-08):**
+  `COLLATION_DESC_REQ` (984) to the dictionary block, by collation
+  number, collation name or character set name, answered by
+  `COLLATION_DESC_CONF` (985) or `COLLATION_DESC_REF` (986), only by
+  data nodes of 26.10.0 or later (chapter 05 §8.2). The answer gives the
+  collation's names, its set's default and binary collations, flags (no
+  pad, case sensitive, Unicode, ...), the bytes a character takes, how
+  much a string grows as a sort key, the pad byte and the weight levels.
+  Asked with weights, it also carries the weight string of every
+  character and every contraction, at most 1 MB an answer, in as many
+  round trips as the collation needs, each from the position the last
+  gave; the data node serves one such request at a time and answers
+  others busy. The codec, with the weight runs and contractions read and
+  stepped, is in `ic_signals::collation_desc`; the dissector decodes the
+  three signals and the weights of an answer that comes whole.
+- **What the weights do not cover** (Q16): a few collations (czech,
+  win1250ch, tis620) weigh a character by its neighbours, which
+  per-character weights cannot rebuild, so their keys stay placed round
+  robin; and for a no-pad collation the data nodes hash a key with the
+  collation's own hash function rather than over its sort key (chapter
+  05 §16.2), which is not data the weights carry.
+- **Work:**
+  - the request and its reply in `ic_signals`, and the round trips in
+    `ic_apid::collation_client`, shown by `ic_desc --collation` and
+    `--charset` (done 2026-10-09: the integration group `collation`
+    passes against the development cluster; what was seen is in chapter
+    05 §8.2). A sort key's length is not bounded by the sort-key growth
+    word, which the 9.0.0 Unicode collations give as 0;
+  - a character-set entry in the dictionary cache, fetched on first
+    use and kept while the cluster connection lasts;
+  - `hash.rs`: a character column in a distribution key, of a table or
+    of a unique index, hashed with the fetched weights; until its
+    character set is described, placement falls back to round robin, a
+    hop, not a wrong answer;
+  - the merge of 8.7 compares character columns by the fetched order;
+  - `text_row.rs`, for the tools: text in and out through the
+    compiled-in tables, hex where there is none.
+- **Tests:** for each collation the data nodes describe, CHAR and
+  VARCHAR keys covering every byte of a single-byte set, case variants
+  and trailing spaces, inserted through MySQL into a table of many
+  partitions: our hash's partition equals the one the data node reports
+  (`key_op::read_partition`), and keys the collation calls equal land
+  together; ordered scans over such columns return MySQL's `ORDER BY`
+  order.
+- **Exit:** placement and merge are exact for latin1 in all eight of
+  its collations; another character set the data nodes describe works
+  the same way and gets its own test when it is first used.
 
 ### 8.7 Ordered index range scans (1.5 weeks)
 
 Bounds of every type, several ranges with their numbers; every fragment
 scanned in parallel and the rows merged in order in the client, which
 needs a row or the end from every fragment before it returns one;
-descending order; latin1 columns compared with the author's `compare`
-(8.6), other types by type; a range pruned to one partition when it
+descending order; character columns compared in their collation's
+order (8.6), other types by type; a range pruned to one partition when it
 fixes the distribution key.
 
 ### 8.8 C ABI and examples (3 days)
@@ -1007,8 +1065,10 @@ gives a temporary error, and the scan started again completes.
 
 ### 9.1 A basic interpreter (3 weeks)
 
-- The encoding read from the sources and written into chapter 05 §9 in
-  our words, with names of our own for the instructions.
+- The encoding learned from captures of the reference's interpreted
+  operations, read with the dissector, and from the author, and written
+  into chapter 05 §9 in our words, with names of our own for the
+  instructions.
 - Basic first (author, 2026-10-08): conditions comparing a column with
   a constant or with another column (=, <>, <, <=, >, >=; latin1
   strings by their collation), IS NULL and IS NOT NULL, AND, OR, NOT;
@@ -1058,7 +1118,7 @@ location domain; BLOB, TEXT and JSON through the parts table, and with
 them deletes on such tables; UTF-8 (utf8mb4) collations for hashing and
 merging; the C++ header and bindings for other languages; events; DDL
 (a client creating a table with an AUTO_INCREMENT column writes its
-counter row); the full interpreter; SPJ pushdown joins; aggregation
+counter row); the full interpreter; pushdown joins; aggregation
 pushdown; ring buffer tables; TTL options; rate-limit and user-id flags;
 the deferred unique check; scans with four receivers per fragment for
 committed reads, which suit an executor.
@@ -1089,7 +1149,7 @@ committed reads, which suit an executor.
 | Legacy vs TLS-capable socket auth (Q2) | test both on day one of Phase 3 |
 | The rename (6.1) changes something on the wire | a pure rename: a capture taken before replays byte for byte after; every test passes unchanged |
 | A RonDB name creeps back in | `cargo xtask names` reads the names from a RonDB tree at check time; review checklist item |
-| latin1 weights wrong | the end-to-end check against the partitions the data nodes report (8.6); a wrong weight costs a hop, never a wrong answer, until the ordered merge of phase 8, whose exit compares with MySQL's `ORDER BY` |
+| character-set weights wrong | the end-to-end check against the partitions the data nodes report (8.6); a wrong weight costs a hop, never a wrong answer, until the ordered merge of phase 8, whose exit compares with MySQL's `ORDER BY` |
 | A fragment train the coordinator drops gets no reply | the 4012 timer of 6.3 comes before the fragmenting sender of 6.6 |
 | Scan flow control starves an executor | credit per receiver, rows copied out of receive pages (8.3, 8.4); measured with many consumers |
 | Interpreter encoding is large | phase 9 starts by writing chapter 05 §9; basic first; register-only programs, spill strategy decided later |

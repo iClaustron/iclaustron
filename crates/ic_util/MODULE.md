@@ -42,7 +42,7 @@ The containers and helpers the rest of the library is built from. See
   its operation was freed would be delivered to the operation that had
   taken its place. An id is now a 24-bit index plus an 8-bit generation
   in one 32-bit word, and a stale id fails to match. A valid id is never
-  the word 0, so 0 serves as "no object" the way `RNIL` does. The
+  the word 0, so 0 serves as "no object" the way `IC_NULL_PTR` does. The
   generation wraps at 256 reuses of one slot, which needs a reply to be
   outstanding across 256 operations on that slot to alias.
 - **The dynamic array is one `Vec<u8>`.** The C chained fixed 1 kByte

@@ -28,16 +28,28 @@ qualifies; anything GPL/LGPL is rejected by the tool.
 
 ## Clean-room procedure for the protocol
 
-1. **Read** the RonDB source to understand a signal or format.
-2. **Write a specification note** in [05-ndb-protocol.md](05-ndb-protocol.md)
+Revised by the author, 2026-10-08: protocols are developed mainly by
+listening to the network.
+
+1. **Listen.** Capture the traffic of the reference API, a MySQL server
+   or our own tools doing the operation against a live cluster, and read
+   it with our Wireshark dissector (chapter 06 §6.7), which lives in a
+   Wireshark source tree under Wireshark's licence, not in this
+   repository. The wire is the first source.
+2. **Ask the author** what the wire does not show: why a field is
+   there, when a reply comes, the cases a capture did not reach.
+3. **Read** the RonDB source only to settle what neither shows, for
+   facts, never to copy.
+4. **Write a specification note** in [05-ndb-protocol.md](05-ndb-protocol.md)
    in our own words: field names of our own, word offsets, bit widths,
-   semantics, with a bare *file:line pointer* into RonDB for later
-   verification. The pointer is a citation, not a copy, and names no
-   RonDB function, class, constant or signal.
-3. **Implement** from the note, not from the RonDB source window. Code
-   comments cite the chapter 05 section, never RonDB.
-4. **Verify** against a live RonDB cluster (or captured traffic), never by
-   diffing against RonDB code.
+   semantics, naming the capture it came from and, where the source was
+   read, a bare *file:line pointer* into RonDB. The pointer is a
+   citation, not a copy, and names no RonDB function, class, constant
+   or signal.
+5. **Implement** from the note, not from a capture window or the RonDB
+   source. Code comments cite the chapter 05 section, never RonDB.
+6. **Verify** against a live RonDB cluster, the dissector showing our
+   traffic beside the reference's, never by diffing against RonDB code.
 
 ## Names (decided by the author, 2026-10-08)
 
@@ -73,32 +85,33 @@ we used RonDB's names for signals and blocks as interface vocabulary.
 - `legacy-c/` is iClaustron's old code, reference only, and is not
   changed.
 
-## Collation data
+## Character sets and collations
 
-The latin1 character set is public: MySQL's latin1 is the CP1252 code
-page as Unicode publishes it, which serves text conversion. Its
-collations are not: their weights and order are MySQL's own and
-published nowhere else, apart from latin1_bin, whose weights are the
-bytes. No weight table is taken from MySQL or RonDB, from their source
-or from a running server. The author writes the latin1 collation module
-himself (chapter 06 §8.6); everything else is written from its contract
-and checked against the partitions the data nodes report and the order
-MySQL returns, which is verification against a live cluster, not
-copying.
+Decided by the author, 2026-10-08. A character set's encoding, its
+collations' weights and their ordering are retrieved from the data
+nodes at run time, through a dictionary request RonDB 26.04 main adds
+in a separate task, and kept in iClaustron's global dictionary (chapter
+06 §8.6). They are data a running cluster gives every client, as a
+table's description is; nothing of them is written into our code from
+MySQL's or RonDB's source. A character set whose tables are a public
+standard may be compiled in from that standard, with the source named:
+the binary set, the CP1252 code page as Unicode publishes it (MySQL's
+latin1 encoding), Unicode's own data.
 
 ## Error messages
 
 NDB error codes (numbers, classification) are interface data and are kept
-for compatibility. The **message texts** in RonDB's `ndberror.cpp` are
-copyrighted prose. Write our own message strings. Keep them short and keep
-the code number first so operators can cross-reference.
+for compatibility. The **message texts** in RonDB's error table
+(chapter 05 §10) are copyrighted prose. Write our own message strings.
+Keep them short and keep the code number first so operators can
+cross-reference.
 
 ## Config parameter tables
 
 iClaustron's `ic_apic_conf_param.ic` is iClaustron code and can be
 relicensed, but it describes NDB 7.2.9. The new, much smaller API-node
-parameter table is written against RonDB 26.10's
-`mgmapi_config_parameters.h` following the clean-room procedure above
+parameter table is written against RonDB 26.10's list of configuration
+parameters (chapter 05 §5.2) following the clean-room procedure above
 (parameter ids and section types are interface data and travel on the
 wire; parameter names and description prose do not, and ours are our
 own, mapped to the ids in chapter 05).

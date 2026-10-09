@@ -6,7 +6,7 @@
 //!
 //! A node is assigned to one receive thread when it connects and stays
 //! there. That same thread is the one that sees the socket close, and
-//! it is the one that executes `API_REGCONF`. So exactly one thread
+//! it is the one that executes `HEARTBEAT_CONF`. So exactly one thread
 //! ever writes a node's state, and a mutex would protect against
 //! nobody. This type is that state: the owning thread publishes, every
 //! other thread reads.
@@ -32,9 +32,9 @@ use std::sync::atomic::AtomicU32;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 
-use ic_ndb_signals::qmgr::NodeState;
-use ic_ndb_signals::qmgr::StartLevel;
 use ic_port::time::IcTimer;
+use ic_signals::membership::NodeState;
+use ic_signals::membership::StartLevel;
 
 /// Set in the status word while the socket is up and the node has
 /// answered our registration.
@@ -70,7 +70,7 @@ pub struct PublishedNodeState {
   generation: AtomicU32,
   /// When the current link was installed, kept across heartbeat updates.
   connected_at: AtomicU64,
-  /// When the last `API_REGCONF` arrived, in the timer's nanoseconds.
+  /// When the last `HEARTBEAT_CONF` arrived, in the timer's nanoseconds.
   /// Zero until the first one does.
   last_regconf: AtomicU64,
 }
@@ -167,7 +167,7 @@ impl PublishedNodeState {
     self.connected_at.load(Ordering::Relaxed)
   }
 
-  /// When the last `API_REGCONF` arrived, or zero if none has.
+  /// When the last `HEARTBEAT_CONF` arrived, or zero if none has.
   pub fn last_regconf(&self) -> IcTimer {
     self.last_regconf.load(Ordering::Relaxed)
   }
@@ -187,7 +187,7 @@ impl PublishedNodeState {
 
   /// Say the node is connected and registered. Starts a new generation.
   ///
-  /// The level comes from the `API_REGCONF` that completed the
+  /// The level comes from the `HEARTBEAT_CONF` that completed the
   /// registration, so a node is never published as connected without
   /// one.
   pub fn publish_connected(&self, state: &NodeState, now: IcTimer) {
@@ -196,7 +196,7 @@ impl PublishedNodeState {
     self.write_state(state, now);
   }
 
-  /// Take what an `API_REGCONF` said about the node.
+  /// Take what an `HEARTBEAT_CONF` said about the node.
   ///
   /// Does nothing if the node is not published as connected, because a
   /// reply that outlived its connection must not resurrect it.
@@ -224,7 +224,7 @@ impl PublishedNodeState {
       self.last_regconf.store(now, Ordering::Relaxed);
     }
     let mut status: u32 = IC_STATUS_CONNECTED;
-    if state.single_user_mode {
+    if state.single_user {
       status |= IC_STATUS_SINGLE_USER;
     }
     status |= ((state.start_level as u32) & IC_STATUS_LEVEL_MASK)
@@ -363,7 +363,7 @@ mod tests {
     let node = PublishedNodeState::new();
     let state = NodeState {
       start_level: StartLevel::SingleUser,
-      single_user_mode: true,
+      single_user: true,
       single_user_api: 192,
       ..NodeState::default()
     };

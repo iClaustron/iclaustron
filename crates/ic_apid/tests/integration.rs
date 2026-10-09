@@ -15,17 +15,19 @@
 //!   through `sh -c`. The tests create their tables through it, in the
 //!   database `ic_it`, so that what they read is what a MySQL server
 //!   makes, and they check what they wrote through it too.
-//! - `IC_TEST_NDB_MGM`: an `ndb_mgm` command with its connect string,
-//!   such as `ndb_mgm -c localhost:1186`, for the `failure` group,
-//!   which stops a data node and starts it again.
+//! - `IC_TEST_NDB_MGM`: the command that runs the management client,
+//!   with its connect string (`-c localhost:1186`), for the `failure`
+//!   group, which stops a data node and starts it again.
 //! - `IC_TEST_RECEIVE_THREADS`: how many receive threads to start, one
 //!   if not set, so that the suite can run with the nodes' links shared
 //!   out over several.
 //!
 //! The groups are the phase-5 ones: `connect`, `dict`, `pk`, `uk`,
-//! `types`, `failure`. Each test is its own program against the
-//! cluster, as an application would be: it takes an API node id, binds
-//! its tables, does its work through the public API and lets go.
+//! `types`, `failure`, and `collation`, which asks the data nodes what
+//! a collation is and for its weights (RonDB 26.04 main and later).
+//! Each test is its own program against the cluster, as an application
+//! would be: it takes an API node id, binds its tables, does its work
+//! through the public API and lets go.
 
 #![cfg(feature = "integration")]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -39,6 +41,8 @@ use ic_apic::mgm_client;
 use ic_apid::apid_conn::ApidConnection;
 use ic_apid::apid_global::ApidGlobal;
 use ic_apid::apid_global::GlobalOptions;
+use ic_apid::collation_client;
+use ic_apid::collation_client::Collation;
 use ic_apid::dict_cache::IndexDef;
 use ic_apid::dict_cache::TableDef;
 use ic_apid::key_op;
@@ -53,9 +57,11 @@ use ic_apid::record::Record;
 use ic_apid::text_row;
 use ic_apid::transaction::CommitState;
 use ic_apid::transaction::TransactionHint;
-use ic_ndb_signals::tc_key;
+use ic_port::err;
 use ic_port::time;
 use ic_port::IcError;
+use ic_signals::collation_desc;
+use ic_signals::key_ops;
 
 /// The database the tests make their tables in.
 const IC_IT_DB: &str = "ic_it";
@@ -185,7 +191,7 @@ fn mysql(sql: &str) -> Option<String> {
 }
 
 /// Run a management client command, or `None` if there is no client.
-fn ndb_mgm(command: &str) -> Option<String> {
+fn mgm_client(command: &str) -> Option<String> {
   let prefix = match std::env::var("IC_TEST_NDB_MGM") {
     Ok(prefix) => prefix,
     Err(_) => {
@@ -517,7 +523,7 @@ fn pk_insert_read_update_delete() {
   let mut conn = cluster.global.create_connection().expect("a connection");
   let t = bind(&mut conn, "pk");
 
-  write_pk(&mut conn, &t, tc_key::IC_OP_INSERT, 1, "10", "one")
+  write_pk(&mut conn, &t, key_ops::IC_OP_INSERT, 1, "10", "one")
     .expect("insert");
   let row = read_by_id(&mut conn, &t, 1).expect("the row is there");
   assert_eq!(t.get(&row, "id"), "1");
@@ -529,16 +535,16 @@ fn pk_insert_read_update_delete() {
   ));
   assert_eq!(seen, Some("10\tone".to_string()));
 
-  write_pk(&mut conn, &t, tc_key::IC_OP_UPDATE, 1, "11", "one")
+  write_pk(&mut conn, &t, key_ops::IC_OP_UPDATE, 1, "11", "one")
     .expect("update");
   let row = read_by_id(&mut conn, &t, 1).expect("still there");
   assert_eq!(t.get(&row, "val"), "11");
   let seen = mysql(&format!("SELECT val FROM {}.pk WHERE id = 1", IC_IT_DB));
   assert_eq!(seen, Some("11".to_string()));
 
-  write_pk(&mut conn, &t, tc_key::IC_OP_WRITE, 1, "12", "uno")
+  write_pk(&mut conn, &t, key_ops::IC_OP_WRITE, 1, "12", "uno")
     .expect("write over");
-  write_pk(&mut conn, &t, tc_key::IC_OP_WRITE, 2, "20", "two")
+  write_pk(&mut conn, &t, key_ops::IC_OP_WRITE, 2, "20", "two")
     .expect("write new");
   let seen = mysql(&format!(
     "SELECT id, val, name FROM {}.pk ORDER BY id",
@@ -546,7 +552,7 @@ fn pk_insert_read_update_delete() {
   ));
   assert_eq!(seen, Some("1\t12\tuno\n2\t20\ttwo".to_string()));
 
-  write_pk(&mut conn, &t, tc_key::IC_OP_DELETE, 1, "0", "").expect("delete");
+  write_pk(&mut conn, &t, key_ops::IC_OP_DELETE, 1, "0", "").expect("delete");
   assert!(read_by_id(&mut conn, &t, 1).is_none(), "gone");
   let seen = mysql(&format!("SELECT COUNT(*) FROM {}.pk", IC_IT_DB));
   assert_eq!(seen, Some("1".to_string()));
@@ -557,7 +563,7 @@ fn pk_insert_read_update_delete() {
   t.put(&mut row, "name", text_row::IC_NULL_TEXT);
   key_op::write_key(
     &mut conn,
-    tc_key::IC_OP_INSERT,
+    key_ops::IC_OP_INSERT,
     &t.rec,
     &row,
     &t.rec,
@@ -587,17 +593,17 @@ fn pk_errors_for_a_missing_and_a_present_row() {
   let t = bind(&mut conn, "pk");
 
   assert!(read_by_id(&mut conn, &t, 999).is_none(), "nothing there");
-  let e = write_pk(&mut conn, &t, tc_key::IC_OP_UPDATE, 999, "1", "x")
+  let e = write_pk(&mut conn, &t, key_ops::IC_OP_UPDATE, 999, "1", "x")
     .expect_err("an update of nothing fails");
   assert_eq!(e.code as u32, key_op::IC_NDB_ERROR_NO_SUCH_ROW);
   assert!(e.is_ndb_error());
-  let e = write_pk(&mut conn, &t, tc_key::IC_OP_DELETE, 999, "1", "x")
+  let e = write_pk(&mut conn, &t, key_ops::IC_OP_DELETE, 999, "1", "x")
     .expect_err("a delete of nothing fails");
   assert_eq!(e.code as u32, key_op::IC_NDB_ERROR_NO_SUCH_ROW);
 
-  write_pk(&mut conn, &t, tc_key::IC_OP_INSERT, 5, "50", "five")
+  write_pk(&mut conn, &t, key_ops::IC_OP_INSERT, 5, "50", "five")
     .expect("first insert");
-  let e = write_pk(&mut conn, &t, tc_key::IC_OP_INSERT, 5, "51", "five")
+  let e = write_pk(&mut conn, &t, key_ops::IC_OP_INSERT, 5, "51", "five")
     .expect_err("a second insert fails");
   assert_eq!(e.code as u32, key_op::IC_NDB_ERROR_ROW_EXISTS);
   assert!(e.is_ndb_error());
@@ -899,7 +905,7 @@ fn types_round_trip_through_the_api_and_mysql() {
   t.put(&mut row, "d", text_row::IC_NULL_TEXT);
   key_op::write_key(
     &mut conn,
-    tc_key::IC_OP_INSERT,
+    key_ops::IC_OP_INSERT,
     &t.rec,
     &row,
     &t.rec,
@@ -980,7 +986,7 @@ fn failure_a_stopped_coordinator_fails_the_transaction_and_a_retry_commits() {
   let survivor = started[0];
   let mut conn = cluster.global.create_connection().expect("a connection");
   let t = bind(&mut conn, "pk");
-  write_pk(&mut conn, &t, tc_key::IC_OP_INSERT, 50, "1", "fifty")
+  write_pk(&mut conn, &t, key_ops::IC_OP_INSERT, 50, "1", "fifty")
     .expect("the row to update");
 
   // An update on a transaction coordinated by the victim, sent and
@@ -1015,7 +1021,7 @@ fn failure_a_stopped_coordinator_fails_the_transaction_and_a_retry_commits() {
   // management client returns once the node has shut down. A stop
   // would take the whole process down, with nothing left to start.
   eprintln!("restarting data node {}", victim);
-  ndb_mgm(&format!("{} RESTART", victim));
+  mgm_client(&format!("{} RESTART", victim));
   conn.commit_transaction(tid).expect("ask to commit");
   let start = time::gethrtime();
   let state = loop {
@@ -1079,7 +1085,7 @@ fn failure_a_stopped_coordinator_fails_the_transaction_and_a_retry_commits() {
     std::thread::sleep(std::time::Duration::from_millis(500));
     let waited = time::millis_elapsed(start, time::gethrtime());
     if waited >= IC_IT_RESTART_WAIT_MS {
-      let show = ndb_mgm("show").unwrap_or_default();
+      let show = mgm_client("show").unwrap_or_default();
       panic!("data node {} did not come back:\n{}", victim, show);
     }
   }
@@ -1091,4 +1097,111 @@ fn row_with_val(t: &Table, row: &[u8], val: &str) -> Vec<u8> {
   let mut copy = row.to_vec();
   t.put(&mut copy, "val", val);
   copy
+}
+
+/// The weight string of one code point, empty if the set has none.
+fn weight(found: &Collation, code_point: u32) -> Vec<u8> {
+  let mut out: Vec<u8> = Vec::new();
+  for run in &found.runs {
+    if code_point >= run.first && code_point - run.first < run.count {
+      run.weight_of(code_point - run.first, &mut out);
+      return out;
+    }
+  }
+  out
+}
+
+#[test]
+fn collation_is_described_by_name_number_and_character_set() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let by_name = collation_desc::IC_COLLATION_BY_NAME;
+  let by_set = collation_desc::IC_COLLATION_BY_CHARSET;
+  let named = collation_client::describe_by_name(
+    &mut conn,
+    by_name,
+    "latin1_swedish_ci",
+    false,
+  )
+  .expect("by name");
+  assert_eq!(named.desc.number, 8);
+  assert_eq!(named.desc.charset_name, "latin1");
+  assert_eq!(named.desc.pad_byte, 0x20);
+  assert!(!named.desc.is_no_pad());
+  assert_eq!(named.round_trips, 1);
+  let numbered =
+    collation_client::describe_by_number(&mut conn, 8, false).expect("number");
+  assert_eq!(numbered.desc.collation_name, "latin1_swedish_ci");
+  // Names are matched without regard to case.
+  let set =
+    collation_client::describe_by_name(&mut conn, by_set, "LATIN1", false)
+      .expect("by character set");
+  assert_eq!(set.desc.number, set.desc.default_number);
+  assert_eq!(set.desc.number, 8);
+  let missing = collation_client::describe_by_name(
+    &mut conn,
+    by_name,
+    "no_such_collation",
+    false,
+  );
+  match missing {
+    Ok(_) => panic!("a collation that does not exist was described"),
+    Err(e) => assert_eq!(e.code, err::IC_ERROR_NO_SUCH_COLLATION),
+  }
+}
+
+#[test]
+fn collation_weights_cover_the_set_and_fold_case() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let by_name = collation_desc::IC_COLLATION_BY_NAME;
+  let swedish = collation_client::describe_by_name(
+    &mut conn,
+    by_name,
+    "latin1_swedish_ci",
+    true,
+  )
+  .expect("latin1_swedish_ci with weights");
+  let mut covered: u64 = 0;
+  for run in &swedish.runs {
+    covered += run.count as u64;
+  }
+  // Every byte of latin1 is a character of its own.
+  assert_eq!(covered, 256);
+  // Case folds in a case-insensitive collation, and letters differ.
+  assert!(!weight(&swedish, 0x41).is_empty());
+  assert_eq!(weight(&swedish, 0x41), weight(&swedish, 0x61));
+  assert_ne!(weight(&swedish, 0x61), weight(&swedish, 0x62));
+  let bin =
+    collation_client::describe_by_name(&mut conn, by_name, "latin1_bin", true)
+      .expect("latin1_bin with weights");
+  assert_ne!(weight(&bin, 0x41), weight(&bin, 0x61));
+  // A large collation: as many round trips as it takes, its runs in
+  // rising code point order and not overlapping.
+  let unicode = collation_client::describe_by_name(
+    &mut conn,
+    by_name,
+    "utf8mb4_0900_ai_ci",
+    true,
+  )
+  .expect("utf8mb4_0900_ai_ci with weights");
+  assert!(unicode.desc.is_no_pad());
+  assert!(!unicode.runs.is_empty());
+  let mut next: u32 = 0;
+  for run in &unicode.runs {
+    assert!(run.first >= next, "runs overlap at U+{:04X}", run.first);
+    next = run.first + run.count;
+  }
+  println!(
+    "utf8mb4_0900_ai_ci: {} runs, {} contractions, {} round trips",
+    unicode.runs.len(),
+    unicode.contractions.len(),
+    unicode.round_trips
+  );
 }

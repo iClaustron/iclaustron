@@ -5,7 +5,7 @@
 //! A bitmap of fixed width (`IC_BITMAP`,
 //! `legacy-c/util/ic_bitmap.c`). Used for the set of fields taking part
 //! in a query, the set of partitions a scan covers, and the connected
-//! node bitmap that arrives in `API_REGCONF`.
+//! node bitmap that arrives in `HEARTBEAT_CONF`.
 
 /// Number of bytes a bitmap of `num_bits` bits occupies, rounded up to a
 /// whole number of 32-bit words as the C `IC_BITMAP_SIZE` did.

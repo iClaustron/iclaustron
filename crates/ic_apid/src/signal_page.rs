@@ -15,11 +15,11 @@
 //! page's allocation settles at the size of the largest round and
 //! stays.
 //!
-//! Small signals, which is nearly all of them (`TCKEYCONF`, the parts of
-//! `API_PACKED`, a small `TRANSID_AI`), are copied into the page: a
+//! Small signals, which is nearly all of them (`KEY_OP_CONF`, the parts of
+//! `BUNDLE`, a small `ROW_DATA_REP`), are copied into the page: a
 //! copy of a few dozen bytes costs less than sharing the receive page
 //! would, whose release would then be spread over every thread it went
-//! to. A large signal, a `TRANSID_AI` with kilobytes of row, is not
+//! to. A large signal, a `ROW_DATA_REP` with kilobytes of row, is not
 //! copied: its entry in the page names the receive page it lies in and
 //! where, and the page holds that receive page, whose reference count
 //! says when the receive thread may read into it again. Where small
@@ -31,7 +31,7 @@
 //! lie:
 //!
 //! ```text
-//!   word 0   gsn (bits 0-15), fragment info (16-17), sections (18-19),
+//!   word 0   sig_no (bits 0-15), fragment info (16-17), sections (18-19),
 //!            by reference (20)
 //!   word 1   receiver block (0-15), sender block (16-31)
 //!   word 2   sending node
@@ -44,8 +44,8 @@
 
 use std::sync::Arc;
 
-use ic_ndb_signals::header::FragmentInfo;
-use ic_ndb_signals::header::IC_MAX_SECTIONS;
+use ic_signals::header::FragmentState;
+use ic_signals::header::IC_MAX_SECTIONS;
 
 use crate::node_connect::SignalView;
 use crate::signal_reader::ReceivePage;
@@ -93,8 +93,8 @@ fn push_head(
   num_sections: usize,
   flags: u32,
 ) {
-  let mut word0 = signal.gsn as u32 | flags;
-  word0 |= (signal.fragment_info as u32 & 3) << 16;
+  let mut word0 = signal.sig_no as u32 | flags;
+  word0 |= (signal.fragment_state as u32 & 3) << 16;
   word0 |= (num_sections as u32 & 3) << 18;
   page.push(word0);
   page.push(signal.receiver_block as u32 | (signal.sender_block as u32) << 16);
@@ -213,11 +213,11 @@ pub(crate) fn next<'a>(
   }
   *at = pos;
   Some(SignalView {
-    gsn: (word0 & 0xFFFF) as u16,
+    sig_no: (word0 & 0xFFFF) as u16,
     receiver_block: (word1 & 0xFFFF) as u16,
     sender_block: (word1 >> 16) as u16,
     sender_node_id: words[start + 2],
-    fragment_info: FragmentInfo::from_u8(((word0 >> 16) & 3) as u8),
+    fragment_state: FragmentState::from_u8(((word0 >> 16) & 3) as u8),
     data,
     sections,
     num_sections,
@@ -242,11 +242,11 @@ mod tests {
   fn signals_come_back_as_they_went_in() {
     let first_data = [1u32, 2, 3];
     let first = SignalView {
-      gsn: 12,
+      sig_no: 12,
       receiver_block: 0x8001,
       sender_block: 0xF5,
       sender_node_id: 2,
-      fragment_info: FragmentInfo::Whole,
+      fragment_state: FragmentState::Whole,
       data: &first_data,
       sections: [&[], &[], &[]],
       num_sections: 0,
@@ -255,11 +255,11 @@ mod tests {
     let key = [0x10u32, 0x11];
     let attr = [0x20u32];
     let second = SignalView {
-      gsn: 0xABC,
+      sig_no: 0xABC,
       receiver_block: 0x8002,
       sender_block: 0x1FF,
       sender_node_id: 1,
-      fragment_info: FragmentInfo::Last,
+      fragment_state: FragmentState::Last,
       data: &second_data,
       sections: [&key, &attr, &[]],
       num_sections: 2,
@@ -270,17 +270,17 @@ mod tests {
     assert_eq!(count(&page), 2);
     let mut at: usize = 0;
     let got = next(&page, &mut at).expect("first");
-    assert_eq!(got.gsn, 12);
+    assert_eq!(got.sig_no, 12);
     assert_eq!(got.receiver_block, 0x8001);
     assert_eq!(got.sender_block, 0xF5);
     assert_eq!(got.sender_node_id, 2);
-    assert_eq!(got.fragment_info, FragmentInfo::Whole);
+    assert_eq!(got.fragment_state, FragmentState::Whole);
     assert_eq!(got.data, &first_data);
     assert_eq!(got.num_sections, 0);
     let got = next(&page, &mut at).expect("second");
-    assert_eq!(got.gsn, 0xABC);
+    assert_eq!(got.sig_no, 0xABC);
     assert_eq!(got.sender_block, 0x1FF);
-    assert_eq!(got.fragment_info, FragmentInfo::Last);
+    assert_eq!(got.fragment_state, FragmentState::Last);
     assert_eq!(got.data, &second_data);
     assert_eq!(got.num_sections, 2);
     assert_eq!(got.section(0), &key);
@@ -300,14 +300,14 @@ mod tests {
     let receive_page: ReceivePage = Arc::new(words);
     let small_data = [42u32];
     let small = SignalView {
-      gsn: 1,
+      sig_no: 1,
       data: &small_data,
       ..SignalView::default()
     };
     let data = &receive_page[10..13];
     let row = &receive_page[20..24];
     let large = SignalView {
-      gsn: 2,
+      sig_no: 2,
       receiver_block: 0x8003,
       data,
       sections: [row, &[], &[]],
@@ -315,7 +315,7 @@ mod tests {
       ..SignalView::default()
     };
     let other = SignalView {
-      gsn: 3,
+      sig_no: 3,
       data: &receive_page[30..32],
       ..SignalView::default()
     };
@@ -337,7 +337,7 @@ mod tests {
     let mut at: usize = 0;
     assert_eq!(next(&page, &mut at).expect("small").data, &[42]);
     let got = next(&page, &mut at).expect("large");
-    assert_eq!(got.gsn, 2);
+    assert_eq!(got.sig_no, 2);
     assert_eq!(got.receiver_block, 0x8003);
     assert_eq!(got.data, &[1, 2, 3]);
     assert_eq!(got.section(0), &[9, 8, 7, 6]);
@@ -354,7 +354,7 @@ mod tests {
   fn a_page_cut_short_ends_the_signals() {
     let data = [1u32, 2, 3];
     let signal = SignalView {
-      gsn: 1,
+      sig_no: 1,
       data: &data,
       ..SignalView::default()
     };

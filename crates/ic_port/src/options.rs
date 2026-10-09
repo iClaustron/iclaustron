@@ -381,7 +381,7 @@ mod tests {
       long_name: "ndb-connectstring",
       short_name: b'c',
       kind: OptionKind::Str,
-      help: "Connect string to ndb_mgmd",
+      help: "Connect string of the management servers",
     },
     OptionEntry {
       long_name: "node-id",

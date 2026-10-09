@@ -144,29 +144,26 @@ fn report(what: &str, error: &IcError) {
 
 fn print_config(config: &ClusterConfig) {
   println!("Our node");
-  println!("  NodeId                {}", config.api.node_id);
+  println!("  node_id                {}", config.api.node_id);
   match config.api.host.as_deref() {
-    Some(host) => println!("  HostName              {}", host),
-    None => println!("  HostName              (any)"),
+    Some(host) => println!("  host                   {}", host),
+    None => println!("  host                   (any)"),
   }
-  println!("  BatchSize             {}", config.api.batch_size);
-  println!("  BatchByteSize         {}", config.api.batch_byte_size);
-  println!("  MaxScanBatchSize      {}", config.api.max_scan_batch_size);
+  println!("  scan_batch_rows        {}", config.api.scan_batch_rows);
+  println!("  scan_batch_bytes       {}", config.api.scan_batch_bytes);
   println!(
-    "  TotalSendBufferMemory {}",
-    config.api.total_send_buffer_memory
+    "  scan_batch_bytes_total {}",
+    config.api.scan_batch_bytes_total
   );
-  println!("  ArbitrationRank       {}", config.api.arbitration_rank);
-  println!(
-    "  DefaultHashMapSize    {}",
-    config.api.default_hashmap_size
-  );
+  println!("  send_buffer_total      {}", config.api.send_buffer_total);
+  println!("  arbiter_rank           {}", config.api.arbiter_rank);
+  println!("  hash_map_buckets       {}", config.api.hash_map_buckets);
   println!();
 
   println!("Cluster");
-  println!("  NoOfReplicas          {}", config.no_of_replicas);
+  println!("  replica_count          {}", config.replica_count);
   println!(
-    "  Heartbeat period      {} ms (the shortest any data node asks)",
+    "  Heartbeat period       {} ms (the shortest any data node asks)",
     config.heartbeat_interval_ms()
   );
   println!();
@@ -175,7 +172,7 @@ fn print_config(config: &ClusterConfig) {
   for node in &config.data_nodes {
     println!(
       "  node {:<3} group {:<3} heartbeat {:>6} ms  {}",
-      node.node_id, node.node_group, node.api_heartbeat_interval_ms, node.host
+      node.node_id, node.node_group, node.api_heartbeat_ms, node.host
     );
   }
   println!();
@@ -243,10 +240,10 @@ fn print_raw(config: &ClusterConfig) {
   }
   for section in &blob.links {
     let one = blob
-      .value_u32(section, conf_param::IC_CFG_CONNECTION_NODE_1)
+      .value_u32(section, conf_param::IC_PARAM_LINK_NODE_1)
       .unwrap_or(0);
     let two = blob
-      .value_u32(section, conf_param::IC_CFG_CONNECTION_NODE_2)
+      .value_u32(section, conf_param::IC_PARAM_LINK_NODE_2)
       .unwrap_or(0);
     let name = format!("{:?} link {} to {}", section.section_type, one, two);
     print_section(&name, section);

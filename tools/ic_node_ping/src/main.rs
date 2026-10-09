@@ -5,9 +5,9 @@
 //!
 //! This is the whole transport path in one command: fetch the
 //! configuration, look up each data node's port, connect, complete the
-//! transporter handshake, register, and then keep the connections alive
-//! for as long as asked. It is what proves the library can talk to a
-//! cluster at all.
+//! signal protocol's handshake, register, and then keep the connections
+//! alive for as long as asked. It is what proves the library can talk
+//! to a cluster at all.
 //!
 //! It also shows what happens when a node stops. Restart a data node
 //! while it runs. The link should be reported lost at once, then the
@@ -19,7 +19,7 @@
 //!
 //! The command drives nothing itself. It starts the Data API's threads,
 //! which connect, read, route and keep heartbeats, and then only
-//! watches, and acts as one user thread for the seize: it makes a
+//! watches, and acts as one user thread for the allocate: it makes a
 //! connection, sends under that connection's block number and waits for
 //! the answers it expects. An application looks the same.
 //!
@@ -38,18 +38,18 @@ use ic_apid::apid_conn::ApidConnection;
 use ic_apid::apid_global::ApidGlobal;
 use ic_apid::apid_global::LinkStatus;
 use ic_apid::apid_global::NodeShared;
-use ic_ndb_signals::blocks;
-use ic_ndb_signals::gsn;
-use ic_ndb_signals::header::SignalHeader;
-use ic_ndb_signals::tc_seize::TcReleaseReq;
-use ic_ndb_signals::tc_seize::TcSeizeConf;
-use ic_ndb_signals::tc_seize::TcSeizeRef;
-use ic_ndb_signals::tc_seize::TcSeizeReq;
-use ic_ndb_signals::tc_seize::IC_ANY_TC_INSTANCE;
 use ic_port::options::OptionEntry;
 use ic_port::options::OptionKind;
 use ic_port::options::OptionParser;
 use ic_port::IcError;
+use ic_signals::blocks;
+use ic_signals::coord_alloc::CoordAllocConf;
+use ic_signals::coord_alloc::CoordAllocRef;
+use ic_signals::coord_alloc::CoordAllocReq;
+use ic_signals::coord_alloc::CoordFreeReq;
+use ic_signals::coord_alloc::IC_ANY_COORD_INSTANCE;
+use ic_signals::header::SignalHeader;
+use ic_signals::numbers;
 
 const OPTIONS: [OptionEntry; 4] = [
   OptionEntry {
@@ -165,7 +165,7 @@ fn run() -> i32 {
   println!();
   println!("Connected to {} data node(s)", global.num_connected());
   println!();
-  seize_on_every_node(&global);
+  alloc_on_every_node(&global);
 
   let seconds = parser.get_int_or("seconds", 0) as u64;
   let code = if seconds == 0 {
@@ -185,7 +185,7 @@ fn run() -> i32 {
 /// inbox by block number, and our connection matches it to the request
 /// that expects it, which is the whole of the threading model seen from
 /// outside.
-fn seize_on_every_node(global: &ApidGlobal) {
+fn alloc_on_every_node(global: &ApidGlobal) {
   let mut conn = match global.create_connection() {
     Ok(conn) => conn,
     Err(e) => {
@@ -199,7 +199,7 @@ fn seize_on_every_node(global: &ApidGlobal) {
     conn.block_number()
   );
   for node_id in global.started_nodes() {
-    seize_and_release(&mut conn, node_id);
+    alloc_and_release(&mut conn, node_id);
   }
   if conn.unexpected() != 0 {
     println!(
@@ -213,32 +213,35 @@ fn seize_on_every_node(global: &ApidGlobal) {
   }
 }
 
-fn seize_and_release(conn: &mut ApidConnection, node_id: u32) {
+fn alloc_and_release(conn: &mut ApidConnection, node_id: u32) {
   let own_ref = conn.block_ref();
   // Our own name for the record. It comes back first in every answer.
   let our_ptr: u32 = 1000 + node_id;
-  let seize = TcSeizeReq {
-    api_connect_ptr: our_ptr,
-    api_block_ref: own_ref,
-    instance: IC_ANY_TC_INSTANCE,
+  let allocate = CoordAllocReq {
+    client_ptr: our_ptr,
+    client_block_ref: own_ref,
+    instance: IC_ANY_COORD_INSTANCE,
   };
   let header = SignalHeader::new(
-    gsn::IC_GSN_TCSEIZEREQ,
+    numbers::IC_SIG_COORD_ALLOC_REQ,
     conn.block_number(),
-    blocks::IC_BLOCK_DBTC,
+    blocks::IC_BLOCK_COORDINATOR,
   );
-  let replies = [gsn::IC_GSN_TCSEIZECONF, gsn::IC_GSN_TCSEIZEREF];
+  let replies = [
+    numbers::IC_SIG_COORD_ALLOC_CONF,
+    numbers::IC_SIG_COORD_ALLOC_REF,
+  ];
   let answer =
-    conn.call(node_id, &header, &seize.encode(), &[], &replies, 5000);
+    conn.call(node_id, &header, &allocate.encode(), &[], &replies, 5000);
   let answer = match answer {
     Ok(answer) => answer,
     Err(e) => {
-      println!("node {:<4} seize not answered: {}", node_id, e.message());
+      println!("node {:<4} allocate not answered: {}", node_id, e.message());
       return;
     }
   };
-  if answer.gsn == gsn::IC_GSN_TCSEIZEREF {
-    match TcSeizeRef::decode(&answer.data) {
+  if answer.sig_no == numbers::IC_SIG_COORD_ALLOC_REF {
+    match CoordAllocRef::decode(&answer.data) {
       Ok(refusal) => println!(
         "node {:<4} would not give us a transaction record: NDB error {}",
         node_id, refusal.error_code
@@ -247,7 +250,7 @@ fn seize_and_release(conn: &mut ApidConnection, node_id: u32) {
     }
     return;
   }
-  let conf = match TcSeizeConf::decode(&answer.data) {
+  let conf = match CoordAllocConf::decode(&answer.data) {
     Ok(conf) => conf,
     Err(e) => {
       println!("node {:<4} bad answer: {}", node_id, e.message());
@@ -256,21 +259,27 @@ fn seize_and_release(conn: &mut ApidConnection, node_id: u32) {
   };
   // The coordinator's block number carries its instance in a form we
   // have no need to take apart: it is only ever sent back.
-  let tc_block = blocks::ref_to_block(conf.tc_block_ref);
+  let coord_block = blocks::ref_to_block(conf.coord_block_ref);
   println!(
     "node {:<4} gave us transaction record {} at coordinator {:#06x}",
-    node_id, conf.tc_connect_ptr, tc_block
+    node_id, conf.coord_ptr, coord_block
   );
   // The release leads with the coordinator's record, not ours, so it is
   // not a plain call: its answer echoes our pointer, the third word.
-  let release = TcReleaseReq {
-    tc_connect_ptr: conf.tc_connect_ptr,
-    api_block_ref: own_ref,
-    api_connect_ptr: our_ptr,
+  let release = CoordFreeReq {
+    coord_ptr: conf.coord_ptr,
+    client_block_ref: own_ref,
+    client_ptr: our_ptr,
   };
-  let header =
-    SignalHeader::new(gsn::IC_GSN_TCRELEASEREQ, conn.block_number(), tc_block);
-  let replies = [gsn::IC_GSN_TCRELEASECONF, gsn::IC_GSN_TCRELEASEREF];
+  let header = SignalHeader::new(
+    numbers::IC_SIG_COORD_FREE_REQ,
+    conn.block_number(),
+    coord_block,
+  );
+  let replies = [
+    numbers::IC_SIG_COORD_FREE_CONF,
+    numbers::IC_SIG_COORD_FREE_REF,
+  ];
   let sent = conn.send_expecting(
     node_id,
     &header,
@@ -284,7 +293,7 @@ fn seize_and_release(conn: &mut ApidConnection, node_id: u32) {
     return;
   }
   match conn.wait_for(our_ptr, 5000) {
-    Ok(answer) if answer.gsn == gsn::IC_GSN_TCRELEASECONF => {
+    Ok(answer) if answer.sig_no == numbers::IC_SIG_COORD_FREE_CONF => {
       println!("node {:<4} took it back", node_id)
     }
     Ok(_) => println!("node {:<4} would not take it back", node_id),

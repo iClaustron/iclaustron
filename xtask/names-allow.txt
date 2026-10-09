@@ -1,0 +1,14 @@
+# Allow-list for `cargo xtask names` (xtask/src/names.rs).
+# One entry per line: <word> [<file> ...]  # reason
+# A word with files is allowed only in those files. Every entry needs a
+# reason: a word is here only because it is ordinary English or Rust, or
+# because it travels on the wire (chapter 09, "Names").
+
+HashMap  # Rust's std::collections::HashMap
+
+# Connect strings are what operators type; the keyword is matched without
+# regard to case, and the management protocol's replies carry it.
+NodeId crates/ic_util/src/connectstring.rs crates/ic_comm/src/line_proto.rs  # connect-string and wire keyword
+
+# The management server's refusal text, quoted as it travels on the wire.
+ndb_mgmd crates/ic_apic/src/mgm_client.rs doc/rust/05-ndb-protocol.md  # wire text of a refusal

@@ -39,20 +39,20 @@ use std::sync::Arc;
 
 use ic_comm::connection::Connection;
 use ic_comm::poll_set::PollSet;
-use ic_ndb_signals::alter_table_rep::AlterTableRep;
-use ic_ndb_signals::blocks;
-use ic_ndb_signals::gsn;
-use ic_ndb_signals::header;
-use ic_ndb_signals::header::FragmentInfo;
-use ic_ndb_signals::packed;
-use ic_ndb_signals::qmgr::ApiRegConf;
-use ic_ndb_signals::qmgr::NfCompleteRep;
-use ic_ndb_signals::qmgr::NodeFailRep;
 use ic_port::debug::IC_COMM_LEVEL;
 use ic_port::debug::IC_HEARTBEAT_LEVEL;
 use ic_port::debug::IC_NDB_MESSAGE_LEVEL;
 use ic_port::err;
 use ic_port::IcError;
+use ic_signals::blocks;
+use ic_signals::bundle;
+use ic_signals::header;
+use ic_signals::header::FragmentState;
+use ic_signals::membership::HeartbeatConf;
+use ic_signals::membership::NodeLostDoneRep;
+use ic_signals::membership::NodeLostRep;
+use ic_signals::numbers;
+use ic_signals::table_change::TableChangedRep;
 use ic_util::threadpool::ThreadState;
 
 use crate::apid_global::ApidShared;
@@ -89,7 +89,7 @@ struct Receiver {
   /// The signals of a read that are ours to execute.
   signals: Vec<ReceivedSignal>,
   /// The parts of a packed signal.
-  parts: Vec<packed::PackedPart>,
+  parts: Vec<bundle::BundlePart>,
 }
 
 /// The body of a receive thread, serving the nodes at `node_indexes`.
@@ -382,11 +382,11 @@ impl Receiver {
 
   fn execute(&mut self, index: usize, signal: &ReceivedSignal) {
     let node_id = self.nodes[index].node.node_id;
-    if signal.gsn == gsn::IC_GSN_API_REGCONF {
+    if signal.sig_no == numbers::IC_SIG_HEARTBEAT_CONF {
       self.registration_confirmed(index, signal);
       return;
     }
-    if signal.gsn == gsn::IC_GSN_API_REGREF {
+    if signal.sig_no == numbers::IC_SIG_HEARTBEAT_REF {
       // The node refused our heartbeat. It will drop the link itself,
       // and we will see that.
       ic_port::debug_print!(
@@ -396,10 +396,10 @@ impl Receiver {
       );
       return;
     }
-    if signal.gsn == gsn::IC_GSN_NODE_FAILREP {
+    if signal.sig_no == numbers::IC_SIG_NODE_LOST_REP {
       // The bitmap is in the first section unless the sender put it
       // inline after the three fixed words.
-      match NodeFailRep::decode(&signal.data, signal.section(0)) {
+      match NodeLostRep::decode(&signal.data, signal.section(0)) {
         Ok(report) => {
           for failed in &report.failed_nodes {
             self.shared.node_failure_reported(node_id, *failed);
@@ -408,7 +408,7 @@ impl Receiver {
         Err(e) => {
           ic_port::debug_print!(
             IC_HEARTBEAT_LEVEL,
-            "Unreadable NODE_FAILREP from node {}: {}",
+            "Unreadable NODE_LOST_REP from node {}: {}",
             node_id,
             e.message()
           );
@@ -416,10 +416,10 @@ impl Receiver {
       }
       return;
     }
-    if signal.gsn == gsn::IC_GSN_NF_COMPLETEREP {
+    if signal.sig_no == numbers::IC_SIG_NODE_LOST_DONE_REP {
       // The block field carries the sender's reference, not zero, and is
       // ignored; the failed node id is what counts.
-      if let Ok(report) = NfCompleteRep::decode(&signal.data) {
+      if let Ok(report) = NodeLostDoneRep::decode(&signal.data) {
         // Publish preceding takeover replies before making their absence
         // grounds for aborting a transaction. Poll snapshots that state
         // before taking its inbox, so those replies will be processed first.
@@ -430,14 +430,14 @@ impl Receiver {
       }
       return;
     }
-    if signal.gsn == gsn::IC_GSN_ALTER_TABLE_REP {
+    if signal.sig_no == numbers::IC_SIG_TABLE_CHANGED_REP {
       self.table_changed(node_id, signal);
       return;
     }
     ic_port::debug_print!(
       IC_NDB_MESSAGE_LEVEL,
       "No handler for {} from node {} to block {:#06x}",
-      gsn::gsn_name(signal.gsn).unwrap_or("an unknown signal"),
+      numbers::sig_name(signal.sig_no).unwrap_or("an unknown signal"),
       node_id,
       signal.receiver_block
     );
@@ -447,12 +447,12 @@ impl Receiver {
   /// named is let go of, with the indexes bound for it. An alteration is
   /// reported by every data node; only the first report finds anything.
   fn table_changed(&self, node_id: u32, signal: &ReceivedSignal) {
-    let rep = match AlterTableRep::decode(&signal.data, signal.section(0)) {
+    let rep = match TableChangedRep::decode(&signal.data, signal.section(0)) {
       Ok(rep) => rep,
       Err(e) => {
         ic_port::debug_print!(
           IC_NDB_MESSAGE_LEVEL,
-          "Unreadable ALTER_TABLE_REP from node {}: {}",
+          "Unreadable TABLE_CHANGED_REP from node {}: {}",
           node_id,
           e.message()
         );
@@ -480,12 +480,12 @@ impl Receiver {
   /// The node answered a heartbeat, and says how it is.
   fn registration_confirmed(&self, index: usize, signal: &ReceivedSignal) {
     let node = &self.nodes[index].node;
-    let conf = match ApiRegConf::decode(&signal.data) {
+    let conf = match HeartbeatConf::decode(&signal.data) {
       Ok(conf) => conf,
       Err(e) => {
         ic_port::debug_print!(
           IC_HEARTBEAT_LEVEL,
-          "Unreadable API_REGCONF from node {}: {}",
+          "Unreadable HEARTBEAT_CONF from node {}: {}",
           node.node_id,
           e.message()
         );
@@ -515,7 +515,7 @@ fn route_signals(
   node_id: u32,
   large_words: usize,
   router: &mut Router,
-  parts: &mut Vec<packed::PackedPart>,
+  parts: &mut Vec<bundle::BundlePart>,
   own: &mut Vec<ReceivedSignal>,
 ) -> Result<(), IcError> {
   while reader.has_message() {
@@ -527,22 +527,22 @@ fn route_signals(
         IC_NDB_MESSAGE_LEVEL,
         "<- node {} {} ({} words, {} section(s))",
         node_id,
-        gsn::gsn_name(head.gsn()).unwrap_or("unknown"),
+        numbers::sig_name(head.sig_no()).unwrap_or("unknown"),
         message.data.len(),
         head.num_sections
       );
-      if head.receiver_block == blocks::IC_BLOCK_API_PACKED {
+      if head.receiver_block == blocks::IC_BLOCK_BUNDLE {
         // Every part has the packed signal's number and sender, and the
-        // block its own header names. See `ic_ndb_signals::packed`.
-        match packed::unpack_into(message.data, parts) {
+        // block its own header names. See `ic_signals::bundle`.
+        match bundle::unpack_into(message.data, parts) {
           Ok(()) => {
             for part in parts.iter() {
               let signal = SignalView {
-                gsn: head.gsn(),
+                sig_no: head.sig_no(),
                 receiver_block: part.receiver_block,
                 sender_block: head.sender_block,
                 sender_node_id: node_id,
-                fragment_info: FragmentInfo::Whole,
+                fragment_state: FragmentState::Whole,
                 data: &message.data[part.start..part.start + part.len],
                 ..SignalView::default()
               };
@@ -562,18 +562,18 @@ fn route_signals(
         }
       } else {
         let signal = SignalView {
-          gsn: head.gsn(),
+          sig_no: head.sig_no(),
           receiver_block: head.receiver_block,
           sender_block: head.sender_block,
           sender_node_id: node_id,
-          fragment_info: head.fragment_info,
+          fragment_state: head.fragment_state,
           data: message.data,
           sections: message.sections,
           num_sections: head.num_sections as usize,
         };
         let by_reference = large_words > 0
           && message.total_words >= large_words
-          && head.fragment_info == FragmentInfo::Whole;
+          && head.fragment_state == FragmentState::Whole;
         let routed = if by_reference {
           let base = reader.start_words();
           let mut placed = Placement {

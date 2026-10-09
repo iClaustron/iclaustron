@@ -13,8 +13,9 @@ written in C-like Rust, MIT licensed, usable from
 The object model is the iClaustron Data API design (`include/ic_apid.h`),
 updated where this plan says so. The wire protocol is the NDB protocol as
 spoken by **RonDB 26.10** data nodes and management servers. The library is
-an **API node** only: it reads cluster configuration from `ndb_mgmd`, it
-never writes configuration, and it never acts as a management server.
+an **API node** only: it reads cluster configuration from the management
+server, it never writes configuration, and it never acts as a management
+server.
 
 ## Scope of the first release (0.1)
 
@@ -42,8 +43,8 @@ Later releases (replanned 2026-10-08, chapter 06): 0.2 the executor and
 scans, ordered index ranges included, and latin1 placement and
 ordering; 0.3 a basic interpreter,
 AUTO_INCREMENT and tables without a primary key; then TLS, location
-domains, BLOBs, UTF-8, the C++ header, events, DDL, SPJ pushdown joins
-and aggregation pushdown.
+domains, BLOBs, UTF-8, the C++ header, events, DDL, pushdown joins and
+aggregation pushdown.
 
 ## Out of scope for this project
 
@@ -53,7 +54,7 @@ and aggregation pushdown.
   reference; only the parts named in chapter 03 are translated. (Possibly
   a future project.)
 - Configuration file reading and writing (`.ini` readers, transactional
-  config writer). The only configuration source is `ndb_mgmd`.
+  config writer). The only configuration source is the management server.
 - Windows. Linux and macOS are the targets.
 - RonDB versions before 26.10; no version gating, no compatibility paths.
 
@@ -90,7 +91,7 @@ and aggregation pushdown.
    threads read sockets, split signals and route them to the owning user
    thread's queue. All signal execution (decoding rows, updating
    transaction state, callbacks) happens in the user thread that owns the
-   query. This is the deliberate difference from the C++ NDB API, whose
+   query. This is the deliberate difference from the reference API, whose
    receive thread executes signals and then wakes the user thread; the
    iClaustron split removes that work, and the contention it causes, from
    the receive thread. User threads never act as receivers.
@@ -134,7 +135,7 @@ and aggregation pushdown.
   delete on a table with BLOB columns is refused; unique keys refuse
   NULL and are placed by the index (chapter 06 §6.5).
 - `cargo xtask names` finds no RonDB name in the repository.
-- Primary key read throughput within 20 % of the C++ NDB API using the
+- Primary key read throughput within 20 % of the reference API using the
   asynchronous interface, one connection object per thread, 8 threads.
 - Ships `libiclaustron.{so,dylib,a}` and `include/iclaustron/ic_apid.h`
   with every function documented, a user guide, and the same examples in

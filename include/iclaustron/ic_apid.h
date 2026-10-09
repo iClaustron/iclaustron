@@ -9,10 +9,10 @@
  * in; `cargo xtask header` diffs the two.
  *
  * Target: RonDB 26.10 data nodes. Scope of release 0.1: configuration from
- * ndb_mgmd, node membership and failure handling, dictionary, transactions
- * with primary key and unique key operations, interpreted conditions on
- * key operations. Scans, events, DDL and BLOBs are later releases and are
- * only named in the "reserved" section at the end.
+ * the management server, node membership and failure handling, dictionary,
+ * transactions with primary key and unique key operations, interpreted
+ * conditions on key operations. Scans, events, DDL and BLOBs are later
+ * releases and are only named in the "reserved" section at the end.
  */
 #ifndef IC_APID_H
 #define IC_APID_H
@@ -88,9 +88,9 @@ typedef struct ic_conditional_assignment IC_CONDITIONAL_ASSIGNMENT;
 
 /* Field (column) types as defined by RonDB 26.10. The values are the NDB
    type numbers the data nodes send, so a type read from the dictionary is
-   used as it is. An earlier draft of this header numbered them in a
-   different order from 14 on; nothing had been built on it. Verify:
-   ndb_constants.h, NDB_TYPE_*; ic_ndb_signals::dict_tab_info. */
+   used as it is; ic_signals::table_props holds the same numbers. An
+   earlier draft of this header numbered them in a different order from
+   14 on; nothing had been built on it. */
 typedef enum ic_field_type
 {
   IC_TYPE_UNDEFINED = 0,
@@ -182,7 +182,7 @@ typedef enum ic_abort_option
   IC_IGNORE_ERROR = 2
 } IC_ABORT_OPTION;
 
-/* RonDB batch scheduling hint on write operations (TCKEYREQ bits 22/23).
+/* RonDB batch scheduling hint on write operations (KEY_OP_REQ bits 22/23).
    Safe: the operation does not depend on earlier operations in the same
    batch. Unsafe: it does. None: let the data node decide. */
 typedef enum ic_batch_hint
@@ -312,10 +312,10 @@ typedef struct ic_field_spec
 typedef struct ic_global_options
 {
   uint32_t struct_size;              /* sizeof(IC_GLOBAL_OPTIONS) */
-  uint32_t node_id;                  /* 0 = let ndb_mgmd allocate */
+  uint32_t node_id;                  /* 0 = management server picks */
   uint32_t receive_threads;          /* fixed once connected; default 1 */
   uint32_t heartbeat_interval_ms;    /* default from the cluster config */
-  uint32_t connect_timeout_ms;       /* to ndb_mgmd; default 30000 */
+  uint32_t connect_timeout_ms;       /* management server; default 30000 */
   uint32_t max_send_wait_us;         /* adaptive send bound; default 200 */
   uint32_t max_user_threads;         /* connection objects; default 256 */
   const char *bind_address;          /* local address for data node sockets */
@@ -368,12 +368,13 @@ typedef struct ic_write_key_args
 /* ------------------------------------------------------------------ */
 
 /*
-  Connects to ndb_mgmd through the connectstring ("host:port,host:port",
-  optionally "nodeid=N,host:port"), allocates a node id, fetches the
-  configuration, starts the send, receive and heartbeat threads and begins
-  connecting to the data nodes. Returns before the data nodes are
-  connected; call ic_apid_global_wait_first_node_connect() before using
-  a connection. `error` may be NULL.
+  Connects to the management server through the connectstring
+  ("host:port,host:port", optionally "nodeid=N,host:port"), allocates a
+  node id, fetches the configuration, starts the send, receive and
+  heartbeat threads and begins connecting to the data nodes. Returns
+  before the data nodes are connected; call
+  ic_apid_global_wait_first_node_connect() before using a connection.
+  `error` may be NULL.
 */
 int ic_apid_global_connect(const char *connectstring,
                            const IC_GLOBAL_OPTIONS *options,
@@ -907,7 +908,8 @@ int ic_thread_state_get_stop_flag(IC_THREAD_STATE *thread_state);
        ic_apid_query_set_partition_id(), takeover write from a scanned row.
   0.3  IC_METADATA_TRANSACTION, IC_ALTER_TABLE, events, autoincrement,
        TLS options in IC_GLOBAL_OPTIONS.
-  later IC_BLOB_HANDLE, IC_ALTER_TABLESPACE, SPJ, aggregation.
+  later IC_BLOB_HANDLE, IC_ALTER_TABLESPACE, pushed-down joins,
+        aggregation.
 */
 
 #ifdef __cplusplus

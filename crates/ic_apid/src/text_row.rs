@@ -16,8 +16,8 @@
 //! cannot be given as text here; a record carries them to and from an
 //! application unchanged.
 
-use ic_ndb_signals::dict_tab_info;
-use ic_ndb_signals::dict_tab_info::AttributeInfo;
+use ic_signals::table_props;
+use ic_signals::table_props::ColumnProps;
 
 use crate::record::Record;
 use crate::record::RecordField;
@@ -71,42 +71,42 @@ pub fn value_text(rec: &Record, position: u32, row: &[u8]) -> String {
 }
 
 /// True for a column this module can take text for.
-pub fn takes_text(attr: &AttributeInfo) -> bool {
+pub fn takes_text(attr: &ColumnProps) -> bool {
   is_integer(attr) || is_string(attr)
 }
 
-fn is_integer(attr: &AttributeInfo) -> bool {
+fn is_integer(attr: &ColumnProps) -> bool {
   let integers =
-    dict_tab_info::IC_NDB_TYPE_TINYINT..=dict_tab_info::IC_NDB_TYPE_BIGUNSIGNED;
-  integers.contains(&attr.ext_type)
+    table_props::IC_TYPE_TINYINT..=table_props::IC_TYPE_BIGUNSIGNED;
+  integers.contains(&attr.type_code)
 }
 
-fn is_signed(attr: &AttributeInfo) -> bool {
+fn is_signed(attr: &ColumnProps) -> bool {
   matches!(
-    attr.ext_type,
-    dict_tab_info::IC_NDB_TYPE_TINYINT
-      | dict_tab_info::IC_NDB_TYPE_SMALLINT
-      | dict_tab_info::IC_NDB_TYPE_MEDIUMINT
-      | dict_tab_info::IC_NDB_TYPE_INT
-      | dict_tab_info::IC_NDB_TYPE_BIGINT
+    attr.type_code,
+    table_props::IC_TYPE_TINYINT
+      | table_props::IC_TYPE_SMALLINT
+      | table_props::IC_TYPE_MEDIUMINT
+      | table_props::IC_TYPE_INT
+      | table_props::IC_TYPE_BIGINT
   )
 }
 
-fn is_string(attr: &AttributeInfo) -> bool {
+fn is_string(attr: &ColumnProps) -> bool {
   matches!(
-    attr.ext_type,
-    dict_tab_info::IC_NDB_TYPE_CHAR
-      | dict_tab_info::IC_NDB_TYPE_BINARY
-      | dict_tab_info::IC_NDB_TYPE_VARCHAR
-      | dict_tab_info::IC_NDB_TYPE_VARBINARY
-      | dict_tab_info::IC_NDB_TYPE_LONGVARCHAR
-      | dict_tab_info::IC_NDB_TYPE_LONGVARBINARY
+    attr.type_code,
+    table_props::IC_TYPE_CHAR
+      | table_props::IC_TYPE_BINARY
+      | table_props::IC_TYPE_VARCHAR
+      | table_props::IC_TYPE_VARBINARY
+      | table_props::IC_TYPE_LONGVARCHAR
+      | table_props::IC_TYPE_LONGVARBINARY
   )
 }
 
 /// The bytes of a value, into its place in the row.
 fn put_bytes(
-  attr: &AttributeInfo,
+  attr: &ColumnProps,
   field: &RecordField,
   text: &str,
   row: &mut [u8],
@@ -126,12 +126,12 @@ fn put_bytes(
     return Err(format!(
       "{} is of type {}, which is not given as text",
       attr.name,
-      dict_tab_info::type_name(attr.ext_type)
+      table_props::type_name(attr.type_code)
     ));
   }
-  let head = match attr.array_type {
-    dict_tab_info::IC_ARRAY_TYPE_SHORT_VAR => 1,
-    dict_tab_info::IC_ARRAY_TYPE_MEDIUM_VAR => 2,
+  let head = match attr.array_kind {
+    table_props::IC_ARRAY_KIND_SHORT_VARSIZE => 1,
+    table_props::IC_ARRAY_KIND_LONG_VARSIZE => 2,
     _ => 0,
   };
   if bytes.len() + head > size {
@@ -141,7 +141,7 @@ fn put_bytes(
     // A fixed-size column is kept padded: characters with spaces,
     // bytes with zeros.
     let mut pad: u8 = 0;
-    if attr.ext_type == dict_tab_info::IC_NDB_TYPE_CHAR {
+    if attr.type_code == table_props::IC_TYPE_CHAR {
       pad = b' ';
     }
     row[at..at + size].fill(pad);
@@ -157,7 +157,7 @@ fn put_bytes(
 
 /// An integer that fits the column, as the bits to store.
 fn parse_integer(
-  attr: &AttributeInfo,
+  attr: &ColumnProps,
   text: &str,
   size: usize,
 ) -> Result<u64, String> {
@@ -184,19 +184,19 @@ fn parse_integer(
 }
 
 /// A value's bytes as text.
-fn format_value(attr: &AttributeInfo, bytes: &[u8]) -> String {
+fn format_value(attr: &ColumnProps, bytes: &[u8]) -> String {
   if is_integer(attr) {
     if is_signed(attr) {
       return signed_of(bytes).to_string();
     }
     return unsigned_of(bytes).to_string();
   }
-  match attr.ext_type {
-    dict_tab_info::IC_NDB_TYPE_YEAR => unsigned_of(bytes).to_string(),
-    dict_tab_info::IC_NDB_TYPE_FLOAT if bytes.len() == 4 => {
+  match attr.type_code {
+    table_props::IC_TYPE_YEAR => unsigned_of(bytes).to_string(),
+    table_props::IC_TYPE_FLOAT if bytes.len() == 4 => {
       f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]).to_string()
     }
-    dict_tab_info::IC_NDB_TYPE_DOUBLE if bytes.len() == 8 => {
+    table_props::IC_TYPE_DOUBLE if bytes.len() == 8 => {
       let mut eight = [0u8; 8];
       eight.copy_from_slice(bytes);
       f64::from_le_bytes(eight).to_string()
@@ -206,13 +206,13 @@ fn format_value(attr: &AttributeInfo, bytes: &[u8]) -> String {
 }
 
 /// A character string as text, a binary one as bytes.
-fn string_or_bytes(attr: &AttributeInfo, bytes: &[u8]) -> String {
+fn string_or_bytes(attr: &ColumnProps, bytes: &[u8]) -> String {
   if !is_string(attr) {
     return hex_of(bytes);
   }
-  let head = match attr.array_type {
-    dict_tab_info::IC_ARRAY_TYPE_SHORT_VAR => 1,
-    dict_tab_info::IC_ARRAY_TYPE_MEDIUM_VAR => 2,
+  let head = match attr.array_kind {
+    table_props::IC_ARRAY_KIND_SHORT_VARSIZE => 1,
+    table_props::IC_ARRAY_KIND_LONG_VARSIZE => 2,
     _ => 0,
   };
   if bytes.len() < head {
@@ -269,60 +269,60 @@ fn hex_of(bytes: &[u8]) -> String {
 mod tests {
   use super::*;
   use crate::dict_cache::TableDef;
-  use ic_ndb_signals::dict_tab_info::parse_table_info;
-  use ic_ndb_signals::dict_tab_info::IC_ARRAY_TYPE_SHORT_VAR;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_ARRAY_TYPE;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_END;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_EXT_LENGTH;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_EXT_PRECISION;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_EXT_TYPE;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_ID;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_KEY;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_NAME;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_NULLABLE;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_NO_OF_ATTRIBUTES;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_TABLE_NAME;
-  use ic_ndb_signals::dict_tab_info::IC_NDB_TYPE_CHAR;
-  use ic_ndb_signals::dict_tab_info::IC_NDB_TYPE_DATE;
-  use ic_ndb_signals::dict_tab_info::IC_NDB_TYPE_INT;
-  use ic_ndb_signals::dict_tab_info::IC_NDB_TYPE_TINYINT;
-  use ic_ndb_signals::dict_tab_info::IC_NDB_TYPE_VARCHAR;
-  use ic_ndb_signals::simple_properties::PropertyWriter;
+  use ic_signals::prop_stream::PropertyWriter;
+  use ic_signals::table_props::parse_table_info;
+  use ic_signals::table_props::IC_ARRAY_KIND_SHORT_VARSIZE;
+  use ic_signals::table_props::IC_TP_COLUMN_ARRAY_KIND;
+  use ic_signals::table_props::IC_TP_COLUMN_COUNT;
+  use ic_signals::table_props::IC_TP_COLUMN_END;
+  use ic_signals::table_props::IC_TP_COLUMN_ID;
+  use ic_signals::table_props::IC_TP_COLUMN_IN_KEY;
+  use ic_signals::table_props::IC_TP_COLUMN_LENGTH;
+  use ic_signals::table_props::IC_TP_COLUMN_NAME;
+  use ic_signals::table_props::IC_TP_COLUMN_NULLABLE;
+  use ic_signals::table_props::IC_TP_COLUMN_PRECISION;
+  use ic_signals::table_props::IC_TP_COLUMN_TYPE;
+  use ic_signals::table_props::IC_TP_TABLE_NAME;
+  use ic_signals::table_props::IC_TYPE_CHAR;
+  use ic_signals::table_props::IC_TYPE_DATE;
+  use ic_signals::table_props::IC_TYPE_INT;
+  use ic_signals::table_props::IC_TYPE_TINYINT;
+  use ic_signals::table_props::IC_TYPE_VARCHAR;
   use std::sync::Arc;
 
   /// `id INT` key, `t TINYINT NULL`, `c CHAR(4)`, `v VARCHAR(8) NULL`,
   /// `d DATE NULL`.
   fn table() -> Arc<TableDef> {
     let types = [
-      (IC_NDB_TYPE_INT, 1, true, false, 0, 0),
-      (IC_NDB_TYPE_TINYINT, 1, false, true, 0, 0),
-      (IC_NDB_TYPE_CHAR, 4, false, false, 8, 0),
+      (IC_TYPE_INT, 1, true, false, 0, 0),
+      (IC_TYPE_TINYINT, 1, false, true, 0, 0),
+      (IC_TYPE_CHAR, 4, false, false, 8, 0),
       (
-        IC_NDB_TYPE_VARCHAR,
+        IC_TYPE_VARCHAR,
         8,
         false,
         true,
         8,
-        IC_ARRAY_TYPE_SHORT_VAR,
+        IC_ARRAY_KIND_SHORT_VARSIZE,
       ),
-      (IC_NDB_TYPE_DATE, 1, false, true, 0, 0),
+      (IC_TYPE_DATE, 1, false, true, 0, 0),
     ];
     let names = ["id", "t", "c", "v", "d"];
     let mut w = PropertyWriter::new();
-    w.add_string(IC_DTI_TABLE_NAME, "db/def/t");
-    w.add_u32(IC_DTI_NO_OF_ATTRIBUTES, types.len() as u32);
+    w.add_string(IC_TP_TABLE_NAME, "db/def/t");
+    w.add_u32(IC_TP_COLUMN_COUNT, types.len() as u32);
     let mut i: usize = 0;
     while i < types.len() {
-      let (ext_type, length, key, nullable, charset, array_type) = types[i];
-      w.add_string(IC_DTI_ATTRIBUTE_NAME, names[i]);
-      w.add_u32(IC_DTI_ATTRIBUTE_ID, i as u32);
-      w.add_u32(IC_DTI_ATTRIBUTE_EXT_TYPE, ext_type);
-      w.add_u32(IC_DTI_ATTRIBUTE_EXT_LENGTH, length);
-      w.add_u32(IC_DTI_ATTRIBUTE_KEY, key as u32);
-      w.add_u32(IC_DTI_ATTRIBUTE_NULLABLE, nullable as u32);
-      w.add_u32(IC_DTI_ATTRIBUTE_EXT_PRECISION, charset << 16);
-      w.add_u32(IC_DTI_ATTRIBUTE_ARRAY_TYPE, array_type);
-      w.add_u32(IC_DTI_ATTRIBUTE_END, 0);
+      let (type_code, length, key, nullable, charset, array_kind) = types[i];
+      w.add_string(IC_TP_COLUMN_NAME, names[i]);
+      w.add_u32(IC_TP_COLUMN_ID, i as u32);
+      w.add_u32(IC_TP_COLUMN_TYPE, type_code);
+      w.add_u32(IC_TP_COLUMN_LENGTH, length);
+      w.add_u32(IC_TP_COLUMN_IN_KEY, key as u32);
+      w.add_u32(IC_TP_COLUMN_NULLABLE, nullable as u32);
+      w.add_u32(IC_TP_COLUMN_PRECISION, charset << 16);
+      w.add_u32(IC_TP_COLUMN_ARRAY_KIND, array_kind);
+      w.add_u32(IC_TP_COLUMN_END, 0);
       i += 1;
     }
     let info = parse_table_info(w.words()).expect("parsed");

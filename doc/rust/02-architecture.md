@@ -11,8 +11,8 @@
         │                                    │
         └──────────────► ic_apid ◄───────────┘        Data API
                             │
-                     ic_ndb_signals                   GSNs, blocks, signal codecs
-                            │
+                       ic_signals                     signal numbers, blocks,
+                            │                          signal codecs
                          ic_apic                      config: mgm client, blob decode,
                             │                          typed config for API nodes
                        ic_protocol                    base64, mgm protocol strings
@@ -24,7 +24,7 @@
                          ic_port                      OS + replaces glib
 ```
 
-Each layer only calls the layers below it. `ic_ndb_signals` has no
+Each layer only calls the layers below it. `ic_signals` has no
 dependencies and is the only crate the fuzzers link.
 
 ## Runtime objects (Data API)
@@ -40,7 +40,7 @@ ApidGlobal  (one per process; owns config, node table, threads, pools)
  │                              a node is assigned at connect and stays)
  ├─ ConnectThread[node_id]     (one per node: connect, handshake, retry)
  ├─ SendThreadPool             (small, shared; absorbs send overflow only)
- ├─ HeartbeatThread            (API_REGREQ loop; reads node state, never writes)
+ ├─ HeartbeatThread            (HEARTBEAT_REQ loop; reads node state, never writes)
  ├─ ThreadConnection[thread]   (per user thread: inbound signal queue + condvar)
  ├─ SockBuf                    (page pool for wire data)
  ├─ DictCache                  (TableDef by name, shared by Arc, versioned;
@@ -52,14 +52,14 @@ ApidConnection  (one per user thread; created from ApidGlobal)
  ├─ ObjectMap                  (u32 object id → query / transaction owned by
  │                              this thread; generational, thread-local,
  │                              so late signals are rejected without locks)
- ├─ TcConnect[node_id]         (TC connect records seized by this thread)
+ ├─ CoordRecord[node_id]       (coordinator records allocated by this thread)
  ├─ transaction id counter
  ├─ bound TableDefs
  ├─ queries: defined → sent → completed lists
  └─ iterator state for get_next_executed_query
 
 Transaction  (from ApidConnection::start_transaction)
- ├─ TC node id, TC connect ptr, transaction id (u64)
+ ├─ coordinator node id, coordinator record pointer, transaction id (u64)
  ├─ commit state
  └─ counts: ops sent, ops completed, start/execute/commit flags pending
 
@@ -84,15 +84,15 @@ route; user threads execute.**
   chain under that node's mutex and either wakes the node's send thread
   or, when the adaptive-send decision says so, writes to the socket
   inline. `poll` waits on the thread's `ThreadConnection` condvar for
-  posted signals, then executes them: decodes `TCKEYCONF`/`TCKEYREF`/
-  `TRANSID_AI`/`TC_COMMITCONF`/..., resolves the object id in its own
+  posted signals, then executes them: decodes `KEY_OP_CONF`/`KEY_OP_REF`/
+  `ROW_DATA_REP`/`COMMIT_CONF`/..., resolves the object id in its own
   `ObjectMap`, updates query and transaction state, writes row data into
   the user's row buffer through the `Record`, fires callbacks, and exposes
   completed queries via `get_next_executed_query`.
 - **Receive threads** (dedicated; count set in `GlobalOptions` at connect
   and fixed for the life of the global, default 1; each owns a poll set
   over a subset of node sockets): read into `SockBuf` pages,
-  split the byte stream into signal descriptors, unpack `API_PACKED`
+  split the byte stream into signal descriptors, unpack `BUNDLE`
   bundles into their sub-signals, look at each signal's receiver block
   number, map block number to user thread (block − 0x8000), append the
   descriptor to that thread's queue and signal its condvar. They do
@@ -100,13 +100,13 @@ route; user threads execute.**
   below. (The plan had them run the adaptive-send timers too; as built
   the send pool does that, see there.)
 
-  **The exception: a receive thread executes `API_REGCONF` and
-  `API_REGREF` for the nodes it owns**, rather than routing them. This
+  **The exception: a receive thread executes `HEARTBEAT_CONF` and
+  `HEARTBEAT_REF` for the nodes it owns**, rather than routing them. This
   is what makes node state lock-free, and it is the one place where
   reading signal content in a receive thread pays for itself. See
   "Node state has one writer" below. It also executes the other
-  signals addressed to our cluster manager block rather than to a user
-  thread: `NODE_FAILREP`, `NF_COMPLETEREP`, and `ALTER_TABLE_REP`, the
+  signals addressed to our node-watch block (`NODE_WATCH`) rather than
+  to a user thread: `NODE_LOST_REP`, `NODE_LOST_DONE_REP`, and `TABLE_CHANGED_REP`, the
   dictionary's notice that a table changed, which lets go of the cached
   description under the dictionary cache's lock, holding no other.
   **Signals in pages (decided with the author, 2026-09-23; as built,
@@ -115,7 +115,7 @@ route; user threads execute.**
   C page's atomic. What it routes to a user thread goes into that
   thread's page for the round, which the inbox hands over whole and the
   user thread gives back emptied on its next take. A small signal
-  (`TCKEYCONF`, the parts of `API_PACKED`, a small `TRANSID_AI`) is
+  (`KEY_OP_CONF`, the parts of `BUNDLE`, a small `ROW_DATA_REP`) is
   copied into the thread's page, which keeps its release on one thread;
   a large one, from `ApidGlobal::set_large_signal_words` on (1 KB until
   measured), stays where it lies, and the thread's page holds its
@@ -153,23 +153,23 @@ route; user threads execute.**
   until the deadline ends the wait when it is due rather than when the
   next signal happens to come in.
 - **Heartbeat thread** (one): walks the node table on its schedule and
-  sends `API_REGREQ` to every node that is up. It reads node state and
-  never writes it. It times a node out when the last `API_REGCONF`
+  sends `HEARTBEAT_REQ` to every node that is up. It reads node state and
+  never writes it. It times a node out when the last `HEARTBEAT_CONF`
   timestamp gets too old, by telling that node's receive thread, not by
   changing the state itself. It owns no node list, so it needs no mutex:
   it walks the fixed node array and skips what is not up.
 
   The C instead gives the heartbeat thread its own `ApidConnection` and
-  a mutex-protected linked list of nodes, and routes `API_REGCONF` to it
-  as an ordinary signal (`ic_apid_handle_message_array.ic` registers
-  `execAPI_REGCONF_v0` in the same table user threads use). We move that
+  a mutex-protected linked list of nodes, and routes `HEARTBEAT_CONF` to it
+  as an ordinary signal (`ic_apid_handle_message_array.ic` registers its
+  handler for it in the same table user threads use). We move that
   work to the receive thread for the reason in the next section.
 
 ### Node state has one writer
 
 Every node is assigned to one receive thread at connect and stays there.
 That thread is also the one that sees the socket close. If it also
-executes `API_REGCONF`, then **one thread writes a node's state and
+executes `HEARTBEAT_CONF`, then **one thread writes a node's state and
 nobody else does**, so the state needs no mutex at all. Readers get
 atomics.
 
@@ -180,10 +180,10 @@ The rules that keep it true:
   publishes the state.
 - The **heartbeat thread** and **user threads** only read, through
   atomics: `node_up`, `start_level`, `node_group`, and the timestamp of
-  the last `API_REGCONF`. The full node state blob stays private to the
+  the last `HEARTBEAT_CONF`. The full node state blob stays private to the
   receive thread, because a 16-word structure cannot be read atomically
   and a torn read would be worse than a stale scalar.
-- `NODE_FAILREP` and `NF_COMPLETEREP` name a node other than the one
+- `NODE_LOST_REP` and `NODE_LOST_DONE_REP` name a node other than the one
   whose socket they arrived on, and that node usually belongs to a
   different receive thread. They therefore **must not write link
   state**, or the single-writer rule breaks. The failed node's own
@@ -192,7 +192,7 @@ The rules that keep it true:
 **Membership state is a second, smaller thing, and it is not
 single-writer.** Whether a lost node may be dialled again depends on
 evidence that arrives on any socket: the node's own close, another
-node's `NODE_FAILREP`, another node's `NF_COMPLETEREP`. It is a state
+node's `NODE_LOST_REP`, another node's `NODE_LOST_DONE_REP`. It is a state
 machine of three phases per node, connected, awaiting the takeover
 report, and being dialled, and every transition in it is "the first
 evidence wins and the rest do nothing". That is what compare-and-swap on
@@ -228,18 +228,18 @@ handling in the receive thread does not remove the per-node mutex, since
 that mutex exists for the send chain. It removes the state contention on
 it, which is small in absolute terms: heartbeats go out three times per
 check interval per node, so even 144 nodes on a one second interval
-produce under 450 `API_REGCONF` a second in total.
+produce under 450 `HEARTBEAT_CONF` a second in total.
 
 **Losing a link is not losing a node, and the two are kept apart.**
 Our own evidence, the socket closing or a send failing or the heartbeats
 stopping, says the link is gone. It says nothing about the node, which
-may be up and serving everyone else. Only `NODE_FAILREP` from another
-data node says a node failed. The C handles neither `NODE_FAILREP` nor
-`NF_COMPLETEREP` and treats every closed socket alike, so this is new
+may be up and serving everyone else. Only `NODE_LOST_REP` from another
+data node says a node failed. The C handles neither `NODE_LOST_REP` nor
+`NODE_LOST_DONE_REP` and treats every closed socket alike, so this is new
 work rather than a translation, and the reference for it is the data
-nodes' protocol (`ClusterMgr.cpp`, `QmgrMain.cpp`), not the C.
+nodes' protocol (chapter 05 §4), not the C.
 
-Why this split: the C++ NDB API's receive thread both receives and
+Why this split: the reference API's receive thread both receives and
 executes signals, then wakes the target thread. Under many client threads
 the receive thread becomes the bottleneck and every user thread contends
 on it. Routing only the descriptor to the owning thread keeps the receive
@@ -250,7 +250,7 @@ the whole queue.
 
 Consequences designed in:
 
-- Per-thread `ObjectMap` and per-thread TC connect records mean no shared
+- Per-thread `ObjectMap` and per-thread coordinator records mean no shared
   mutable state on the reply path other than the queue.
 - A `SockBuf` page is refcounted; the last user thread to execute a
   signal on it returns it to the pool (as in the C code).
@@ -345,12 +345,12 @@ Asked for by the author (2026-09-19); built with step 3 for requests
 answered by one signal.
 
 **When a user thread sends a signal, it says which signal numbers it
-expects back.** A `TCSEIZEREQ` expects `TCSEIZECONF` or `TCSEIZEREF`; a
-`GET_TABINFOREQ` expects `GET_TABINFO_CONF` or `GET_TABINFOREF`; a
-`TCKEYREQ` expects `TCKEYCONF`, `TCKEYREF` and `TRANSID_AI`. The
-expectation is recorded with the request's own number (the `senderData`
-or connect pointer the reply echoes) and the node it was sent to, and is
-cleared when a final reply arrives.
+expects back.** A `COORD_ALLOC_REQ` expects `COORD_ALLOC_CONF` or `COORD_ALLOC_REF`; a
+`TABLE_DESC_REQ` expects `TABLE_DESC_CONF` or `TABLE_DESC_REF`; a
+`KEY_OP_REQ` expects `KEY_OP_CONF`, `KEY_OP_REF` and `ROW_DATA_REP`. The
+expectation is recorded with the request's own number (the caller's
+data word, `caller_data`, or the record pointer the reply echoes) and
+the node it was sent to, and is cleared when a final reply arrives.
 
 What it gives, as seen from here:
 
@@ -375,14 +375,14 @@ As built (`ic_apid::apid_conn`):
   the request named, it comes from the node the request went to, and
   its first data word is the request's number. Every reply used so far
   echoes the number there. A request does not always carry it first:
-  `TCRELEASEREQ` leads with the coordinator's record and carries ours
-  third (`DbtcMain.cpp`, `execTCRELEASEREQ`), so the number is given
-  when sending, not read from the request.
-- The first matching reply completes the request. `TCKEYREQ`, answered
+  `COORD_FREE_REQ` leads with the coordinator's record and carries ours
+  third (chapter 05 §6.1), so the number is given when sending, not read
+  from the request.
+- The first matching reply completes the request. `KEY_OP_REQ`, answered
   by several signals, needs the expectation to stay until the final
   one: `expect_several` keeps it until the request is forgotten, and
   `take_replies` hands out what has come. Such an expectation may also
-  take replies from any node, as `TRANSID_AI` comes from the node that
+  take replies from any node, as `ROW_DATA_REP` comes from the node that
   read the row; the loss of the link to the node the request went to
   still ends the wait. The key operation code decides when it is done.
 - Each expectation records the link generation it was sent over. After
@@ -419,18 +419,18 @@ Debug builds check the ordering at every lock (`ic_port::sync`).
    attr_record)`. Per call: fill the key struct, `conn.read_key(query,
    trans, KeyRead, key_row_ptr, attr_row_ptr, mask, cb, user_ref)`.
 2. `read_key`: allocate an object id in the thread's `ObjectMap`; if
-   `trans` has no TC node yet, hash the distribution key from the key row
-   (`hash.rs`), pick the node, seize a TC connect record for this thread on
-   that node if none is cached; build `TCKEYREQ` + KEYINFO + ATTRINFO into
+   `trans` has no coordinator node yet, hash the distribution key from the key row
+   (`hash.rs`), pick the node, allocate a coordinator record for this thread on
+   that node if none is cached; build `KEY_OP_REQ` + KEY_DATA_ORD + COLUMN_DATA_ORD into
    the thread's signal buffer; set start/execute flags as required; move
    the query to "defined".
 3. `send`: append signals to node send chains, set the execute flag on the
    last per node, adaptive-send decision, queries → "sent".
-4. Data node replies with `TCKEYCONF` (packed) and `TRANSID_AI`.
+4. Data node replies with `KEY_OP_CONF` (packed) and `ROW_DATA_REP`.
 5. Receive thread posts both descriptors to this thread's queue.
-6. `poll`: `TRANSID_AI` → decode attribute headers, write values into the
+6. `poll`: `ROW_DATA_REP` → decode attribute headers, write values into the
    attribute row through the `Record` (`row_codec.rs`), record received
-   length; `TCKEYCONF` → record expected length and commit state; when
+   length; `KEY_OP_CONF` → record expected length and commit state; when
    both are known → query complete → callback → "completed".
 7. User iterates `get_next_executed_query`, reads the row struct, resets
    the query.
@@ -438,7 +438,7 @@ Debug builds check the ordering at every lock (`ic_port::sync`).
 As built (`ic_apid::transaction`): the flow above, with the row owned
 by the query (chapter 04, as built). Replies are routed by their first
 word: the coordinator's, about the transaction, through the record
-pointer the transaction was seized on; the reading node's, about the
+pointer the transaction was allocated on; the reading node's, about the
 operation, through the query's id in the object map, both checked
 against the transaction id. `poll` also fails every transaction whose
 coordinator's link has gone since it began, with the link's error; the
@@ -457,29 +457,29 @@ takeover replies of a failed coordinator are still to come.
    because there was none. A data node does nothing special when it
    loses an API link.
 2. **The cluster says the node failed.** A data node sends
-   `NODE_FAILREP` naming it, usually a moment after step 1 and
+   `NODE_LOST_REP` naming it, usually a moment after step 1 and
    sometimes before it. Every surviving node sends one and only the
    first does anything. The link is torn down if it still stood, the
    node's membership state moves to awaiting takeover, and the connect
    thread **stops dialling**. Dialling between steps 1 and 2 did no
    harm, because a dead node refuses the connection.
-3. Each user thread, on its next `poll`, fails every sent query whose TC
+3. Each user thread, on its next `poll`, fails every sent query whose coordinator
    node is the dead node with a temporary node-failure error and completes
-   the transaction as aborted, or as committed if `TCKEY_FAILCONF` says
+   the transaction as aborted, or as committed if `TAKEOVER_CONF` says
    the commit happened. As built: not on this step but on step 4. While
    the node awaits takeover, the transaction waits too, since the
    coordinator that takes over may still answer for it with
-   `TCKEY_FAILCONF` or `TCKEY_FAILREF`; once the failure is reported
+   `TAKEOVER_CONF` or `TAKEOVER_REF`; once the failure is reported
    handled, whatever is still open is rolled back with 4010, or counted
    done if a rollback was what was asked. A link lost with no failure
    reported ends the transaction at once, its outcome unknown.
 4. **A node reported failed is not dialled until its failure is
-   reported handled.** Every surviving data node sends `NF_COMPLETEREP`
+   reported handled.** Every surviving data node sends `NODE_LOST_DONE_REP`
    to every registered API node once all its blocks have finished
    handling the failure. The first to arrive moves the node to being
    dialled, and the connect thread starts. The block field of that
-   report carries the sender's cluster manager reference, not zero, and
-   is ignored; the failed node id is what counts.
+   report carries the sender's membership block reference, not zero,
+   and is ignored; the failed node id is what counts.
 5. If no data node is connected at all, nobody can send that report, so
    every wait ends at once. That state means the whole cluster is gone
    from where we stand, and it is the state the wait exists to make
@@ -506,7 +506,7 @@ takeover replies of a failed coordinator are still to come.
    is usually our own old connection, which the data nodes have not yet
    timed out (seen live; chapter 05, 1.3a). Waiting for it means being
    away for four heartbeat intervals, two minutes on a cluster with a
-   30 second interval, which is what the C++ API amounts to. Taking
+   30 second interval, which is what the reference API amounts to. Taking
    another id has us back in seconds, and with every link lost nothing
    is in flight, so identity is never cheaper to change. The old id
    occupies an API slot until it times out; if a flapping network ever
@@ -531,12 +531,12 @@ node bouncing and step 5 never happens. An earlier revision of this
 chapter said the report "does not gate reconnection". That was wrong,
 and came from reading only the C.
 
-**Where we differ from the C++ API, on purpose.** It treats its own
+**Where we differ from the reference API, on purpose.** It treats its own
 disconnect as a failure report and then waits for a takeover report. For
 a link-only loss that report never comes, since no data node reports a
 takeover for a node that did not fail, and the data node has no handling
 that would resolve it (confirmed with the author of the protocol,
-2026-09-19). In that state the C++ API tends to give applications error
+2026-09-19). In that state the reference API tends to give applications error
 4009, "cluster failure", which it is not. Here step 1 and step 2 are
 separate events with separate errors, `IC_ERROR_LINK_LOST` and
 `IC_ERROR_NODE_DOWN`, and neither is ever presented as the cluster
@@ -556,15 +556,15 @@ gone" is step 5 and nothing else.
 
 ## Configuration source
 
-Stock RonDB only: connectstring → `ndb_mgmd` → `get nodeid`,
+Stock RonDB only: connectstring → the management server → `get nodeid`,
 `get config_v2` → typed structs for the API node itself, the data node
 list and the TCP connection parameters. Everything else in the blob is
 kept as a generic key/value map for diagnostics.
 
 ## Error propagation
 
-Signal-level errors (`TCKEYREF`, `TCROLLBACKREP`, `GET_TABINFOREF`,
-`API_REGREF`) become `IcError { code, category, severity, message }` on the
+Signal-level errors (`KEY_OP_REF`, `TRANS_ABORTED_REP`, `TABLE_DESC_REF`,
+`HEARTBEAT_REF`) become `IcError { code, category, severity, message }` on the
 query or transaction. Node failure flips in-flight queries to a temporary
 error class. Internal errors keep the 7000–7123 iClaustron code space. All
 public functions return `Result`; the C ABI returns the code.

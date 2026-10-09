@@ -19,7 +19,7 @@ add notes for anything specific to that crate.
 | `NULL` pointers | `Option<&T>` / `Option<Box<T>>` | `None` is NULL; the compiler forces you to check before use (`if let Some(x) = opt {}` or `match`). |
 | `enum ic_commit_state { IC_TRANS_STARTED = 0, ... }` | `#[repr(u32)] pub enum CommitState { TransStarted = 0, ... }` | Same values on the wire and in the C ABI. `match` on it must cover all variants (or have a `_ =>` arm). |
 | `union { IC_READ_KEY_QUERY_TYPE r; IC_WRITE_KEY_QUERY_TYPE w; }` with a separate tag | `enum QueryKind { Read(ReadKeyQueryType), Write(WriteKeyQueryType) }` | An enum variant can carry data; it is the tag and the union in one, and the compiler checks the tag. |
-| `#define IC_RNIL 0xFFFFFF00` | `pub const IC_RNIL: u32 = 0xFFFF_FF00;` | Typed constant. Underscores in numbers are ignored. |
+| `#define IC_NULL_PTR 0xFFFFFF00` | `pub const IC_NULL_PTR: u32 = 0xFFFF_FF00;` | Typed constant. Underscores in numbers are ignored. |
 | `static const guint32 x = ...;` in a header | `pub const` | same |
 | `#define IC_MIN(a,b) ((a) < (b) ? (a) : (b))` | `fn` or `a.min(b)` | Function-like macros become ordinary (inlined) functions. |
 | `struct ic_apid_connection_ops { int (*ic_read_key)(IC_APID_CONNECTION*, ...); ... }` and `conn->ops->ic_read_key(conn, ...)` | `impl ApidConnection { pub fn read_key(&mut self, ...) -> Result<(), IcError> }` and `conn.read_key(...)` | The vtable existed to hide the implementation and to group functions with their object. `impl` blocks group functions with their type; private fields hide the implementation. The call is direct, not through a pointer. |
@@ -38,14 +38,14 @@ add notes for anything specific to that crate.
 | `if (!ptr) return IC_ERROR_MEM_ALLOC;` | not needed for `Box`/`Vec` (allocation failure aborts); for pool exhaustion return `Err(IcError::new(IC_ERROR_MEM_ALLOC))` | |
 | `for (i = 0; i < n; i++)` | `for i in 0..n` | `0..n` is the half-open range. `i` is immutable inside the loop. |
 | `while (cond) { }`, `do {} while` | `while cond {}`, `loop { ...; if !cond { break; } }` | `loop` is an infinite loop with `break`. |
-| `switch (gsn) { case GSN_X: ...; break; }` | `match gsn { GSN_X => { ... } _ => { ... } }` | No fall-through; the `_` arm is `default`. |
+| `switch (sig_no) { case SIG_X: ...; break; }` | `match sig_no { SIG_X => { ... } _ => { ... } }` | No fall-through; the `_` arm is `default`. |
 | `void (*cb)(IC_APID_CONNECTION*, void*)` + `void *user_data` | `Option<fn(&mut ApidConnection, &mut ApidQuery, usize)>` + `user_ref: usize` | Plain function pointer, same as C. `usize` is a pointer-sized integer; C callers pass `void*` and the C ABI casts. |
 | `ic_assert(cond)` | `ic_assert!(cond)` | Macros are called with `!`. Compiled out in release builds like the C. |
 | `if (p) { q = strdup(p); } else { q = NULL; }` | `q = p.map(\|v\| v.to_string());` | `Option::map` is "if present, transform it, else stay absent". The `\|v\|` part is a closure, i.e. an inline function taking `v`. |
 | `x = f(); if (!x) x = 0;` | `x = f().unwrap_or(0);` | "the value, or this default if absent". `unwrap_or_default()` uses the type's zero value. |
 | `DEBUG_ENTRY("f"); ... DEBUG_RETURN_INT(ret);` | `let _g = debug_entry!("f");` then plain `return` | The guard prints the entry now and the return when the function exits, whatever path it takes. |
 | `memcpy(dst, src, n)` | `dst[..n].copy_from_slice(&src[..n])` | Bounds-checked copy. |
-| `(guint32*)buf` and `buf32[i]` | `u32::from_ne_bytes(buf[4*i..4*i+4].try_into().unwrap())` or a `&[u32]` obtained once with `bytemuck`-free `unsafe { slice::from_raw_parts }` in the codec crate | Reinterpreting bytes as words is `unsafe` in Rust; the plan confines it to `ic_ndb_signals::header` and `ic_comm::sock_buf`, done once per page, so the rest of the code works on `&[u32]`. |
+| `(guint32*)buf` and `buf32[i]` | `u32::from_ne_bytes(buf[4*i..4*i+4].try_into().unwrap())` or a `&[u32]` obtained once with `bytemuck`-free `unsafe { slice::from_raw_parts }` in the codec crate | Reinterpreting bytes as words is `unsafe` in Rust; the plan confines it to `ic_signals::header` and `ic_comm::sock_buf`, done once per page, so the rest of the code works on `&[u32]`. |
 | bit fields via shifts and masks | identical: `(w >> 8) & 0xFFFF` | Nothing changes; Rust has no bit-field syntax either. |
 | `x = a & b; y = a | b; z = a ^ b; ~a` | same operators, `!a` for bitwise not | `!` on integers is bitwise NOT. |
 
@@ -94,7 +94,7 @@ add notes for anything specific to that crate.
 - **Traits.** Interfaces. The plan allows exactly one: `Transport` (TCP
   now, TLS later). Everything else is concrete types.
 - **`unsafe`.** A block where raw pointers and FFI are allowed. Confined
-  to `ic_port`, `ic_comm::sock_buf`, `ic_ndb_signals::header` and
+  to `ic_port`, `ic_comm::sock_buf`, `ic_signals::header` and
   `ic_capi`; each block has a comment stating why it is sound.
 
 ## Worked example: `ic_bitmap` set/get

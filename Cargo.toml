@@ -6,7 +6,7 @@ members = [
     "crates/ic_comm",
     "crates/ic_protocol",
     "crates/ic_apic",
-    "crates/ic_ndb_signals",
+    "crates/ic_signals",
     "crates/ic_apid",
     "crates/ic_capi",
     "tools/ic_config_dump",
@@ -35,7 +35,7 @@ ic_util = { path = "crates/ic_util" }
 ic_comm = { path = "crates/ic_comm" }
 ic_protocol = { path = "crates/ic_protocol" }
 ic_apic = { path = "crates/ic_apic" }
-ic_ndb_signals = { path = "crates/ic_ndb_signals" }
+ic_signals = { path = "crates/ic_signals" }
 ic_apid = { path = "crates/ic_apid" }
 ic_capi = { path = "crates/ic_capi" }
 

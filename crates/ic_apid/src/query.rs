@@ -23,9 +23,9 @@
 
 use std::sync::Arc;
 
-use ic_ndb_signals::tc_key;
 use ic_port::err;
 use ic_port::IcError;
+use ic_signals::key_ops;
 use ic_util::ptr_array::PtrId;
 
 use crate::apid_conn::ApidConnection;
@@ -168,7 +168,7 @@ pub(crate) struct Execution {
   pub trans_id: u64,
   /// The flags apart from start, execute and commit, which are set when
   /// it is sent.
-  pub flags: tc_key::TcKeyFlags,
+  pub flags: key_ops::KeyOpFlags,
   /// Where its request lies, packed when it was defined, until sent.
   pub staged: crate::apid_conn::Staged,
   /// True for a read, whose row is to be put into the attribute row.
@@ -176,7 +176,7 @@ pub(crate) struct Execution {
   /// When a read was sent, for detecting a replaced reading-node link.
   pub sent_at: ic_port::time::IcTimer,
   /// What the coordinator said the operation would bring, once it has.
-  pub confirmed: Option<tc_key::OperationConf>,
+  pub confirmed: Option<key_ops::KeyOpResult>,
   /// The row, as it has come so far.
   pub row: Vec<u32>,
   /// True once any of the row has come.

@@ -43,19 +43,19 @@ pub struct ApiNodeConfig {
   /// The host the configuration expects us on, if it names one.
   pub host: Option<String>,
   /// Rows per batch in a scan.
-  pub batch_size: u32,
+  pub scan_batch_rows: u32,
   /// Bytes per batch in a scan.
-  pub batch_byte_size: u32,
+  pub scan_batch_bytes: u32,
   /// Largest total size of a scan batch, in bytes.
-  pub max_scan_batch_size: u32,
+  pub scan_batch_bytes_total: u32,
   /// Bytes of send buffer shared across all our links.
-  pub total_send_buffer_memory: u64,
+  pub send_buffer_total: u64,
   /// Whether we reconnect by ourselves after losing a data node.
   pub auto_reconnect: bool,
   /// Our rank as an arbitrator; 0 means we never arbitrate.
-  pub arbitration_rank: u32,
+  pub arbiter_rank: u32,
   /// Hash map buckets a new table gets by default.
-  pub default_hashmap_size: u32,
+  pub hash_map_buckets: u32,
 }
 
 /// A data node we may connect to.
@@ -69,7 +69,7 @@ pub struct DataNodeConfig {
   pub node_group: u32,
   /// How often it expects to hear from us, in milliseconds. Falling
   /// silent for long enough makes it declare us dead.
-  pub api_heartbeat_interval_ms: u32,
+  pub api_heartbeat_ms: u32,
 }
 
 /// A management server we may ask for the configuration.
@@ -102,17 +102,17 @@ pub struct TcpLinkConfig {
   /// Whether every signal carries a checksum.
   pub checksum: bool,
   /// Whether every signal carries an id, for tracing.
-  pub send_signal_id: bool,
+  pub signal_ids: bool,
   /// `TCP_MAXSEG` for the socket, 0 to leave it alone.
-  pub tcp_maxseg_size: u32,
+  pub socket_max_segment: u32,
   /// `SO_RCVBUF` for the socket, 0 to leave it alone.
-  pub tcp_rcv_buf_size: u32,
+  pub socket_recv_buffer: u32,
   /// `SO_SNDBUF` for the socket, 0 to leave it alone.
-  pub tcp_snd_buf_size: u32,
+  pub socket_send_buffer: u32,
   /// Bytes of queued send data before the link counts as overloaded.
-  pub overload_limit: u32,
+  pub overload_bytes: u32,
   /// Whether to use IPv4 only.
-  pub only_ipv4: bool,
+  pub ipv4_only: bool,
   /// Whether the link must use TLS.
   pub require_tls: bool,
 }
@@ -151,7 +151,7 @@ pub struct ClusterConfig {
   /// The links between us and someone else, one per node we talk to.
   pub links: Vec<TcpLinkConfig>,
   /// How many copies of each row the cluster keeps.
-  pub no_of_replicas: u32,
+  pub replica_count: u32,
   /// The configuration as it arrived, for parameters with no field
   /// here and for diagnostics.
   pub blob: ConfigBlob,
@@ -206,45 +206,40 @@ impl ClusterConfig {
     }
     let api = ApiNodeConfig {
       node_id: own_node_id,
-      host: value_string(&blob, &own_section, IC_CFG_NODE_HOST),
-      batch_size: value_u32_or(
+      host: value_string(&blob, &own_section, IC_PARAM_NODE_HOST),
+      scan_batch_rows: value_u32_or(
         &blob,
         &own_section,
-        IC_CFG_BATCH_SIZE,
+        IC_PARAM_SCAN_BATCH_ROWS,
         IC_DEFAULT_BATCH_SIZE,
       ),
-      batch_byte_size: value_u32_or(
+      scan_batch_bytes: value_u32_or(
         &blob,
         &own_section,
-        IC_CFG_BATCH_BYTE_SIZE,
+        IC_PARAM_SCAN_BATCH_BYTES,
         IC_DEFAULT_BATCH_BYTE_SIZE,
       ),
-      max_scan_batch_size: value_u32_or(
+      scan_batch_bytes_total: value_u32_or(
         &blob,
         &own_section,
-        IC_CFG_MAX_SCAN_BATCH_SIZE,
+        IC_PARAM_SCAN_BATCH_BYTES_TOTAL,
         IC_DEFAULT_MAX_SCAN_BATCH_SIZE,
       ),
-      total_send_buffer_memory: blob
-        .value_u64(&own_section, IC_CFG_TOTAL_SEND_BUFFER_MEMORY)
+      send_buffer_total: blob
+        .value_u64(&own_section, IC_PARAM_SEND_BUFFER_TOTAL)
         .unwrap_or(0),
-      auto_reconnect: value_bool(&blob, &own_section, IC_CFG_AUTO_RECONNECT),
-      arbitration_rank: value_u32_or(
+      auto_reconnect: value_bool(&blob, &own_section, IC_PARAM_AUTO_RECONNECT),
+      arbiter_rank: value_u32_or(&blob, &own_section, IC_PARAM_ARBITER_RANK, 0),
+      hash_map_buckets: value_u32_or(
         &blob,
         &own_section,
-        IC_CFG_NODE_ARBIT_RANK,
-        0,
-      ),
-      default_hashmap_size: value_u32_or(
-        &blob,
-        &own_section,
-        IC_CFG_DEFAULT_HASHMAP_SIZE,
+        IC_PARAM_HASH_MAP_BUCKETS,
         IC_DEFAULT_HASHMAP_SIZE,
       ),
     };
     let mut config = ClusterConfig {
       api,
-      no_of_replicas: 0,
+      replica_count: 0,
       ..ClusterConfig::default()
     };
     for section in blob.nodes_of_type(SectionType::DataNode) {
@@ -252,19 +247,19 @@ impl ClusterConfig {
         Some(id) => id,
         None => continue,
       };
-      if config.no_of_replicas == 0 {
-        config.no_of_replicas =
-          value_u32_or(&blob, section, IC_CFG_DB_NO_REPLICAS, 1);
+      if config.replica_count == 0 {
+        config.replica_count =
+          value_u32_or(&blob, section, IC_PARAM_REPLICA_COUNT, 1);
       }
       config.data_nodes.push(DataNodeConfig {
         node_id,
-        host: value_string(&blob, section, IC_CFG_NODE_HOST)
+        host: value_string(&blob, section, IC_PARAM_NODE_HOST)
           .unwrap_or_default(),
-        node_group: value_u32_or(&blob, section, IC_CFG_DB_NODEGROUP, 0),
-        api_heartbeat_interval_ms: value_u32_or(
+        node_group: value_u32_or(&blob, section, IC_PARAM_NODE_GROUP, 0),
+        api_heartbeat_ms: value_u32_or(
           &blob,
           section,
-          IC_CFG_DB_API_HEARTBEAT_INTERVAL,
+          IC_PARAM_API_HEARTBEAT_MS,
           IC_DEFAULT_API_HEARTBEAT_INTERVAL,
         ),
       });
@@ -276,7 +271,7 @@ impl ClusterConfig {
       };
       config.mgm_nodes.push(MgmNodeConfig {
         node_id,
-        host: value_string(&blob, section, IC_CFG_NODE_HOST)
+        host: value_string(&blob, section, IC_PARAM_NODE_HOST)
           .unwrap_or_default(),
       });
     }
@@ -292,11 +287,11 @@ impl ClusterConfig {
         /* Shared memory and RDMA links are not ours to use. */
         continue;
       }
-      let node_1 = match blob.value_u32(section, IC_CFG_CONNECTION_NODE_1) {
+      let node_1 = match blob.value_u32(section, IC_PARAM_LINK_NODE_1) {
         Some(id) => id,
         None => continue,
       };
-      let node_2 = match blob.value_u32(section, IC_CFG_CONNECTION_NODE_2) {
+      let node_2 = match blob.value_u32(section, IC_PARAM_LINK_NODE_2) {
         Some(id) => id,
         None => continue,
       };
@@ -304,22 +299,22 @@ impl ClusterConfig {
         continue;
       }
       let server_node_id =
-        value_u32_or(blob, section, IC_CFG_CONNECTION_NODE_ID_SERVER, node_1);
+        value_u32_or(blob, section, IC_PARAM_LINK_SERVER_NODE, node_1);
       // The address to dial is the one of whichever end listens. Each
       // link may name the hosts itself; otherwise the node's own
       // section says where it runs.
       let host_key = if server_node_id == node_1 {
-        IC_CFG_CONNECTION_HOSTNAME_1
+        IC_PARAM_LINK_HOST_1
       } else {
-        IC_CFG_CONNECTION_HOSTNAME_2
+        IC_PARAM_LINK_HOST_2
       };
       let mut server_host = value_string(blob, section, host_key);
       if server_host.is_none() {
         if let Some(node_section) = blob.node(server_node_id) {
-          server_host = value_string(blob, node_section, IC_CFG_NODE_HOST);
+          server_host = value_string(blob, node_section, IC_PARAM_NODE_HOST);
         }
       }
-      let port = value_u32_or(blob, section, IC_CFG_CONNECTION_SERVER_PORT, 0);
+      let port = value_u32_or(blob, section, IC_PARAM_LINK_PORT, 0);
       links.push(TcpLinkConfig {
         node_1,
         node_2,
@@ -333,42 +328,38 @@ impl ClusterConfig {
         send_buffer_size: value_u32_or(
           blob,
           section,
-          IC_CFG_TCP_SEND_BUFFER_SIZE,
+          IC_PARAM_LINK_SEND_BUFFER,
           0,
         ),
         receive_buffer_size: value_u32_or(
           blob,
           section,
-          IC_CFG_TCP_RECEIVE_BUFFER_SIZE,
+          IC_PARAM_LINK_RECV_BUFFER,
           0,
         ),
-        checksum: value_bool(blob, section, IC_CFG_CONNECTION_CHECKSUM),
-        send_signal_id: value_bool(
+        checksum: value_bool(blob, section, IC_PARAM_LINK_CHECKSUM),
+        signal_ids: value_bool(blob, section, IC_PARAM_LINK_SIGNAL_IDS),
+        socket_max_segment: value_u32_or(
           blob,
           section,
-          IC_CFG_CONNECTION_SEND_SIGNAL_ID,
-        ),
-        tcp_maxseg_size: value_u32_or(blob, section, IC_CFG_TCP_MAXSEG_SIZE, 0),
-        tcp_rcv_buf_size: value_u32_or(
-          blob,
-          section,
-          IC_CFG_TCP_RCV_BUF_SIZE,
+          IC_PARAM_SOCKET_MAX_SEGMENT,
           0,
         ),
-        tcp_snd_buf_size: value_u32_or(
+        socket_recv_buffer: value_u32_or(
           blob,
           section,
-          IC_CFG_TCP_SND_BUF_SIZE,
+          IC_PARAM_SOCKET_RECV_BUFFER,
           0,
         ),
-        overload_limit: value_u32_or(
+        socket_send_buffer: value_u32_or(
           blob,
           section,
-          IC_CFG_CONNECTION_OVERLOAD,
+          IC_PARAM_SOCKET_SEND_BUFFER,
           0,
         ),
-        only_ipv4: value_bool(blob, section, IC_CFG_TCP_ONLY_IPV4),
-        require_tls: value_bool(blob, section, IC_CFG_TCP_REQUIRE_TLS),
+        overload_bytes: value_u32_or(blob, section, IC_PARAM_LINK_OVERLOAD, 0),
+        ipv4_only: value_bool(blob, section, IC_PARAM_LINK_IPV4_ONLY),
+        require_tls: value_bool(blob, section, IC_PARAM_LINK_REQUIRE_TLS),
       });
     }
     links
@@ -406,8 +397,8 @@ impl ClusterConfig {
     let mut shortest = IC_DEFAULT_API_HEARTBEAT_INTERVAL;
     let mut first = true;
     for node in &self.data_nodes {
-      if first || node.api_heartbeat_interval_ms < shortest {
-        shortest = node.api_heartbeat_interval_ms;
+      if first || node.api_heartbeat_ms < shortest {
+        shortest = node.api_heartbeat_ms;
         first = false;
       }
     }
@@ -428,30 +419,30 @@ mod tests {
     b.typed_section(
       SectionType::DataNode,
       &[
-        (IC_CFG_DB_NO_REPLICAS, ConfigValue::Int(2)),
-        (IC_CFG_DB_API_HEARTBEAT_INTERVAL, ConfigValue::Int(1500)),
+        (IC_PARAM_REPLICA_COUNT, ConfigValue::Int(2)),
+        (IC_PARAM_API_HEARTBEAT_MS, ConfigValue::Int(1500)),
       ],
     );
     b.typed_section(
       SectionType::ApiNode,
       &[
-        (IC_CFG_BATCH_SIZE, ConfigValue::Int(256)),
-        (IC_CFG_BATCH_BYTE_SIZE, ConfigValue::Int(16384)),
+        (IC_PARAM_SCAN_BATCH_ROWS, ConfigValue::Int(256)),
+        (IC_PARAM_SCAN_BATCH_BYTES, ConfigValue::Int(16384)),
       ],
     );
     b.typed_section(SectionType::MgmNode, &[]);
     b.typed_section(
       SectionType::Tcp,
-      &[(IC_CFG_TCP_SEND_BUFFER_SIZE, ConfigValue::Int(2097152))],
+      &[(IC_PARAM_LINK_SEND_BUFFER, ConfigValue::Int(2097152))],
     );
     b.typed_section(SectionType::Shm, &[]);
     b.typed_section(SectionType::System, &[]);
     b.typed_section(
       SectionType::DataNode,
       &[
-        (IC_CFG_NODE_ID, ConfigValue::Int(1)),
+        (IC_PARAM_NODE_ID, ConfigValue::Int(1)),
         (
-          IC_CFG_NODE_HOST,
+          IC_PARAM_NODE_HOST,
           ConfigValue::Str("node1.example".to_string()),
         ),
       ],
@@ -459,21 +450,21 @@ mod tests {
     b.typed_section(
       SectionType::DataNode,
       &[
-        (IC_CFG_NODE_ID, ConfigValue::Int(2)),
+        (IC_PARAM_NODE_ID, ConfigValue::Int(2)),
         (
-          IC_CFG_NODE_HOST,
+          IC_PARAM_NODE_HOST,
           ConfigValue::Str("node2.example".to_string()),
         ),
-        (IC_CFG_DB_NODEGROUP, ConfigValue::Int(1)),
-        (IC_CFG_DB_API_HEARTBEAT_INTERVAL, ConfigValue::Int(800)),
+        (IC_PARAM_NODE_GROUP, ConfigValue::Int(1)),
+        (IC_PARAM_API_HEARTBEAT_MS, ConfigValue::Int(800)),
       ],
     );
     b.typed_section(
       SectionType::ApiNode,
       &[
-        (IC_CFG_NODE_ID, ConfigValue::Int(68)),
+        (IC_PARAM_NODE_ID, ConfigValue::Int(68)),
         (
-          IC_CFG_TOTAL_SEND_BUFFER_MEMORY,
+          IC_PARAM_SEND_BUFFER_TOTAL,
           ConfigValue::Int64(8 * 1024 * 1024),
         ),
       ],
@@ -481,9 +472,9 @@ mod tests {
     b.typed_section(
       SectionType::MgmNode,
       &[
-        (IC_CFG_NODE_ID, ConfigValue::Int(65)),
+        (IC_PARAM_NODE_ID, ConfigValue::Int(65)),
         (
-          IC_CFG_NODE_HOST,
+          IC_PARAM_NODE_HOST,
           ConfigValue::Str("mgm.example".to_string()),
         ),
       ],
@@ -493,10 +484,10 @@ mod tests {
     b.typed_section(
       SectionType::Tcp,
       &[
-        (IC_CFG_CONNECTION_NODE_1, ConfigValue::Int(1)),
-        (IC_CFG_CONNECTION_NODE_2, ConfigValue::Int(68)),
-        (IC_CFG_CONNECTION_NODE_ID_SERVER, ConfigValue::Int(1)),
-        (IC_CFG_CONNECTION_SERVER_PORT, ConfigValue::Int(0)),
+        (IC_PARAM_LINK_NODE_1, ConfigValue::Int(1)),
+        (IC_PARAM_LINK_NODE_2, ConfigValue::Int(68)),
+        (IC_PARAM_LINK_SERVER_NODE, ConfigValue::Int(1)),
+        (IC_PARAM_LINK_PORT, ConfigValue::Int(0)),
       ],
     );
     // Our link to data node 2: fixed port, host named on the link,
@@ -504,25 +495,25 @@ mod tests {
     b.typed_section(
       SectionType::Tcp,
       &[
-        (IC_CFG_CONNECTION_NODE_1, ConfigValue::Int(2)),
-        (IC_CFG_CONNECTION_NODE_2, ConfigValue::Int(68)),
-        (IC_CFG_CONNECTION_NODE_ID_SERVER, ConfigValue::Int(2)),
-        (IC_CFG_CONNECTION_SERVER_PORT, ConfigValue::Int(45000)),
+        (IC_PARAM_LINK_NODE_1, ConfigValue::Int(2)),
+        (IC_PARAM_LINK_NODE_2, ConfigValue::Int(68)),
+        (IC_PARAM_LINK_SERVER_NODE, ConfigValue::Int(2)),
+        (IC_PARAM_LINK_PORT, ConfigValue::Int(45000)),
         (
-          IC_CFG_CONNECTION_HOSTNAME_1,
+          IC_PARAM_LINK_HOST_1,
           ConfigValue::Str("10.0.0.2".to_string()),
         ),
-        (IC_CFG_CONNECTION_CHECKSUM, ConfigValue::Int(1)),
-        (IC_CFG_TCP_MAXSEG_SIZE, ConfigValue::Int(61440)),
+        (IC_PARAM_LINK_CHECKSUM, ConfigValue::Int(1)),
+        (IC_PARAM_SOCKET_MAX_SEGMENT, ConfigValue::Int(61440)),
       ],
     );
     /* A link between the two data nodes, which is none of our business. */
     b.typed_section(
       SectionType::Tcp,
       &[
-        (IC_CFG_CONNECTION_NODE_1, ConfigValue::Int(1)),
-        (IC_CFG_CONNECTION_NODE_2, ConfigValue::Int(2)),
-        (IC_CFG_CONNECTION_SERVER_PORT, ConfigValue::Int(44000)),
+        (IC_PARAM_LINK_NODE_1, ConfigValue::Int(1)),
+        (IC_PARAM_LINK_NODE_2, ConfigValue::Int(2)),
+        (IC_PARAM_LINK_PORT, ConfigValue::Int(44000)),
       ],
     );
     ConfigBlob::decode(&b.finish()).expect("decode")
@@ -532,16 +523,16 @@ mod tests {
   fn our_own_settings() {
     let config = ClusterConfig::from_blob(sample(), 68).expect("config");
     assert_eq!(config.api.node_id, 68);
-    assert_eq!(config.api.batch_size, 256);
-    assert_eq!(config.api.batch_byte_size, 16384);
+    assert_eq!(config.api.scan_batch_rows, 256);
+    assert_eq!(config.api.scan_batch_bytes, 16384);
     /* Not stated anywhere, so the fallback applies. */
     assert_eq!(
-      config.api.max_scan_batch_size,
+      config.api.scan_batch_bytes_total,
       IC_DEFAULT_MAX_SCAN_BATCH_SIZE
     );
-    assert_eq!(config.api.total_send_buffer_memory, 8 * 1024 * 1024);
+    assert_eq!(config.api.send_buffer_total, 8 * 1024 * 1024);
     assert_eq!(config.api.host, None);
-    assert_eq!(config.no_of_replicas, 2);
+    assert_eq!(config.replica_count, 2);
   }
 
   #[test]
@@ -551,10 +542,10 @@ mod tests {
     let one = config.data_node(1).expect("node 1");
     assert_eq!(one.host, "node1.example");
     assert_eq!(one.node_group, 0);
-    assert_eq!(one.api_heartbeat_interval_ms, 1500);
+    assert_eq!(one.api_heartbeat_ms, 1500);
     let two = config.data_node(2).expect("node 2");
     assert_eq!(two.node_group, 1);
-    assert_eq!(two.api_heartbeat_interval_ms, 800);
+    assert_eq!(two.api_heartbeat_ms, 800);
     /* The period we must keep is the shortest anyone asks for. */
     assert_eq!(config.heartbeat_interval_ms(), 800);
     assert!(config.data_node(99).is_none());
@@ -583,7 +574,7 @@ mod tests {
     /* The link names the host itself, which wins. */
     assert_eq!(to_two.server_host, "10.0.0.2");
     assert!(to_two.checksum);
-    assert_eq!(to_two.tcp_maxseg_size, 61440);
+    assert_eq!(to_two.socket_max_segment, 61440);
     assert!(config.link_to(99).is_none());
   }
 
@@ -603,7 +594,7 @@ mod tests {
     /* A parameter with no field here is still readable by id. */
     let node = config.blob.node(2).expect("node 2");
     assert_eq!(
-      config.blob.value_str(node, IC_CFG_NODE_HOST),
+      config.blob.value_str(node, IC_PARAM_NODE_HOST),
       Some("node2.example")
     );
   }

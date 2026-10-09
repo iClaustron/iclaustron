@@ -8,8 +8,8 @@
 //! An API node starts knowing only a connectstring. It connects to a
 //! management server, asks for a node id, asks for the configuration,
 //! and from then on knows the cluster. The same connection can later be
-//! turned into a transporter connection, which is how a node reaches a
-//! data node it cannot dial directly.
+//! turned into a signal connection, which is how a node reaches a data
+//! node it cannot dial directly.
 //!
 //! The exchange, each step a request ending in an empty line and a
 //! reply ending in an empty line:
@@ -20,9 +20,9 @@
 //!   get config_v2      ->  the configuration, base64 after the header
 //! ```
 //!
-//! Verified against RonDB 26.10 `src/mgmapi/mgmapi.cpp`: arguments are
-//! written as `name: value` for numbers and `name:"value"` for text,
-//! with no space before the quote, and a line may not exceed 512 bytes.
+//! Arguments are written as `name: value` for numbers and
+//! `name:"value"` for text, with no space before the quote, and a line
+//! may not exceed 512 bytes. Verify: chapter 05 §17.3.
 
 use std::collections::HashMap;
 
@@ -78,14 +78,14 @@ enum Arg<'a> {
 /// The management server's error code for a node id request that was
 /// refused for good: asking again will not change the answer. Every
 /// other refusal may succeed if asked again.
-/// Verify: `mgmapi_error.h`, the alloc node id failures.
+/// Verify: chapter 05 §17.3.
 pub const IC_MGM_ALLOCID_NOT_RETRIABLE: u32 = 1102;
 /// The words with which the management server says an id is held by
 /// another node. The error code does not tell this refusal from "the
 /// cluster is not ready", both being "retry may succeed", so the text
 /// is the only way to know. The server documents that the MySQL server
 /// matches on these texts too, which makes them interface in practice.
-/// Verify: `MgmtSrvr.cpp`, the end of `alloc_node_id_impl`.
+/// Verify: chapter 05 §17.3.
 pub const IC_MGM_TEXT_ID_HELD: &str = "already allocated by another node";
 
 /// What the management server last said when it refused a request, in
@@ -319,7 +319,7 @@ impl MgmClient {
 
   /// Ask for a node id. `wanted_node_id` of 0 lets the server choose;
   /// any other value asks for that one and fails if it is taken or is
-  /// not an API node (`ndb_mgm_alloc_nodeid`).
+  /// not an API node. Verify: chapter 05 §17.3.
   pub fn alloc_node_id(
     &mut self,
     wanted_node_id: u32,
@@ -359,8 +359,7 @@ impl MgmClient {
   }
 
   /// Ask for the cluster configuration as `node_id` sees it, and
-  /// return the decoded blob bytes
-  /// (`ndb_mgm_get_configuration2`).
+  /// return the decoded blob bytes. Verify: chapter 05 §17.3.
   pub fn get_config(&mut self, node_id: u32) -> Result<Vec<u8>, IcError> {
     let _dbg = ic_port::debug_entry!("MgmClient::get_config");
     self.send_request(
@@ -396,8 +395,8 @@ impl MgmClient {
   }
 
   /// Ask for one parameter of the link between two nodes, which is how
-  /// a data node's port is found when the configuration says zero
-  /// (`ndb_mgm_get_connection_int_parameter`).
+  /// a data node's port is found when the configuration says zero.
+  /// Verify: chapter 05 §17.3.
   ///
   /// The answer is signed, and for a port the sign carries meaning: a
   /// negative value is a port the node was given when it started
@@ -425,8 +424,8 @@ impl MgmClient {
   }
 
   /// Hand this connection over to the signal protocol: after this the
-  /// management protocol is finished with it and the transporter
-  /// handshake follows (`ndb_mgm_convert_to_transporter`).
+  /// management protocol is finished with it and the signal protocol's
+  /// handshake follows. Verify: chapter 05 §17.3.
   pub fn into_transporter(self) -> Result<Connection, IcError> {
     line_proto::send_line(&self.conn, IC_CMD_TRANSPORTER_CONNECT)?;
     line_proto::send_empty_line(&self.conn)?;
@@ -508,11 +507,11 @@ mod tests {
     let mut b = BlobBuilder::new(1, 1, 1, 1);
     b.typed_section(
       SectionType::DataNode,
-      &[(IC_CFG_DB_NO_REPLICAS, ConfigValue::Int(1))],
+      &[(IC_PARAM_REPLICA_COUNT, ConfigValue::Int(1))],
     );
     b.typed_section(
       SectionType::ApiNode,
-      &[(IC_CFG_BATCH_SIZE, ConfigValue::Int(64))],
+      &[(IC_PARAM_SCAN_BATCH_ROWS, ConfigValue::Int(64))],
     );
     b.typed_section(SectionType::MgmNode, &[]);
     b.typed_section(SectionType::Tcp, &[]);
@@ -521,25 +520,28 @@ mod tests {
     b.typed_section(
       SectionType::DataNode,
       &[
-        (IC_CFG_NODE_ID, ConfigValue::Int(1)),
-        (IC_CFG_NODE_HOST, ConfigValue::Str("127.0.0.1".to_string())),
+        (IC_PARAM_NODE_ID, ConfigValue::Int(1)),
+        (
+          IC_PARAM_NODE_HOST,
+          ConfigValue::Str("127.0.0.1".to_string()),
+        ),
       ],
     );
     b.typed_section(
       SectionType::ApiNode,
-      &[(IC_CFG_NODE_ID, ConfigValue::Int(68))],
+      &[(IC_PARAM_NODE_ID, ConfigValue::Int(68))],
     );
     b.typed_section(
       SectionType::MgmNode,
-      &[(IC_CFG_NODE_ID, ConfigValue::Int(65))],
+      &[(IC_PARAM_NODE_ID, ConfigValue::Int(65))],
     );
     b.typed_section(
       SectionType::Tcp,
       &[
-        (IC_CFG_CONNECTION_NODE_1, ConfigValue::Int(1)),
-        (IC_CFG_CONNECTION_NODE_2, ConfigValue::Int(68)),
-        (IC_CFG_CONNECTION_NODE_ID_SERVER, ConfigValue::Int(1)),
-        (IC_CFG_CONNECTION_SERVER_PORT, ConfigValue::Int(0)),
+        (IC_PARAM_LINK_NODE_1, ConfigValue::Int(1)),
+        (IC_PARAM_LINK_NODE_2, ConfigValue::Int(68)),
+        (IC_PARAM_LINK_SERVER_NODE, ConfigValue::Int(1)),
+        (IC_PARAM_LINK_PORT, ConfigValue::Int(0)),
       ],
     );
     b.finish()
@@ -633,7 +635,7 @@ mod tests {
     let (config, client) =
       fetch_configuration(&cs, 5000, Some("test")).expect("fetch");
     assert_eq!(config.api.node_id, 68);
-    assert_eq!(config.api.batch_size, 64);
+    assert_eq!(config.api.scan_batch_rows, 64);
     assert_eq!(config.data_nodes.len(), 1);
     assert_eq!(config.data_nodes[0].node_id, 1);
     assert_eq!(config.data_nodes[0].host, "127.0.0.1");

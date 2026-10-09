@@ -9,7 +9,7 @@ node's transporter port, which containers usually do not expose.
 
 Source: `/Users/mikael/mysql_trees/rondb_2604_main`.
 
-```
+```sh
 cd /Users/mikael/mysql_trees/rondb_2604_main
 mkdir -p build && cd build
 cmake .. -DWITH_NDB=1 -DWITH_RDRS=0 -DWITH_ROUTER=0 -DWITH_UNIT_TESTS=0 \
@@ -17,14 +17,16 @@ cmake .. -DWITH_NDB=1 -DWITH_RDRS=0 -DWITH_ROUTER=0 -DWITH_UNIT_TESTS=0 \
 make -j8
 ```
 
-Binaries land in `build/bin` (`ndb_mgmd`, `ndbmtd`, `mysqld`, `ndb_mgm`,
-`ndb_desc`, `ndb_config`, `mysql`).
+Binaries land in `build/bin`: the management server, the data node,
+the MySQL server, the management client, the reference's table
+description tool, its configuration query tool, and the `mysql` client.
+The commands below name each by its file name.
 
 ### A.1 Minimal cluster: 1 management server, 2 data nodes, 1 MySQL server
 
 Create a data directory, e.g. `~/rondb-dev`, with this `config.ini`:
 
-```
+```ini
 [ndbd default]
 NoOfReplicas=2
 DataMemory=512M
@@ -62,7 +64,7 @@ NodeId=71
 
 Start order (paths abbreviated; `BIN=/Users/mikael/mysql_trees/rondb_2604_main/build/bin`):
 
-```
+```sh
 mkdir -p ~/rondb-dev/{mgmd,ndbd1,ndbd2,mysqld}
 $BIN/ndb_mgmd -f ~/rondb-dev/config.ini --configdir=$HOME/rondb-dev/mgmd --initial
 $BIN/ndbmtd -c localhost:1186 --ndb-nodeid=1 --initial
@@ -75,12 +77,17 @@ $BIN/mysqld --datadir=$HOME/rondb-dev/mysqld --ndbcluster \
 $BIN/mysql -uroot -S /tmp/rondb-dev.sock -e "CREATE DATABASE IF NOT EXISTS test"
 ```
 
-`--initial` only on the first start. Stop with `$BIN/ndb_mgm -e shutdown`
-and `mysqladmin -uroot -S /tmp/rondb-dev.sock shutdown`.
+`--initial` only on the first start. To stop the cluster and the MySQL
+server:
+
+```sh
+$BIN/ndb_mgm -e shutdown
+mysqladmin -uroot -S /tmp/rondb-dev.sock shutdown
+```
 
 ### A.2 Running the integration tests against it
 
-```
+```sh
 export IC_TEST_CONNECTSTRING=localhost:1186
 export IC_TEST_MYSQL="$BIN/mysql -uroot -S /tmp/rondb-dev.sock"
 export IC_TEST_NDB_MGM="$BIN/ndb_mgm -c localhost:1186"
@@ -96,7 +103,7 @@ starts it again, which takes as long as the node takes to come back.
 
 The connectstring for iClaustron is then `localhost:1186`:
 
-```
+```sh
 export IC_TEST_CONNECTSTRING=localhost:1186
 cargo xtask test-integration
 cargo run -p ic_config_dump -- localhost:1186     # from Phase 2
@@ -107,7 +114,7 @@ socket path from `IC_TEST_MYSQL_SOCKET` (default `/tmp/rondb-dev.sock`).
 
 ### A.2 Alternative: let MTR start a cluster
 
-```
+```sh
 cd /Users/mikael/mysql_trees/rondb_2604_main/mysql-test
 ./mtr --start ndb.ndb_basic
 ```
@@ -122,12 +129,13 @@ MTR's configuration has a few spare `[api]` slots. Stop with Ctrl-C.
 official `rondb-docker` compose setup and exposes MySQL on 3306. For the
 API node to work the management port (1186) **and** each data node's
 transporter port must be reachable from the host, and the data nodes'
-`HostName`s in the served configuration must resolve from the host. Check
-the compose file before relying on this; use A when in doubt.
+host names in the served configuration (parameter 5, our `host`) must
+resolve from the host. Check the compose file before relying on this;
+use A when in doubt.
 
 ## Useful commands during development
 
-```
+```sh
 $BIN/ndb_mgm -e show                        # node states
 $BIN/ndb_mgm -e "2 RESTART"                 # restart one data node (failure tests)
 $BIN/ndb_mgm -e "all report memory"

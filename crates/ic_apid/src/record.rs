@@ -27,9 +27,7 @@
 //! exists and is not a blob, no field comes twice, every value and null
 //! bit lies inside the row, and no two of them share a bit. A nullable
 //! field must have a null bit. A NOT NULL field's null bit is not used,
-//! so it is not checked. Verify: `NdbDictionaryImpl.cpp`,
-//! `validateRecordSpec`; `NdbDictionary.cpp`,
-//! `Column::getSizeInBytesForRecord`.
+//! so it is not checked. Verify: chapter 05 §17.13.
 //!
 //! **The default record** puts the null bits first, eight to a byte in
 //! attribute order, then every field in attribute order, each starting
@@ -39,19 +37,17 @@
 //! from word to word. Eight-byte integers and doubles go on an 8-byte
 //! boundary, where a C compiler puts them, so that the row can be
 //! written as a C struct. The reference's default record packs the
-//! fields with no padding (`createDefaultNdbRecord`). Verify:
-//! `AttributeHeader.hpp`, `getDataSize`; `DbtupRoutines.cpp`, where a
-//! fixed-size column is read at a word offset.
+//! fields with no padding. Verify: chapter 05 §17.13.
 //!
 //! A record holds the version of the table it was made for, whose
 //! columns it describes.
 
 use std::sync::Arc;
 
-use ic_ndb_signals::dict_tab_info;
-use ic_ndb_signals::dict_tab_info::AttributeInfo;
 use ic_port::err;
 use ic_port::IcError;
+use ic_signals::table_props;
+use ic_signals::table_props::ColumnProps;
 
 use crate::dict_cache::TableDef;
 
@@ -117,7 +113,7 @@ impl RecordField {
     self.field_id
   }
 
-  /// Its type, one of the `IC_NDB_TYPE_*` values.
+  /// Its type, one of the `IC_TYPE_*` values.
   pub fn field_type(&self) -> u32 {
     self.field_type
   }
@@ -226,7 +222,7 @@ impl Record {
       }
       fields.push(RecordField {
         field_id: one.field_id,
-        field_type: attr.ext_type,
+        field_type: attr.type_code,
         offset: one.offset,
         size: attr.max_byte_size(),
         null_byte_offset,
@@ -251,7 +247,7 @@ impl Record {
     table: &Arc<TableDef>,
     field_ids: Option<&[u32]>,
   ) -> Result<Record, IcError> {
-    let mut attrs: Vec<&AttributeInfo> = Vec::new();
+    let mut attrs: Vec<&ColumnProps> = Vec::new();
     match field_ids {
       Some(ids) => {
         for id in ids {
@@ -280,7 +276,7 @@ impl Record {
     let mut spec: Vec<FieldSpec> = Vec::with_capacity(attrs.len());
     for attr in &attrs {
       offset = offset.next_multiple_of(field_alignment(attr));
-      let mut one = FieldSpec::not_null(attr.attribute_id, offset);
+      let mut one = FieldSpec::not_null(attr.column_id, offset);
       if attr.nullable {
         one.null_byte_offset = next_null / 8;
         one.null_bit = next_null % 8;
@@ -326,7 +322,7 @@ impl Record {
   /// needs.
   pub fn covers_primary_key(&self) -> bool {
     for attr in &self.table.info().attributes {
-      if attr.primary_key && self.position_of(attr.attribute_id).is_none() {
+      if attr.primary_key && self.position_of(attr.column_id).is_none() {
         return false;
       }
     }
@@ -378,20 +374,20 @@ impl Record {
   }
 }
 
-fn is_blob(attr: &AttributeInfo) -> bool {
-  attr.ext_type == dict_tab_info::IC_NDB_TYPE_BLOB
-    || attr.ext_type == dict_tab_info::IC_NDB_TYPE_TEXT
+fn is_blob(attr: &ColumnProps) -> bool {
+  attr.type_code == table_props::IC_TYPE_BLOB
+    || attr.type_code == table_props::IC_TYPE_TEXT
 }
 
 /// Where a field of the default record may start: on a word, as the
 /// data node keeps it, or on eight bytes for the eight-byte integers and
 /// doubles a C compiler puts there.
-fn field_alignment(attr: &AttributeInfo) -> u32 {
-  match attr.ext_type {
-    dict_tab_info::IC_NDB_TYPE_BIGINT
-    | dict_tab_info::IC_NDB_TYPE_BIGUNSIGNED
-    | dict_tab_info::IC_NDB_TYPE_DOUBLE
-    | dict_tab_info::IC_NDB_TYPE_DATETIME => 8,
+fn field_alignment(attr: &ColumnProps) -> u32 {
+  match attr.type_code {
+    table_props::IC_TYPE_BIGINT
+    | table_props::IC_TYPE_BIGUNSIGNED
+    | table_props::IC_TYPE_DOUBLE
+    | table_props::IC_TYPE_DATETIME => 8,
     _ => 4,
   }
 }
@@ -436,27 +432,27 @@ fn check_layout(fields: &[RecordField], row_size: u32) -> Result<(), IcError> {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use ic_ndb_signals::dict_tab_info::parse_table_info;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_END;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_EXT_LENGTH;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_EXT_PRECISION;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_EXT_TYPE;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_ID;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_KEY;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_NAME;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_ATTRIBUTE_NULLABLE;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_NO_OF_ATTRIBUTES;
-  use ic_ndb_signals::dict_tab_info::IC_DTI_TABLE_NAME;
-  use ic_ndb_signals::dict_tab_info::IC_NDB_TYPE_BIGINT;
-  use ic_ndb_signals::dict_tab_info::IC_NDB_TYPE_BLOB;
-  use ic_ndb_signals::dict_tab_info::IC_NDB_TYPE_CHAR;
-  use ic_ndb_signals::dict_tab_info::IC_NDB_TYPE_INT;
-  use ic_ndb_signals::dict_tab_info::IC_NDB_TYPE_VARCHAR;
-  use ic_ndb_signals::simple_properties::PropertyWriter;
+  use ic_signals::prop_stream::PropertyWriter;
+  use ic_signals::table_props::parse_table_info;
+  use ic_signals::table_props::IC_TP_COLUMN_COUNT;
+  use ic_signals::table_props::IC_TP_COLUMN_END;
+  use ic_signals::table_props::IC_TP_COLUMN_ID;
+  use ic_signals::table_props::IC_TP_COLUMN_IN_KEY;
+  use ic_signals::table_props::IC_TP_COLUMN_LENGTH;
+  use ic_signals::table_props::IC_TP_COLUMN_NAME;
+  use ic_signals::table_props::IC_TP_COLUMN_NULLABLE;
+  use ic_signals::table_props::IC_TP_COLUMN_PRECISION;
+  use ic_signals::table_props::IC_TP_COLUMN_TYPE;
+  use ic_signals::table_props::IC_TP_TABLE_NAME;
+  use ic_signals::table_props::IC_TYPE_BIGINT;
+  use ic_signals::table_props::IC_TYPE_BLOB;
+  use ic_signals::table_props::IC_TYPE_CHAR;
+  use ic_signals::table_props::IC_TYPE_INT;
+  use ic_signals::table_props::IC_TYPE_VARCHAR;
 
   struct Column {
     name: &'static str,
-    ext_type: u32,
+    type_code: u32,
     length: u32,
     key: bool,
     nullable: bool,
@@ -466,7 +462,7 @@ mod tests {
   const COLUMNS: [Column; 6] = [
     Column {
       name: "id",
-      ext_type: IC_NDB_TYPE_INT,
+      type_code: IC_TYPE_INT,
       length: 1,
       key: true,
       nullable: false,
@@ -474,7 +470,7 @@ mod tests {
     },
     Column {
       name: "b",
-      ext_type: IC_NDB_TYPE_INT,
+      type_code: IC_TYPE_INT,
       length: 1,
       key: false,
       nullable: true,
@@ -482,7 +478,7 @@ mod tests {
     },
     Column {
       name: "name",
-      ext_type: IC_NDB_TYPE_VARCHAR,
+      type_code: IC_TYPE_VARCHAR,
       length: 20,
       key: false,
       nullable: false,
@@ -490,7 +486,7 @@ mod tests {
     },
     Column {
       name: "big",
-      ext_type: IC_NDB_TYPE_BIGINT,
+      type_code: IC_TYPE_BIGINT,
       length: 1,
       key: false,
       nullable: true,
@@ -498,7 +494,7 @@ mod tests {
     },
     Column {
       name: "doc",
-      ext_type: IC_NDB_TYPE_BLOB,
+      type_code: IC_TYPE_BLOB,
       length: 1,
       key: false,
       nullable: true,
@@ -506,7 +502,7 @@ mod tests {
     },
     Column {
       name: "tag",
-      ext_type: IC_NDB_TYPE_CHAR,
+      type_code: IC_TYPE_CHAR,
       length: 3,
       key: false,
       nullable: false,
@@ -518,19 +514,19 @@ mod tests {
   /// `doc BLOB`, `tag CHAR(3)`.
   fn table() -> Arc<TableDef> {
     let mut w = PropertyWriter::new();
-    w.add_string(IC_DTI_TABLE_NAME, "db/def/t1");
-    w.add_u32(IC_DTI_NO_OF_ATTRIBUTES, COLUMNS.len() as u32);
+    w.add_string(IC_TP_TABLE_NAME, "db/def/t1");
+    w.add_u32(IC_TP_COLUMN_COUNT, COLUMNS.len() as u32);
     let mut id: usize = 0;
     while id < COLUMNS.len() {
       let column = &COLUMNS[id];
-      w.add_string(IC_DTI_ATTRIBUTE_NAME, column.name);
-      w.add_u32(IC_DTI_ATTRIBUTE_ID, id as u32);
-      w.add_u32(IC_DTI_ATTRIBUTE_EXT_TYPE, column.ext_type);
-      w.add_u32(IC_DTI_ATTRIBUTE_EXT_LENGTH, column.length);
-      w.add_u32(IC_DTI_ATTRIBUTE_KEY, column.key as u32);
-      w.add_u32(IC_DTI_ATTRIBUTE_NULLABLE, column.nullable as u32);
-      w.add_u32(IC_DTI_ATTRIBUTE_EXT_PRECISION, column.charset << 16);
-      w.add_u32(IC_DTI_ATTRIBUTE_END, 0);
+      w.add_string(IC_TP_COLUMN_NAME, column.name);
+      w.add_u32(IC_TP_COLUMN_ID, id as u32);
+      w.add_u32(IC_TP_COLUMN_TYPE, column.type_code);
+      w.add_u32(IC_TP_COLUMN_LENGTH, column.length);
+      w.add_u32(IC_TP_COLUMN_IN_KEY, column.key as u32);
+      w.add_u32(IC_TP_COLUMN_NULLABLE, column.nullable as u32);
+      w.add_u32(IC_TP_COLUMN_PRECISION, column.charset << 16);
+      w.add_u32(IC_TP_COLUMN_END, 0);
       id += 1;
     }
     let info = parse_table_info(w.words()).expect("parsed");

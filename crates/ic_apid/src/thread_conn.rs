@@ -10,7 +10,7 @@
 //! execute signals. It reads them, looks at the block each is addressed
 //! to, and puts it in the inbox of the user thread that owns that block.
 //! The user thread executes it in its own time and on its own core. The
-//! C++ API executes in the receive thread and then wakes the user
+//! reference API executes in the receive thread and then wakes the user
 //! thread, which makes the receive thread the bottleneck once there are
 //! many user threads.
 //!
@@ -78,7 +78,6 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use ic_ndb_signals::blocks;
 use ic_port::consts::IC_MAX_THREAD_CONNECTIONS;
 use ic_port::debug::IC_NDB_MESSAGE_LEVEL;
 use ic_port::err;
@@ -87,6 +86,7 @@ use ic_port::sync::IcMutex;
 use ic_port::sync::IC_MUTEX_LEVEL_GLOBAL;
 use ic_port::sync::IC_MUTEX_LEVEL_THREAD_CONN;
 use ic_port::IcError;
+use ic_signals::blocks;
 
 use crate::node_connect::ReceivedSignal;
 use crate::node_connect::SignalView;
@@ -98,7 +98,8 @@ use crate::signal_reader::ReceivePage;
 // A user thread's block number is the first API block number plus its
 // thread id, so the ids have to fit in what is left of sixteen bits.
 const _: () = assert!(
-  IC_MAX_THREAD_CONNECTIONS <= (0x10000 - blocks::IC_MIN_API_BLOCK_NO as u32)
+  IC_MAX_THREAD_CONNECTIONS
+    <= (0x10000 - blocks::IC_FIRST_USER_THREAD_BLOCK as u32)
 );
 
 /// Emptied pages an inbox keeps for its receive threads to fill; one
@@ -447,7 +448,7 @@ impl Router {
   ///
   /// A signal that is not for a user thread is handed back, because it
   /// is for one of our fixed blocks and the caller executes those
-  /// itself: `API_REGCONF` and its kind, which describe the node they
+  /// itself: `HEARTBEAT_CONF` and its kind, which describe the node they
   /// came from, belong to the receive thread that owns that node.
   pub fn route(&mut self, signal: ReceivedSignal) -> Option<ReceivedSignal> {
     if self.route_view(&signal.view()) {
@@ -521,7 +522,7 @@ impl Router {
         IC_NDB_MESSAGE_LEVEL,
         "Dropped signal {} from node {} for block {:#06x}, which nobody \
          owns",
-        signal.gsn,
+        signal.sig_no,
         signal.sender_node_id,
         signal.receiver_block
       );
@@ -563,9 +564,9 @@ mod tests {
   use super::*;
   use std::thread;
 
-  fn signal_for(conn: &ThreadConnection, gsn: u16) -> ReceivedSignal {
+  fn signal_for(conn: &ThreadConnection, sig_no: u16) -> ReceivedSignal {
     ReceivedSignal {
-      gsn,
+      sig_no,
       receiver_block: conn.block_number(),
       sender_node_id: 2,
       ..ReceivedSignal::default()
@@ -579,8 +580,11 @@ mod tests {
     let second = table.allocate().expect("second");
     assert_eq!(first.thread_id(), 0);
     assert_eq!(second.thread_id(), 1);
-    assert_eq!(first.block_number(), blocks::IC_MIN_API_BLOCK_NO);
-    assert_eq!(second.block_number(), blocks::IC_MIN_API_BLOCK_NO + 1);
+    assert_eq!(first.block_number(), blocks::IC_FIRST_USER_THREAD_BLOCK);
+    assert_eq!(
+      second.block_number(),
+      blocks::IC_FIRST_USER_THREAD_BLOCK + 1
+    );
   }
 
   #[test]
@@ -637,11 +641,11 @@ mod tests {
     let got = first.take(0);
     assert_eq!(got.len(), 2);
     // In the order they arrived, which the protocol relies on.
-    assert_eq!(got[0].gsn, 10);
-    assert_eq!(got[1].gsn, 12);
+    assert_eq!(got[0].sig_no, 10);
+    assert_eq!(got[1].sig_no, 12);
     let got = second.take(0);
     assert_eq!(got.len(), 1);
-    assert_eq!(got[0].gsn, 11);
+    assert_eq!(got[0].sig_no, 11);
     // Taking empties the inbox.
     assert!(first.take(0).is_empty());
   }
@@ -652,12 +656,12 @@ mod tests {
     let table = Arc::new(ThreadTable::new());
     let mut router = Router::new(Arc::clone(&table));
     let signal = ReceivedSignal {
-      gsn: 1,
-      receiver_block: blocks::IC_BLOCK_API_CLUSTERMGR,
+      sig_no: 1,
+      receiver_block: blocks::IC_BLOCK_NODE_WATCH,
       ..ReceivedSignal::default()
     };
     let back = router.route(signal).expect("handed back");
-    assert_eq!(back.gsn, 1);
+    assert_eq!(back.sig_no, 1);
     assert_eq!(table.unroutable(), 0);
   }
 
@@ -666,8 +670,8 @@ mod tests {
     let table = Arc::new(ThreadTable::new());
     let mut router = Router::new(Arc::clone(&table));
     let signal = ReceivedSignal {
-      gsn: 10,
-      receiver_block: blocks::IC_MIN_API_BLOCK_NO + 7,
+      sig_no: 10,
+      receiver_block: blocks::IC_FIRST_USER_THREAD_BLOCK + 7,
       ..ReceivedSignal::default()
     };
     assert!(router.route(signal).is_none());
@@ -778,8 +782,8 @@ mod tests {
         while round < 100 {
           let mut i: u16 = 0;
           while i < 10 {
-            let gsn = p * 1000 + round;
-            assert!(router.route(signal_for(&conn, gsn)).is_none());
+            let sig_no = p * 1000 + round;
+            assert!(router.route(signal_for(&conn, sig_no)).is_none());
             i += 1;
           }
           router.post_all();

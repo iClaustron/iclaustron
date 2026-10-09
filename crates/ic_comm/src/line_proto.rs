@@ -5,10 +5,10 @@
 //! The line-oriented management protocol
 //! (`legacy-c/comm/ic_protocol_support.c`).
 //!
-//! Every exchange with `ndb_mgmd` is lines ending in a newline, with an
-//! empty line marking the end of a request or a reply and handing the
-//! turn to the other side. A request looks like this, with the blank
-//! line at the end:
+//! Every exchange with the management server is lines ending in a
+//! newline, with an empty line marking the end of a request or a reply
+//! and handing the turn to the other side. A request looks like this,
+//! with the blank line at the end:
 //!
 //! ```text
 //!   get nodeid

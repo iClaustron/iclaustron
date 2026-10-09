@@ -6,8 +6,8 @@
 //!
 //! This format has not changed since NDB 7.2, so the C framing in
 //! `legacy-c/api/ic_apid_send_message.ic` is a sound reference for it,
-//! cross-checked here against RonDB 26.10's `Protocol6`
-//! (`src/common/transporter/TransporterInternalDefinitions.hpp:54`).
+//! cross-checked here against RonDB 26.10's framing.
+//! Verify: chapter 05 §17.6.
 //!
 //! A message is a run of 32-bit words:
 //!
@@ -32,21 +32,21 @@ use ic_port::err;
 use ic_port::IcError;
 
 /// Words of signal data a message may carry. Anything longer travels in
-/// a section. Verify: `NdbApiSignal.hpp:80`, `MaxSignalWords`.
+/// a section. Verify: chapter 05 §17.6.
 pub const IC_MAX_SIGNAL_DATA_WORDS: usize = 25;
 /// Sections a message may carry.
 pub const IC_MAX_SECTIONS: usize = 3;
 /// Words of header before the optional signal id.
 pub const IC_SIGNAL_HEADER_WORDS: usize = 3;
 /// Largest message in bytes, in either direction.
-/// Verify: `TransporterDefinitions.hpp:85`.
+/// Verify: chapter 05 §17.6.
 pub const IC_MAX_MESSAGE_BYTES: usize = 32768;
 /// Largest message in words.
 pub const IC_MAX_MESSAGE_WORDS: usize = IC_MAX_MESSAGE_BYTES / 4;
 
 // Word 1.
 const WORD1_BYTEORDER_MASK: u32 = 0x8100_0081;
-const WORD1_FRAG_INF_MASK: u32 = 0x0000_0002;
+const WORD1_FRAG_HIGH_MASK: u32 = 0x0000_0002;
 const WORD1_SIGNALID_MASK: u32 = 0x0000_0004;
 const WORD1_COMPRESSED_MASK: u32 = 0x0000_0008;
 const WORD1_CHECKSUM_MASK: u32 = 0x0000_0010;
@@ -54,13 +54,13 @@ const WORD1_PRIO_MASK: u32 = 0x0000_0060;
 const WORD1_PRIO_SHIFT: u32 = 5;
 const WORD1_MESSAGELEN_MASK: u32 = 0x00FF_FF00;
 const WORD1_MESSAGELEN_SHIFT: u32 = 8;
-const WORD1_FRAG_INF2_MASK: u32 = 0x0200_0000;
-const WORD1_FRAG_INF2_SHIFT: u32 = 25;
+const WORD1_FRAG_LOW_MASK: u32 = 0x0200_0000;
+const WORD1_FRAG_LOW_SHIFT: u32 = 25;
 const WORD1_SIGNAL_LEN_MASK: u32 = 0x7C00_0000;
 const WORD1_SIGNAL_LEN_SHIFT: u32 = 26;
 
 // Word 2.
-const WORD2_VERID_GSN_MASK: u32 = 0x000F_FFFF;
+const WORD2_VERID_SIG_MASK: u32 = 0x000F_FFFF;
 const WORD2_TRACE_MASK: u32 = 0x03F0_0000;
 const WORD2_TRACE_SHIFT: u32 = 20;
 const WORD2_SEC_COUNT_MASK: u32 = 0x0C00_0000;
@@ -72,15 +72,16 @@ const WORD3_RECEIVER_MASK: u32 = 0xFFFF_0000;
 const WORD3_RECEIVER_SHIFT: u32 = 16;
 
 /// Byte order value for a big endian machine.
-/// Verify: `Packer.hpp:32`, `MY_OWN_BYTE_ORDER`.
+/// Verify: chapter 05 §17.6.
 pub const IC_BYTE_ORDER_BIG: u32 = 1;
 /// Byte order value for a little endian machine.
 pub const IC_BYTE_ORDER_LITTLE: u32 = 0;
 
 /// This machine's byte order, as the header records it.
 ///
-/// Note that the comment above `Protocol6` in the RonDB sources has
-/// these two the wrong way round; `Packer.hpp` is what the code does.
+/// Note that the RonDB comment that describes the header words has
+/// these two the wrong way round; the code that writes the bit is what
+/// counts. Verify: chapter 05 §17.6.
 pub fn own_byte_order() -> u32 {
   if cfg!(target_endian = "big") {
     IC_BYTE_ORDER_BIG
@@ -93,7 +94,7 @@ pub fn own_byte_order() -> u32 {
 /// one larger message.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[repr(u8)]
-pub enum FragmentInfo {
+pub enum FragmentState {
   /// Not fragmented: the whole message is here.
   #[default]
   Whole = 0,
@@ -105,14 +106,14 @@ pub enum FragmentInfo {
   Last = 3,
 }
 
-impl FragmentInfo {
+impl FragmentState {
   /// The value a two-bit field holds.
-  pub fn from_u8(value: u8) -> FragmentInfo {
+  pub fn from_u8(value: u8) -> FragmentState {
     match value {
-      1 => FragmentInfo::First,
-      2 => FragmentInfo::Middle,
-      3 => FragmentInfo::Last,
-      _ => FragmentInfo::Whole,
+      1 => FragmentState::First,
+      2 => FragmentState::Middle,
+      3 => FragmentState::Last,
+      _ => FragmentState::Whole,
     }
   }
 }
@@ -122,7 +123,7 @@ impl FragmentInfo {
 pub struct SignalHeader {
   /// Which signal this is, and in its top four bits which version of
   /// the signal's own layout. The two share a 20-bit field.
-  pub verid_gsn: u32,
+  pub verid_sig: u32,
   /// The block that sent it. Only the number travels; the node comes
   /// from the connection it arrived on.
   pub sender_block: u16,
@@ -133,7 +134,7 @@ pub struct SignalHeader {
   /// How many sections follow, at most [`IC_MAX_SECTIONS`].
   pub num_sections: u8,
   /// Where this message stands in a train of fragments.
-  pub fragment_info: FragmentInfo,
+  pub fragment_state: FragmentState,
   /// Priority, 0 for ordinary traffic.
   pub prio: u8,
   /// Trace number, for following a signal through the cluster.
@@ -144,9 +145,13 @@ pub struct SignalHeader {
 
 impl SignalHeader {
   /// A header for a signal from `sender_block` to `receiver_block`.
-  pub fn new(gsn: u16, sender_block: u16, receiver_block: u16) -> SignalHeader {
+  pub fn new(
+    sig_no: u16,
+    sender_block: u16,
+    receiver_block: u16,
+  ) -> SignalHeader {
     SignalHeader {
-      verid_gsn: gsn as u32,
+      verid_sig: sig_no as u32,
       sender_block,
       receiver_block,
       ..SignalHeader::default()
@@ -154,13 +159,13 @@ impl SignalHeader {
   }
 
   /// The signal number, without the version in the top four bits.
-  pub fn gsn(&self) -> u16 {
-    (self.verid_gsn & 0xFFFF) as u16
+  pub fn sig_no(&self) -> u16 {
+    (self.verid_sig & 0xFFFF) as u16
   }
 
   /// The version of this signal's layout.
   pub fn version_id(&self) -> u8 {
-    ((self.verid_gsn >> 16) & 0xF) as u8
+    ((self.verid_sig >> 16) & 0xF) as u8
   }
 }
 
@@ -186,7 +191,7 @@ pub fn message_len_words(
 
 /// The checksum of a message: every word of it except the checksum
 /// word itself, exclusive-ored together.
-/// Verify: `TransporterInternalDefinitions.hpp:50`, `computeChecksum`.
+/// Verify: chapter 05 §17.6.
 pub fn compute_checksum(words: &[u32]) -> u32 {
   let mut sum: u32 = 0;
   for word in words {
@@ -198,7 +203,7 @@ pub fn compute_checksum(words: &[u32]) -> u32 {
 fn byte_order_bits(order: u32) -> u32 {
   // The one significant bit is repeated into bits 0, 7, 24 and 31, so
   // that a receiver reading the word the other way round still sees a
-  // consistent value. Verify: `Protocol6::setByteOrder`.
+  // consistent value. Verify: chapter 05 §17.6.
   let mut bits = order;
   bits |= bits << 7;
   bits |= bits << 24;
@@ -240,9 +245,9 @@ pub fn encode(
   let start = out.len();
 
   let mut word1: u32 = byte_order_bits(own_byte_order());
-  let fragment = header.fragment_info as u32;
-  word1 |= fragment & WORD1_FRAG_INF_MASK;
-  word1 |= (fragment << WORD1_FRAG_INF2_SHIFT) & WORD1_FRAG_INF2_MASK;
+  let fragment = header.fragment_state as u32;
+  word1 |= fragment & WORD1_FRAG_HIGH_MASK;
+  word1 |= (fragment << WORD1_FRAG_LOW_SHIFT) & WORD1_FRAG_LOW_MASK;
   if use_signal_id {
     word1 |= WORD1_SIGNALID_MASK;
   }
@@ -255,7 +260,7 @@ pub fn encode(
     ((data.len() as u32) << WORD1_SIGNAL_LEN_SHIFT) & WORD1_SIGNAL_LEN_MASK;
   out.push(word1);
 
-  let mut word2: u32 = header.verid_gsn & WORD2_VERID_GSN_MASK;
+  let mut word2: u32 = header.verid_sig & WORD2_VERID_SIG_MASK;
   word2 |= ((header.trace as u32) << WORD2_TRACE_SHIFT) & WORD2_TRACE_MASK;
   word2 |=
     ((sections.len() as u32) << WORD2_SEC_COUNT_SHIFT) & WORD2_SEC_COUNT_MASK;
@@ -364,17 +369,17 @@ pub fn decode(words: &[u32]) -> Result<Message<'_>, IcError> {
   let use_signal_id = (word1 & WORD1_SIGNALID_MASK) != 0;
   let use_checksum = (word1 & WORD1_CHECKSUM_MASK) != 0;
 
-  let fragment_1 = (word1 & WORD1_FRAG_INF_MASK) as u8;
+  let fragment_1 = (word1 & WORD1_FRAG_HIGH_MASK) as u8;
   let fragment_2 =
-    ((word1 & WORD1_FRAG_INF2_MASK) >> WORD1_FRAG_INF2_SHIFT) as u8;
+    ((word1 & WORD1_FRAG_LOW_MASK) >> WORD1_FRAG_LOW_SHIFT) as u8;
   let header = SignalHeader {
-    verid_gsn: word2 & WORD2_VERID_GSN_MASK,
+    verid_sig: word2 & WORD2_VERID_SIG_MASK,
     sender_block: (word3 & WORD3_SENDER_MASK) as u16,
     receiver_block: ((word3 & WORD3_RECEIVER_MASK) >> WORD3_RECEIVER_SHIFT)
       as u16,
     data_len: data_len as u8,
     num_sections: num_sections as u8,
-    fragment_info: FragmentInfo::from_u8(fragment_1 | fragment_2),
+    fragment_state: FragmentState::from_u8(fragment_1 | fragment_2),
     prio: ((word1 & WORD1_PRIO_MASK) >> WORD1_PRIO_SHIFT) as u8,
     trace: ((word2 & WORD2_TRACE_MASK) >> WORD2_TRACE_SHIFT) as u8,
     signal_id: None,
@@ -448,7 +453,7 @@ mod tests {
   use crate::blocks::*;
 
   fn sample_header() -> SignalHeader {
-    SignalHeader::new(12, api_block_of_thread(3), IC_BLOCK_DBTC)
+    SignalHeader::new(12, api_block_of_thread(3), IC_BLOCK_COORDINATOR)
   }
 
   #[test]
@@ -462,9 +467,9 @@ mod tests {
     assert_eq!(peek_message_len(&out), Some(written));
 
     let message = decode(&out).expect("decode");
-    assert_eq!(message.header.gsn(), 12);
+    assert_eq!(message.header.sig_no(), 12);
     assert_eq!(message.header.sender_block, 0x8003);
-    assert_eq!(message.header.receiver_block, IC_BLOCK_DBTC);
+    assert_eq!(message.header.receiver_block, IC_BLOCK_COORDINATOR);
     assert_eq!(message.header.data_len, 5);
     assert_eq!(message.header.num_sections, 0);
     assert_eq!(message.data, &data);
@@ -502,18 +507,18 @@ mod tests {
   #[test]
   fn fragments_carry_their_position() {
     let positions = [
-      FragmentInfo::Whole,
-      FragmentInfo::First,
-      FragmentInfo::Middle,
-      FragmentInfo::Last,
+      FragmentState::Whole,
+      FragmentState::First,
+      FragmentState::Middle,
+      FragmentState::Last,
     ];
     for position in &positions {
       let mut header = sample_header();
-      header.fragment_info = *position;
+      header.fragment_state = *position;
       let mut out: Vec<u32> = Vec::new();
       encode(&header, &[1, 2], &[], false, &mut out).expect("encode");
       let message = decode(&out).expect("decode");
-      assert_eq!(message.header.fragment_info, *position, "{:?}", position);
+      assert_eq!(message.header.fragment_state, *position, "{:?}", position);
     }
   }
 

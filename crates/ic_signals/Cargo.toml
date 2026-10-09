@@ -1,5 +1,5 @@
 [package]
-name = "ic_ndb_signals"
+name = "ic_signals"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

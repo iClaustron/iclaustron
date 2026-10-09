@@ -16,7 +16,7 @@ it. A CI job can run the same commands later if wanted.
 - macOS (this machine) and Linux are both first-class; aarch64 Linux
   because RonDB ships on ARM.
 - A C compiler and CMake only for the C/C++ examples and the compatibility
-  benchmark against the C++ NDB API.
+  benchmark against the reference API.
 
 ## Test pyramid
 
@@ -27,30 +27,31 @@ it. A CI job can run the same commands later if wanted.
   connectstring, socket buffer). These are the first tests to exist.
 - `ic_comm`: loopback socket tests for `Connection` read/write/writev/
   sessions and for each `PollSet` backend; `test/test_comm.c` scenarios.
-- `ic_ndb_signals`: encode/decode round-trips for every signal struct;
+- `ic_signals`: encode/decode round-trips for every signal struct;
   golden-vector tests from captured traffic (below); `cargo fuzz` targets
   (nightly toolchain, run by the developer when a decoder changes) for
-  `header::decode`, `DictTabInfo` property parsing, `TRANSID_AI`
+  `header::decode`, `TableProps` property parsing, `ROW_DATA_REP`
   attribute parsing and the config-blob decoder. These decoders take
   bytes from the network, so they are fuzzed from day one.
 - `ic_apic`: parameter-table invariants (unique ids, unique names), config
   blob v2 decoding from captured blobs, typed config extraction.
 - `ic_apid`: state machines tested without a network: transaction
-  bookkeeping (pending counts, TCKEYCONF/TRANSID_AI ordering, node-down
+  bookkeeping (pending counts, KEY_OP_CONF/ROW_DATA_REP ordering, node-down
   notices), adaptive send statistics, the WHERE-condition compiler
   (source tree → expected interpreter words), record packing/unpacking
   for every column type.
 
 ### 2. Captured-traffic tests
 
-A small tool `tools/ic_capture` records signal streams between the C++ NDB
-API and a data node (via a TCP proxy that understands the transporter
-handshake), stores them as `.bin` + `.json` (decoded by our own codec), and
-the unit tests replay them. This gives regression vectors for exactly the
-signals RonDB emits, independent of RonDB source code. Captures come from
-running the RonDB `ndbapi-examples` (`ndbapi_simple`,
-`ndbapi_simple_index`, `ndbapi_async`, later `ndbapi_scan`) against a
-local 26.10 cluster.
+Traffic is captured with `tcpdump` on the development cluster's
+loopback device and read with our Wireshark dissector (chapter 06 §6.7).
+A small tool `tools/ic_capture` reads such capture files, follows each
+connection past its handshake, stores the signal streams as `.bin` +
+`.json` (decoded by our own codec), and the unit tests replay them. This gives regression
+vectors for exactly the signals RonDB emits, independent of RonDB
+source code. Captures come from running the reference API's own example
+programs (simple key operations, the same through a unique index, the
+asynchronous interface, later a scan) against a local 26.10 cluster.
 
 ### 3. Integration tests (`cargo xtask test-integration` = `IC_TEST_CONNECTSTRING=... cargo test -p ic_apid --features integration`)
 
@@ -60,8 +61,9 @@ Need a live cluster. Two ways to get one:
   `/Users/mikael/mysql_trees/rondb_2604_main` built with
   `-DWITH_NDB=1`; start with the MTR-provided cluster
   (`cd mysql-test && ./mtr --start ndb.ndb_basic` leaves a cluster running
-  on well-known ports) or with a hand-written `config.ini` and
-  `ndb_mgmd`/`ndbmtd`/`mysqld`. This is the primary development setup.
+  on well-known ports) or with a hand-written `config.ini`, the
+  management server, the data nodes and `mysqld`. This is the primary
+  development setup.
 - **Docker**: RonDB's published images (`rondb-docker`), tag pinned to
   26.10.
 
@@ -76,7 +78,7 @@ returns. `IC_TEST_CONNECTSTRING` names the management server;
 `IC_TEST_MYSQL` is a `mysql` client command with its connection
 options, run through `sh -c`, through which the tests make their
 tables in the database `ic_it` and check what they wrote;
-`IC_TEST_NDB_MGM` is an `ndb_mgm` command for the `failure` group,
+`IC_TEST_NDB_MGM` is a management client command for the `failure` group,
 which stops a data node and starts it again. Each test is its own
 program against the cluster, taking an API node id and letting it go,
 with a retry on the id since the one the last test released may not be
@@ -95,13 +97,13 @@ error, the retry at the survivor commits, and the node is waited for
 until it is started again, so that the next test finds the cluster
 whole). Seen live 2026-09-22: the pending transaction ended rolled
 back with 4010, the branch built for a coordinator that fails before
-the commit is asked for. The `ndb_mgmd` restart is not yet covered.
+the commit is asked for. The management server restart is not yet covered.
 
 Test groups, mirroring the phases:
 
 | Group | Proves |
 |---|---|
-| `connect` | node id allocation, handshake with every data node, API_REGCONF received, `wait_first_node_connect` returns; survives `ndb_mgm -e "2 RESTART"` |
+| `connect` | node id allocation, handshake with every data node, HEARTBEAT_CONF received, `wait_first_node_connect` returns; survives a data node restart ordered from the management client |
 | `dict` | every column type in one table decodes to the right `FieldType`/length; indexes and their key order; table version bump after `ALTER TABLE` invalidates the cached def |
 | `pk` | read/insert/update/delete/write; error 626 (no such row) and 630 (duplicate) mapping; commit and rollback visibility checked through MySQL |
 | `uk` | unique index read/update/delete |
@@ -110,15 +112,15 @@ Test groups, mirroring the phases:
 | `assign` | conditional assignments `a = a * (b + 1)` match MySQL arithmetic |
 | `types` | round-trip of every type incl. Decimal, Datetime2/Timestamp2 fractional seconds, Bit, Varbinary, Char with charsets |
 | `blob`, `event`, `ddl` | 0.3 |
-| `failure` | kill a data node mid-transaction: correct temporary error class, transaction retried by the test on another node; restart `ndb_mgmd` while connected |
+| `failure` | kill a data node mid-transaction: correct temporary error class, transaction retried by the test on another node; restart the management server while connected |
 
-### 4. Conformance against the C++ NDB API
+### 4. Conformance against the reference API
 
-`tools/ic_bench` and a matching C++ program (built in the RonDB tree using
-its NDB API) run the same workload (PK reads of 8 columns, 1 000 rows,
-N threads, async batches of 100). We record throughput and p99 latency
+`tools/ic_bench` and a matching C++ program (built in the RonDB tree
+against the reference API) run the same workload (PK reads of 8
+columns, 1 000 rows, N threads, async batches of 100). We record throughput and p99 latency
 for both and keep the numbers in `doc/bench/`. The 0.1 criterion is
-within 20 % of the C++ API.
+within 20 % of the reference API.
 
 ### 5. Multi-language smoke tests
 
@@ -179,11 +181,11 @@ into the Rust standard library and dependencies, `rusty-tags`
 - `IC_DEBUG=level_bits` env var driving the ported `DEBUG_*` machinery,
   same 17 level bits as the C.
 - `IC_NDB_MESSAGE_LEVEL` prints every signal in and out as
-  `gsn name, sender/receiver block refs, words, sections` using the
-  `ic_ndb_signals` decoders. This is the single most useful tool during
+  `sig_no name, sender/receiver block refs, words, sections` using the
+  `ic_signals` decoders. This is the single most useful tool during
   phases 3–6.
-- `tools/ic_config_dump`: fetch and print a cluster config from
-  `ndb_mgmd` (phase 2 deliverable), also used to diff parameter tables
+- `tools/ic_config_dump`: fetch and print a cluster config from the
+  management server (phase 2 deliverable), also used to diff parameter tables
   between RonDB versions.
 - `tools/ic_desc db.table`: print a table definition as the API sees it
   (phase 4 deliverable).

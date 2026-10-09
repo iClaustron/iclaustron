@@ -1,10 +1,14 @@
 # 05 — NDB protocol reference for the implementation
 
-This chapter is the clean-room specification the `ic_ndb_signals` and
+This chapter is the clean-room specification the `ic_signals` and
 `ic_apid` crates are written from. Each item states what the protocol is,
-in our words, and gives a *verification pointer* (`file:line`) into the
-RonDB tree at `/Users/mikael/mysql_trees/rondb_2604_main/storage/ndb` so
-a reviewer can confirm the statement. Pointers are for checking, not for
+in our words. Since 2026-10-08 a fact is learned first from the wire,
+captures read with our Wireshark dissector (chapter 06 §6.7), then from
+the author, and only then from the source (chapter 09); an item names the
+capture it came from where there is one, and gives a *verification
+pointer* (`file:line`) into the RonDB tree at
+`/Users/mikael/mysql_trees/rondb_2604_main/storage/ndb` where the source
+was read, so a reviewer can confirm the statement. Pointers are for checking, not for
 copying (see [09-licensing.md](09-licensing.md)). Where the iClaustron C
 code already implements the item, that is noted too; that code *can* be
 carried over.
@@ -14,13 +18,54 @@ compatibility paths for older releases. iClaustron's C code was written
 against NDB 7.2.9; §14 lists what changed since then so no 7.2-era
 assumption survives unexamined.
 
+## Names
+
+This chapter follows chapter 09's rule (author, 2026-10-08): nothing is
+taken from RonDB, names included. What travels on the wire is kept
+exactly: numbers, word layouts, error codes, parameter ids, the
+management protocol's text and the stored names we look up. Everything
+else has a name of our own that says what it is: signals, blocks, a
+signal's fields, dictionary keys, pseudo-columns and configuration
+parameters. RonDB is cited only in this chapter, as a bare `path:line`
+relative to `storage/ndb`, or to the tree's root when the path starts
+with `/`. A signal we have not named is referred to by its number.
+
+Signals, by number:
+
+| Group | Number and our name |
+|---|---|
+| Membership | 3 `HEARTBEAT_REQ`, 1 `HEARTBEAT_CONF`, 2 `HEARTBEAT_REF`; 26 `NODE_LOST_REP`; 27 `NODE_LOST_DONE_REP`; 163 `NODE_JOINED_REP` |
+| Coordinator records | 39 `COORD_ALLOC_REQ`, 37 `COORD_ALLOC_CONF`, 38 `COORD_ALLOC_REF`; 36 `COORD_FREE_REQ`, 34 `COORD_FREE_CONF`, 35 `COORD_FREE_REF` |
+| Key operations | 12 `KEY_OP_REQ`, 10 `KEY_OP_CONF`, 11 `KEY_OP_REF`; 519 `UNIQUE_OP_REQ`, 520 `UNIQUE_OP_CONF`, 521 `UNIQUE_OP_REF`; 5 `ROW_DATA_REP`; 6 `KEY_DATA_ORD`; 4 `COLUMN_DATA_ORD` |
+| Ending a transaction | 19 `COMMIT_REQ`, 17 `COMMIT_CONF`, 18 `COMMIT_REF`; 15 `ROLLBACK_REQ`, 13 `ROLLBACK_CONF`, 14 `ROLLBACK_REF`; 16 `TRANS_ABORTED_REP`; 469 `COMMIT_MARKER_FREE_ORD`; 8 `TAKEOVER_CONF`, 9 `TAKEOVER_REF`; 980 `DEADLOCK_FOUND_REP` |
+| Scans | 32 `SCAN_REQ`, 29 `SCAN_CONF`, 31 `SCAN_REF`; 28 `SCAN_MORE_REQ`; 33 `SCAN_ROW_KEY_REP` |
+| Dictionary | 24 `TABLE_DESC_REQ`, 190 `TABLE_DESC_CONF`, 23 `TABLE_DESC_REF`; 193 `LIST_OBJECTS_REQ`, 194 `LIST_OBJECTS_CONF`; 606 `TABLE_CHANGED_REP`; 984 `COLLATION_DESC_REQ`, 985 `COLLATION_DESC_CONF`, 986 `COLLATION_DESC_REF` |
+
+Blocks, by number (hex): F4 `ARCHIVE`, F5 `COORDINATOR` (the
+transaction coordinator), F6 `DISTRIBUTION`, F7 `LOCAL_OPS` (runs
+operations on a fragment), F8 `HASH_INDEX`, F9 `ROW_STORE`, FA
+`DICTIONARY`, FB `START_CONTROL`, FC `MEMBERSHIP`, FD `FILE_IO`, FE
+`NODE_ADMIN`, FF `INDEX_BUILD`, 100 `UTILITY`, 101 `CHANGE_FEED`, 102
+`ORDERED_INDEX`, 109 `JOIN`, 10A `LINK_ADMIN`, 10B–111
+`READ_WORKER_FIRST`…`READ_WORKER_LAST`; outside the data nodes 7FF
+`BUNDLE`, FA2 `NODE_WATCH`, FA3 `CONFIG_SERVICE`, and the user threads
+from 8000 (`IC_FIRST_USER_THREAD_BLOCK`). The constants are `IC_SIG_<NAME>` and
+`IC_BLOCK_<NAME>`.
+
+Configuration parameters are named by id and our name: 3 `node_id`,
+5 `host`, 101 `replica_count`, 119 `api_heartbeat_ms`, 129
+`timeout_check_period`, 130 `idle_transaction_limit`, 131
+`lock_wait_limit`, 406 `port`, 800 `scan_batch_bytes_total`, 801
+`scan_batch_bytes`, 802 `scan_batch_rows`, 806 `hash_map_buckets`.
+Dictionary keys are named by meaning and number (constants `IC_TP_*`).
+
 ## 1. Connecting to a data node
 
 ### 1.1 TCP and socket authentication
 
 Plain TCP to the data node's transporter port (from the config's TCP
 connection section; if the port is 0 the port is dynamic and must be asked
-from `ndb_mgmd` with `get connection parameter`). Then a text handshake,
+from the management server with `get connection parameter`). Then a text handshake,
 lines terminated by `\n`.
 
 Two dialects exist on the client side:
@@ -34,7 +79,7 @@ Two dialects exist on the client side:
   answers one of `ok`, `Cleartext ok`, `TLS ok`, `Cleartext required`,
   `TLS required`, `Error`. On `TLS ok` both sides start TLS on the same
   socket. A bare `ndbd` is classified as "too old" by the TLS-capable
-  server. Verify: `SocketAuthenticator.cpp:133-236`.
+  server. Verify: `src/common/util/SocketAuthenticator.cpp:133-236`.
 
 Decision: send the TLS-capable form with `TLS disabled` in 0.1, accept
 `ok` and `Cleartext ok`. **Open question Q2**: confirm on a live 26.10
@@ -50,7 +95,8 @@ instance>`, where transporter type is 1 for TCP and the instance is always
 server replies `<its node id> <transporter type>` and the client checks
 both. On rejection the server may write `BYE`. Verify:
 `src/common/transporter/Transporter.cpp:394-544` (client),
-`TransporterRegistry.cpp:664-908` (server). iClaustron sends only the
+`src/common/transporter/TransporterRegistry.cpp:675-921` (server).
+iClaustron sends only the
 two-integer form (`"<nodeid> 1"`); the server still parses 2, 3 or 4
 integers, but we send four.
 
@@ -64,34 +110,35 @@ authentication failure. The node then waits for the client to close
 first, so that the lingering socket state lands on the client. We
 return `IC_ERROR_NODE_NOT_READY` and redial on the usual delay. Seen
 live once in every node restart, between "connection refused" and the
-first accepted hello. Verify: `TransporterRegistry.cpp:810-850`.
+first accepted hello. Verify:
+`src/common/transporter/TransporterRegistry.cpp:823-874`.
 
 ### 1.3 Via the management server
 
-`ndb_mgmd` can convert a management connection into a transporter
+The management server can convert a management connection into a transporter
 connection: the client sends `transporter connect` and an empty line, and
 then performs 1.2 on the same socket. The C cluster server (out of scope)
 implemented the *server* side of this; we do not use the mgm path.
-Verify: `src/mgmapi/mgmapi.cpp` (`ndb_mgm_convert_to_transporter`),
-`TransporterRegistry.cpp:4230-4267`.
+Verify: `src/mgmapi/mgmapi.cpp:3587-3606`,
+`src/common/transporter/TransporterRegistry.cpp:4234-4259, 4295-4326`.
 
 ### 1.3a How long a node id stays ours
 
 The management server reserves an id when it grants one, for a limited
 time, and drops the reservation as soon as the id is held by a connected
-transporter, and also on `NODE_FAILREP` or `NF_COMPLETEREP` naming it.
+transporter, and also on `NODE_LOST_REP` or `NODE_LOST_DONE_REP` naming it.
 From then on a request for an id is decided by asking the data nodes,
 which refuse one that is connected. So an API node's claim on its id,
 once it is connected, is its connections and nothing else. **An API node
 that loses every connection can lose its id**, if the id was chosen for
 it rather than named in its connectstring, because the next node asking
 for any id may be given it (pointed out by the author, 2026-09-19). The
-C++ API claims an id once and never again. We claim it again after
+reference's client claims an id once and never again. We claim it again after
 losing every link and before dialling; see chapter 02, "Node failure
 flow". A session may ask for an id more than once; nothing in the
-server ties a session to one request. Verify: `MgmtSrvr.cpp:4067-4089`,
-`:4145`, `:4206-4270`, `:4273-4320`; `Services.cpp:734-830`;
-`ndb_cluster_connection.cpp:1399-1401`.
+server ties a session to one request. Verify: `src/mgmsrv/MgmtSrvr.cpp:4098-4120`,
+`:4166`, `:4227-4292`, `:4294-4310, 4370-4376`; `src/mgmsrv/Services.cpp:735-866`;
+`src/ndbapi/ndb_cluster_connection.cpp:1399-1402`.
 
 **What a refusal means.** A refused request carries `error_code` when
 the request carried `log_event`, which ours does. The code separates
@@ -117,14 +164,15 @@ hearing from it, two minutes on that cluster. The refusal therefore
 means "the cluster counts this id as connected" and nothing more. We
 take another id at once if any id will do, and never if the application
 was started with a stated one (decided by the author; chapter 02, "Node
-failure flow"); the C++ API,
+failure flow"); the reference's client,
 which never asks again, simply redials under the old id and is answered
 `BYE` until the data nodes time the old connection out. Seen live: a
 restarting cluster answers "not ready" for several seconds, which an
 earlier revision counted towards giving the id up. An earlier revision
 of this section also claimed the code told the first two apart; it does
-not. Verify: `mgmapi_error.h:80-87`, `MgmtSrvr.cpp:5040-5080`,
-`Services.cpp:753`, `:816`.
+not. Verify: `include/mgmapi/mgmapi_error.h:80-87`,
+`src/mgmsrv/MgmtSrvr.cpp:4985-4986, 5154-5193`, `src/mgmsrv/Services.cpp:754`,
+`:854`.
 
 **How a pulled cable shows, seen live on macOS (2026-09-19).** Pulling
 the API host's Ethernet cable for about 10 s did nothing at all: the
@@ -142,11 +190,12 @@ after three to four check intervals.
 ### 1.4 Reconnect policy
 
 Connect attempts are rate limited with a backoff; RonDB additionally has a
-node "active" flag in config (`IC_CFG_NODE_ACTIVE`) and refuses connections
-to/from inactive nodes. Verify: `Transporter.cpp:290`, `:517`,
-`TransporterRegistry.cpp:737`.
+node "active" flag in config (parameter 13, `IC_PARAM_NODE_ACTIVE`) and
+refuses connections to/from inactive nodes. Verify:
+`src/common/transporter/Transporter.cpp:290`,
+`:517`, `src/common/transporter/TransporterRegistry.cpp:750`.
 
-## 2. Signal framing ("Protocol6")
+## 2. Signal framing
 
 Every message is a sequence of 32-bit words in the **sender's native byte
 order**. There is no byte swapping: the sender stamps its endianness in
@@ -179,7 +228,7 @@ Word 1 bit fields (mask, shift):
 | fragment info, high bit | `0x02000000` | 25 |
 | signal data length in words (5 bits) | `0x7C000000` | 26 |
 
-Word 2: bits 0–19 GSN (16-bit GSN plus a 4-bit version id), bits 20–25
+Word 2: bits 0–19 signal number (16-bit number plus a 4-bit version id), bits 20–25
 trace, bits 26–27 number of sections.
 
 Word 3: bits 0–15 sender block reference **number** (block number only;
@@ -187,183 +236,224 @@ the receiver reconstructs the full reference from the connection's node
 id), bits 16–31 receiver block number.
 
 Verify: `src/common/transporter/TransporterInternalDefinitions.hpp:54-158`,
-`Packer.cpp:151-254` (unpack), `:507-558` (pack). iClaustron's
+`src/common/transporter/Packer.cpp:151-254` (unpack), `:507-558` (pack).
+iClaustron's
 `fill_ndb_message_header` and `create_ndb_message` implement this correctly
 and are carried over.
 
-Limits: a message is at most 32 768 bytes (`MAX_SEND_MESSAGE_BYTESIZE`,
-`MAX_RECV_MESSAGE_BYTESIZE`); a single section is at most 7 400 words in
+Limits: a message is at most 32 768 bytes, sent or received; a single
+section is at most 7 400 words in
 one signal; the receive loop handles up to 1 024 signals per call. Verify:
 `include/transporter/TransporterDefinitions.hpp:85-86`,
-`include/kernel/ndb_limits.h:298-305`, `Packer.cpp:40`.
+`include/kernel/ndb_limits.h:304-311`, `src/common/transporter/Packer.cpp:40`.
 
 Checksum: XOR of all words except the checksum word itself. Verify:
-`TransporterInternalDefinitions.hpp:50`, `include/util/Checksum.hpp:93`.
+`src/common/transporter/TransporterInternalDefinitions.hpp:50`,
+`include/util/Checksum.hpp:93`.
 
 ### 2.1 Fragmented signals
 
 When the sections exceed the per-signal limit the sender emits several
-signals with the same GSN and fragment info 1 (first), 2 (middle),
+signals with the same signal number and fragment info 1 (first), 2 (middle),
 3 (last). **Every fragment carries the full original signal data**,
 followed by one word per section it carries giving that section's
 original number, then one word with the fragment id; its sections are
 the pieces of the original sections. Sections are split on 60-word
 boundaries, and the highest-numbered section is sent first. The receiver
 appends each carried piece to the original section its number names and
-tells trains apart by (sender, fragment id). Verify: `SimulatedBlock.cpp`,
-`sendFirstFragment` and `sendNextLinearFragment`; `NdbApiSignal.hpp`,
-`getFragmentId` and `getFragmentSectionNumber`.
+tells trains apart by (sender, fragment id). Verify:
+`src/kernel/vm/SimulatedBlock.cpp:4092-4115, 4141-4283`;
+`src/ndbapi/NdbApiSignal.hpp:93-99`.
 
 An earlier revision of this section said that only the final fragment
 carried the real signal data. That is wrong, and the reference's own
-`execGET_TABINFO_CONF` depends on it being wrong: it reads the request
-id from every fragment.
+client depends on it being wrong: its handler of `TABLE_DESC_CONF` reads
+the request id from every fragment
+(`src/ndbapi/NdbDictionaryImpl.cpp:3724-3729`).
 
 **But not every fragmented signal repeats its data.** A block may split
 an answer by hand, with the same trailing section numbers and fragment
-id, and put values belonging to each piece in the data. `Dbdict` does
-this for `LIST_TABLES_CONF`: each piece's `noOfTables` counts only that
-piece's objects, and the API adds them up (`execLIST_TABLES_CONF`). A
+id, and put values belonging to each piece in the data. The dictionary does
+this for `LIST_OBJECTS_CONF`: each piece's object count counts only that
+piece's objects, and the reference's client adds them up
+(`src/ndbapi/NdbDictionaryImpl.cpp:7582-7596`). A
 piece may also carry one section, or none. A generic reassembler keeps
 the first piece's data, so such values must come from the joined
-sections. Verify: `Dbdict.cpp`, `sendLIST_TABLES_CONF`.
+sections. Verify: `src/kernel/blocks/dbdict/Dbdict.cpp:13119-13219`.
+
+The shapes of `LIST_OBJECTS_CONF` (the author, 2026-10-09): two words
+of its own, the caller's data and the object count, and then:
+
+| Data words | Sections | After the two words |
+|---|---|---|
+| 2 | 0 | nothing |
+| 3 | 0 | a fragment id |
+| 4 | 1 | the section's number (0 object data, 1 names), a fragment id |
+| 5 | 2 | 0 and 1, a fragment id |
+
+That is the fragment trailer, sent with whole answers too. The fragment
+id is random. A long answer goes in pieces of 240 words with the
+fragment bits set, so its pieces are joined like any fragmented
+signal's, each piece's section appended to the one its number names. A
+piece of 240 words holds whole objects (three words each), but a name may
+run on into the next piece.
+
+Seen live (2026-10-09, all 172 answers of a capture): only whole
+answers, with fragment bits 0, of 3 words without sections and 5 with
+two. The section lengths follow the 5 words, where every signal's go:
+18 and 48 for 6 objects, 21 and 56 for 7. `ic_signals::list_objects`
+reads the first two words and the joined sections, and counts objects
+by the length of section 0, so it reads every shape.
 
 **When a signal is split.** The fragmenting send sends a signal whole
-when its data and sections come to at most `MAX_SIZE_SINGLE_SIGNAL`,
-7400 words, and otherwise splits it into pieces of `FRAGMENT_WORD_SIZE`
-words: 3840 in a release build, 120 in a debug build (`VM_TRACE`). The
-one exception is `TRANSID_AI`, which a debug build splits above 240
-words (`DEB_MAX_SIZE_SINGLE_SIGNAL`). Verify: `SimulatedBlock.cpp`,
-`sendFirstFragment`; `ndb_limits.h:305-306`; `SimulatedBlock.hpp:1003-1011`.
-The comment above `FRAGMENT_WORD_SIZE` says splitting starts above the
-piece size; the code says otherwise, and a first draft of this section,
+when its data and sections come to at most 7400 words, and otherwise
+splits it into pieces of 3840 words in a release build, 120 in a debug
+build. The one exception is `ROW_DATA_REP`, which a debug build splits
+above 240 words. Verify: `src/kernel/vm/SimulatedBlock.cpp:3685-3703, 4055-4074`;
+`include/kernel/ndb_limits.h:311-312`; `src/kernel/vm/SimulatedBlock.hpp:1003-1011`.
+The comment above the piece size's definition says splitting starts
+above the piece size; the code says otherwise, and a first draft of this section,
 written from the comment, was wrong in the same way.
 
 So a table description arrives whole unless it is very large, and row
 data from a debug data node can arrive in pieces. The API side must
-reassemble at least `GET_TABINFO_CONF` and `TRANSID_AI`, not only event
+reassemble at least `TABLE_DESC_CONF` and `ROW_DATA_REP`, not only event
 traffic as an earlier revision said. `ic_apid::fragments` does it, in
 the user thread that executes the signal. The largest whole signal,
 7400 words, fits in our 32 KB receive limit.
 
 ## 3. Block numbers and references
 
-- Kernel blocks: `BACKUP 0xF4, DBTC 0xF5, DBDIH 0xF6, DBLQH 0xF7,
-  DBACC 0xF8, DBTUP 0xF9, DBDICT 0xFA, NDBCNTR 0xFB, QMGR 0xFC, NDBFS 0xFD,
-  CMVMI 0xFE, TRIX 0xFF, DBUTIL 0x100, SUMA 0x101, DBTUX 0x102, ...,
-  TRPMAN 0x10A`, plus RonDB query blocks `0x10B–0x111` which can appear as
-  senders of `TRANSID_AI`. Verify: `include/kernel/BlockNumbers.h:49-79`.
+- Kernel blocks: `ARCHIVE 0xF4, COORDINATOR 0xF5, DISTRIBUTION 0xF6,
+  LOCAL_OPS 0xF7, HASH_INDEX 0xF8, ROW_STORE 0xF9, DICTIONARY 0xFA,
+  START_CONTROL 0xFB, MEMBERSHIP 0xFC, FILE_IO 0xFD, NODE_ADMIN 0xFE,
+  INDEX_BUILD 0xFF, UTILITY 0x100, CHANGE_FEED 0x101, ORDERED_INDEX 0x102,
+  ..., LINK_ADMIN 0x10A`, plus RonDB's read workers
+  `READ_WORKER_FIRST`…`READ_WORKER_LAST` (`0x10B–0x111`), which can appear
+  as senders of `ROW_DATA_REP`. Verify: `include/kernel/BlockNumbers.h:49-79`.
 - API blocks: dynamic per client thread from `0x8000` upward (max 4 711
-  clients); `API_PACKED = 0x07FF` (2047) for packed signals;
-  `API_CLUSTERMGR = 0x0FA2` (4002) fixed for the heartbeat client. Verify:
-  `BlockNumbers.h:34-47`. iClaustron's `IC_NDB_MIN_MODULE_ID_FOR_THREADS
+  clients); `BUNDLE = 0x07FF` (2047) for bundled signals;
+  `NODE_WATCH = 0x0FA2` (4002) fixed for the heartbeat client. Verify:
+  `include/kernel/BlockNumbers.h:34-47`. iClaustron's
+  `IC_NDB_MIN_MODULE_ID_FOR_THREADS
   32768` and `IC_NDB_PACKED_MODULE_ID 2047` match.
 - Reference = `node | (block << 16)`. In multi-threaded kernels the block
   field also carries an instance number through a non-trivial mapping that
   must be reproduced exactly when decoding sender references. Verify:
-  `include/kernel/RefConvert.hpp:96-184`.
+  `include/kernel/RefConvert.hpp:96-187`.
 
 ## 4. Cluster membership and heartbeats
 
-Version announced: `get nodeid` and `API_REGREQ` carry an NDB version
+Version announced: `get nodeid` and `HEARTBEAT_REQ` carry an NDB version
 word `(major << 16) | (minor << 8) | build`; for RonDB 26.10.0 that is
 `0x1A0A00`, plus a MySQL version word. The data node checks API/DB
-compatibility and answers `API_REGREF` on mismatch. We announce 26.10.0
-(Q5). Verify: `include/ndb_version.h.in:48-61`, `ClusterMgr.cpp:374-383`.
+compatibility and answers `HEARTBEAT_REF` on mismatch. We announce 26.10.0
+(Q5). Verify: `include/ndb_version.h.in:48-61`,
+`src/ndbapi/ClusterMgr.cpp:578-587`.
 
-- `API_REGREQ` (GSN 3) from the API's cluster-manager block to `QMGR`
+- `HEARTBEAT_REQ` (signal 3) from the API's `NODE_WATCH` block to `MEMBERSHIP`
   every `min(max interval, heartbeat check interval / 2)`; data: own
   reference, NDB version, MySQL version (3 words). Verify:
   `include/kernel/signaldata/ApiRegSignalData.hpp:34-51`,
-  `src/ndbapi/ClusterMgr.cpp:371-561`.
+  `src/ndbapi/ClusterMgr.cpp:570-573, 578-587, 712-732`.
 
   **We send every third of the check interval, not every half.** The
   author judges half too seldom (2026-09-19). Sending more often than
-  the C++ API does is safe by construction, since the data node only
+  the reference's client does is safe by construction, since the data node only
   counts intervals in which it heard nothing. `ic_apid::apid_global`,
   `IC_HEARTBEATS_PER_INTERVAL`, with a compile-time check that it is
   never set below three.
-- `API_REGCONF` (GSN 1), 22 words in this order: `qmgrRef, version,
-  apiHeartbeatInterval, mysql_version, minDbVersion`, then the 16-word
-  `nodeState`, then `minApiVersion` **after** it. The order matters and
-  is easy to get wrong; `minApiVersion` is the last word, not the sixth.
+- `HEARTBEAT_CONF` (signal 1), 22 words in this order: the sender's
+  `MEMBERSHIP` reference, its NDB version, the heartbeat interval, its
+  MySQL version, the lowest data node version, then the 16-word node
+  state, then the lowest API version **after** it. The order matters and
+  is easy to get wrong; the lowest API version is the last word, not the
+  sixth.
   The node state holds start level, node group, dynamic id, start phase,
   single-user mode and a connected-nodes bitmap of 256 bits, which stays
   256 bits however far node ids rise because it only covers data nodes.
+  It marks other nodes with ids below 256 as well: seen live
+  (2026-10-09), data node 1's answer to the management server, node 3,
+  had bits 1 and 3 set. So a bit says the node is connected, not that
+  it is a data node.
   A data node counts as usable when started, or in single-user mode, or
   (RonDB) past the restart barrier while recovering.
 
-  `apiHeartbeatInterval` is in **hundredths of a second**, a tenth of the
-  `HeartbeatIntervalDbApi` the configuration states in milliseconds: a
-  cluster configured for 30000 ms answers 3000 here. Confirmed against a
-  live RonDB 26.10 cluster, and matching the C++ cluster manager, which
-  multiplies this field by ten.
+  The heartbeat interval is in **hundredths of a second**, a tenth of
+  parameter 119 (`api_heartbeat_ms`), which the configuration states in
+  milliseconds: a cluster configured for 30000 ms answers 3000 here.
+  Confirmed against a live RonDB 26.10 cluster, and matching the
+  reference's client, which multiplies this field by ten.
 
-  Verify: `ApiRegSignalData.hpp:87-108`, `NodeState.hpp:113`,
-  `ClusterMgr.cpp:1676-1905`.
-- `API_REGREF` (GSN 2): rejection, e.g. version mismatch.
-- Node declared dead after 4 missed heartbeats; then `NODE_FAILREP`
-  (GSN 26) is sent to self and broadcast to all client blocks, followed by
-  `NF_COMPLETEREP` (GSN 27) from the cluster when takeover is complete;
+  Verify: `include/kernel/signaldata/ApiRegSignalData.hpp:87-108`,
+  `include/kernel/NodeState.hpp:113`, `src/ndbapi/ClusterMgr.cpp:1983-2217`.
+- `HEARTBEAT_REF` (signal 2): rejection, e.g. version mismatch.
+- Node declared dead after 4 missed heartbeats; then `NODE_LOST_REP`
+  (signal 26) is sent to self and broadcast to all client blocks, followed by
+  `NODE_LOST_DONE_REP` (signal 27) from the cluster when takeover is complete;
   only then may transactions be aborted with the right error and the node
-  be reconnected. Verify: `ClusterMgr.cpp:2304-2404`,
-  `src/ndbapi/Ndbif.cpp:1346-1372`, `Ndb.cpp:272-314`.
+  be reconnected. Verify: `src/ndbapi/ClusterMgr.cpp:743-770, 2631-2763`,
+  `src/ndbapi/Ndbif.cpp:297-356, 1394-1425`.
 
   The detail, as implemented in `ic_apid` (`apid_global`,
   `rec_thread`, `heartbeat`, `connect_thread`):
 
   - **Counting missed heartbeats.** A counter per node goes up by one at
     the end of every check interval and back to zero on every
-    `API_REGCONF`, so at rest it moves between zero and one. The node is
+    `HEARTBEAT_CONF`, so at rest it moves between zero and one. The node is
     lost when it reaches 4, which is at least three whole intervals of
     silence. The check interval has a floor of 100 ms whatever the node
-    reports. Verify: `ClusterMgr.cpp:485-540`, `:1844-1861`;
-    `ClusterMgr.hpp:99`.
+    reports. Verify: `src/ndbapi/ClusterMgr.cpp:696-752`, `:2154-2171`;
+    `src/ndbapi/ClusterMgr.hpp:108`.
   - **Every sign of a failure converges.** A disconnect of a node that
-    had finished connecting is handled as if a `NODE_FAILREP` naming
+    had finished connecting is handled as if a `NODE_LOST_REP` naming
     that one node had arrived, unless one already has. So the socket
     closing, the heartbeats stopping and another node's report all run
     the same handling, and only the first for a given connection does
-    anything. Verify: `ClusterMgr.cpp:2200-2300` (disconnect),
-    `:2302-2375` (the report).
+    anything. Verify: `src/ndbapi/ClusterMgr.cpp:2526-2629` (disconnect),
+    `:2631-2737` (the report).
   - **The reconnect gate.** A data node that is not connected is not
     dialled while its takeover report is outstanding. The stated reason
     is that cluster disconnect can then be detected reliably. The flag
     is cleared on the first handling of a failure, set by
-    `NF_COMPLETEREP`, and set again on connect. Verify:
-    `ClusterMgr.cpp:448-461`, `:2092-2106`, `:2165-2178`, `:2355-2364`.
-  - **Who sends `NF_COMPLETEREP` to an API node, and what is in it.**
+    `NODE_LOST_DONE_REP`, and set again on connect. Verify:
+    `src/ndbapi/ClusterMgr.cpp:659-672`, `:2414-2431`, `:2490-2504`, `:2713-2722`.
+  - **Who sends `NODE_LOST_DONE_REP` to an API node, and what is in it.**
     Every surviving data node, once all of its blocks have handled the
     failure, to every API node it holds as registered. Its block field
-    carries the sender's `QMGR` reference, **not zero**. Zero means
+    carries the sender's `MEMBERSHIP` reference, **not zero**. Zero means
     "whole node" only between blocks inside a data node. The API side
     reads the failed node id and nothing else. Verify:
-    `QmgrMain.cpp:4860-4880`, `ClusterMgr.cpp:2092-2106`.
+    `src/kernel/blocks/qmgr/QmgrMain.cpp:5335-5356`,
+    `src/ndbapi/ClusterMgr.cpp:2414-2431`.
   - **When nobody is left to report.** If handling a failure leaves no
     data node alive, the API completes every outstanding takeover
-    itself, since no `NF_COMPLETEREP` can come. Verify:
-    `ClusterMgr.cpp:2383-2401`.
+    itself, since no `NODE_LOST_DONE_REP` can come. Verify:
+    `src/ndbapi/ClusterMgr.cpp:2739-2761`.
   - **A lost link is not a failed node.** When only the API's link to a
-    node drops and the node stays up, no `NODE_FAILREP` arrives, and the
+    node drops and the node stays up, no `NODE_LOST_REP` arrives, and the
     data node has no special handling of the state (confirmed with the
     author, 2026-09-19). The reference rules above would leave that node
     undialled until it really restarts or every other node is lost,
     because nobody reports a takeover for a node that did not fail, and
-    the C++ API tends to answer applications with 4009, "cluster
+    the reference's client tends to answer applications with 4009, "cluster
     failure", meanwhile. We differ deliberately: our own evidence of a
     loss (socket, send, heartbeat silence) only redials, with
     `IC_ERROR_LINK_LOST`; the reconnect gate applies only once a data
-    node has actually sent `NODE_FAILREP` for the node.
+    node has actually sent `NODE_LOST_REP` for the node.
 
   The iClaustron C implements none of this. It has no handler for either
   signal and redials a lost node on a three second timer. **For protocol
   behaviour this chapter is the authority and the C is not**; the C is
   the authority for structure.
-- Other membership GSNs: `CONNECT_REP 163`, `CLOSE_COMREQ 127`,
-  `ALLOC_NODEID_CONF 61`, `TAKE_OVERTCCONF 399`, `DUMP_STATE_ORD 465`,
-  `EVENT_REP 247`. RonDB-only: `ACTIVATE_*`, `DEACTIVATE_*`,
-  `SET_HOSTNAME_*`, `SET_DOMAIN_ID_*`, `GET_DATABASE_*`,
-  `LIST_DATABASE_*`. Verify: `include/kernel/GlobalSignalNumbers.h`.
+- Other membership signals: `NODE_JOINED_REP` (163), and, unnamed since
+  we do not use them, 127 (close the links to failed nodes), 61 (a node
+  id granted), 399 (a coordinator's takeover done), 465 (an order to dump
+  state) and 247 (an event report). RonDB adds 900–905 (activate and
+  deactivate a node), 906–908 (set a node's host name), 944–946 (set its
+  location domain), 934–936 and 937–939 (get and list databases).
+  Verify: `include/kernel/GlobalSignalNumbers.h:136, 212, 249, 371, 543,
+  611, 1223-1231, 1266-1272, 1279-1281`.
 
 ## 5. Management protocol and configuration
 
@@ -379,19 +469,20 @@ over.
 - `get nodeid` with `version`, `nodetype`, `nodeid`, `user:"mysqld"`,
   `password:"mysqld"`, `public key:"a public key"`, `endian:"little"|"big"`,
   optional `name`, `log_event`; reply `result: Ok` and `nodeid`. Verify:
-  `mgmapi.cpp:3268-3329`.
+  `src/mgmapi/mgmapi.cpp:3268-3329`.
 - `get config_v2` (preferred) or `get config` with `version`, `nodetype`,
   and for v2 `node: <id>`; reply carries `Content-Length`,
   `Content-Type: ndbconfig/octet-stream`,
   `Content-Transfer-Encoding: base64`; then `Content-Length + 1` raw bytes
-  of base64 follow the empty line. Verify: `mgmapi.cpp:3090-3214`.
+  of base64 follow the empty line. Verify: `src/mgmapi/mgmapi.cpp:3091-3214`.
 - `get connection parameter` with `node1`, `node2` and `param`,
   answering `value` and `result`. The value is **signed**, and for
-  `CFG_CONNECTION_SERVER_PORT` (406) the sign is information: a negative
+  parameter 406 (`port`) the sign is information: a negative
   value means the port was assigned when the node started rather than
   written in the configuration, and the port is its absolute value, so
   `-59733` means port 59733. Zero means the node has not been given a
-  port yet. Verify: `TransporterRegistry.cpp:3997`, which takes the
+  port yet. Verify: `src/common/transporter/TransporterRegistry.cpp:4057-4058`,
+  which takes the
   same absolute value on the listening side.
 - Also
   `transporter connect` (1.3).
@@ -401,19 +492,21 @@ over.
 All words network byte order (big-endian), unlike the signal protocol.
 
 - v1: magic `NDBCONFV`, then entries `key word = type<<28 | section<<14 |
-  key`, types `Int=1` (1 word), `String=2` (length word incl. NUL, then
-  padded bytes), `Section=3` (1 word), `Int64=4` (2 words, high then low);
-  trailing XOR checksum. Verify: `src/common/mgmcommon/ConfigObject.cpp:372-620`,
+  key`, types 1 a 32-bit number (1 word), 2 a string (length word incl.
+  NUL, then padded bytes), 3 a section reference (1 word), 4 a 64-bit
+  number (2 words, high then low); trailing XOR checksum. Verify:
+  `src/common/mgmcommon/ConfigObject.cpp:372-639`,
   `include/util/ConfigSection.hpp:330-336`.
 - v2: magic `NDBCONF2`, then a 7-word header (total length, version=2,
   number of default sections=5, data nodes, api nodes, mgm nodes, comm
   sections), then default sections, system section, node sections,
   communication sections in that order; entry key word `type<<28 | key`
   (section implied by position); default sections supply inherited values;
-  trailing XOR checksum. Section type ids `DataNode 1, ApiNode 2, MgmNode 3,
-  Tcp 4, Shm 5, System 6, Rdma 7 (RonDB)`. Verify:
-  `ConfigObject.cpp:850-877`, `:1032-1100`, `ConfigSection.hpp:53-60`,
-  `:338-341`.
+  trailing XOR checksum. Section types: 1 a data node, 2 an API node, 3 a
+  management server, 4 a TCP link, 5 a shared-memory link, 6 the system
+  section, 7 an RDMA link (RonDB). Verify:
+  `src/common/mgmcommon/ConfigObject.cpp:850-877`, `:1032-1100`,
+  `include/util/ConfigSection.hpp:53-60`, `:338-341`.
 
 iClaustron's `ic_apic_conf_read_transl.ic` decodes both. Parameter ids are
 in `include/mgmapi/mgmapi_config_parameters.h`; iClaustron's own table in
@@ -421,37 +514,38 @@ the new API-node parameter table is verified against it for 26.10.
 
 ## 6. Transactions and primary key operations
 
-### 6.1 Seizing a TC record
+### 6.1 Allocating a coordinator record
 
-Before the first operation to a given data node, send `TCSEIZEREQ`
-(GSN 39) to `DBTC` with: API connect pointer (our object id), our block
-reference, requested TC instance. `TCSEIZECONF` (GSN 37) returns the TC
-connect pointer and TC reference to use in all later signals for that
-record. Records are cached per node per client and released with
-`TCRELEASEREQ` (GSN 36) at shutdown. Verify: `src/ndbapi/Ndb.cpp:112-169`,
-`Ndbif.cpp:1014`, `Ndblist.cpp:418`.
+Before the first operation to a given data node, send `COORD_ALLOC_REQ`
+(signal 39) to `COORDINATOR` with: our pointer (our object id), our block
+reference, the coordinator instance wanted. `COORD_ALLOC_CONF` (signal 37)
+returns the coordinator's pointer to its record and the coordinator's
+reference, to use in all later signals for that record. Records are cached
+per node per client and released with
+`COORD_FREE_REQ` (signal 36) at shutdown. Verify: `src/ndbapi/Ndb.cpp:112-170`,
+`src/ndbapi/Ndbif.cpp:1062-1080`, `src/ndbapi/Ndblist.cpp:418`.
 
-The words, as `ic_ndb_signals::tc_seize` has them, none with sections:
+The words, as `ic_signals::coord_alloc` has them, none with sections:
 
-| Signal | GSN | Words |
+| Signal | Number | Words |
 |---|---|---|
-| `TCSEIZEREQ` | 39 | our pointer, our block reference, instance wanted (0 for any) |
-| `TCSEIZECONF` | 37 | our pointer, the coordinator's pointer, the coordinator's block reference |
-| `TCSEIZEREF` | 38 | our pointer, NDB error code |
-| `TCRELEASEREQ` | 36 | **the coordinator's pointer**, our block reference, our pointer |
-| `TCRELEASECONF` | 34 | our pointer |
-| `TCRELEASEREF` | 35 | our pointer, NDB error code, source line of the refusal |
+| `COORD_ALLOC_REQ` | 39 | our pointer, our block reference, instance wanted (0 for any) |
+| `COORD_ALLOC_CONF` | 37 | our pointer, the coordinator's pointer, the coordinator's block reference |
+| `COORD_ALLOC_REF` | 38 | our pointer, NDB error code |
+| `COORD_FREE_REQ` | 36 | **the coordinator's pointer**, our block reference, our pointer |
+| `COORD_FREE_CONF` | 34 | our pointer |
+| `COORD_FREE_REF` | 35 | our pointer, NDB error code, source line of the refusal |
 
-The release does not mirror the seize: the coordinator's pointer comes
-first, because it is the coordinator that has to find the record. A
-seize is refused when the node is not started or is shutting down, or
-has no record free. Verify: `DbtcMain.cpp:2366-2500`,
-`NdbApiSignal.cpp:134-138`.
+The release does not mirror the allocate: the coordinator's pointer comes
+first, because it is the coordinator that has to find the record. An
+allocation is refused when the node is not started or is shutting down, or
+has no record free. Verify: `src/kernel/blocks/dbtc/DbtcMain.cpp:2366-2531`,
+`src/ndbapi/NdbApiSignal.cpp:134-138`.
 
 **The coordinator's block reference is echoed, never decoded.** Its
 upper sixteen bits hold the block and the instance, and RonDB packs up
 to 1024 instances into them with a transform of its own
-(`RefConvert.hpp`, `blockToMain` and `blockToInstance`). An API node has
+(`include/kernel/RefConvert.hpp:96-138`). An API node has
 no use for the instance: it sends later signals to exactly the sixteen
 bits it was given.
 
@@ -463,23 +557,24 @@ exchange on every started node for that reason.
 ### 6.2 Transaction id
 
 Client-side only: a 64-bit value whose high word is unique per client
-block and whose low word is a counter. Sent as `transId1` (low) and
-`transId2` (high) in every signal. Verify: `Ndb.cpp:2219`.
+block and whose low word is a counter. Sent in every signal as two
+words, the low half and then the high half. Verify:
+`src/ndbapi/Ndb.cpp:2270-2280`.
 
 As built (`ApidConnection::next_transaction_id`): the block number in
 bits 52–63, our node id in bits 40–51, the counter in the low word,
 starting again at 0 after `0xFFFFFFFF`. The counter is kept per block
 number when a connection goes, and the next connection with that block
-number goes on from it, so no id is made twice. Verify: `Ndbif.cpp`,
-where the first id of an `Ndb` is made; `Ndbinit.cpp`, where its counter
-is kept for the block; `ndb_cluster_connection.cpp`,
-`get_next_transid`.
+number goes on from it, so no id is made twice. Verify:
+`src/ndbapi/Ndbif.cpp:111-115, 226-269`, where the first id of a client
+object is made; `src/ndbapi/Ndbinit.cpp:168-177`, where its counter is
+kept for the block; `src/ndbapi/ndb_cluster_connection.cpp:815-842`.
 
-### 6.3 Choosing the TC node (hinting)
+### 6.3 Choosing the coordinator node (hinting)
 
-1. Concatenate distribution-key column values in attribute-id order, each
+1. Concatenate distribution-key column values in column-id order, each
    padded to a 4-byte boundary; charset columns are normalised first.
-2. Hash, chosen per table by `HashFunctionFlag` (DictTabInfo key 163):
+2. Hash, chosen per table by the hash function key (table property 163):
    0, or not sent, is MD5 producing 4 words; non-zero is **XXH3, 64-bit**
    (`XXH3_64bits` of the xxHash library, seed 0), split into two words,
    low then high. **Not XXH64**, which an earlier revision of this plan
@@ -490,22 +585,22 @@ is kept for the block; `ndb_cluster_connection.cpp`,
    gets the new hash when the API creating it is RonDB 22.10.1 or later,
    so tables made by a 26.10 mysqld have the flag; an index uses its
    table's function. Verify: `include/util/rondb_hash.hpp:52`,
-   `src/common/util/rondb_hash.cpp:33-60`, `xxhash_std.cpp:31`,
-   `xxhash_avx2.cpp:38`, `ndb_version.h.in`,
-   `ndbd_support_new_hash_function`, `NdbDictionaryImpl.cpp:4014`,
-   `Ndb.cpp:431-611`, `:565`.
+   `src/common/util/rondb_hash.cpp:33-60`, `src/common/util/xxhash_std.cpp:31`,
+   `src/common/util/xxhash_avx2.cpp:38`, `include/ndb_version.h.in:942-959`,
+   `src/ndbapi/NdbDictionaryImpl.cpp:4015-4016`,
+   `src/ndbapi/Ndb.cpp:435-611`, `:569-574`.
 3. RonDB fanout tables hash a base prefix and a detail suffix separately
    and combine `((base/fanout)*fanout) + (detail % fanout)`. Verify:
-   `Ndb.cpp:357-425`.
+   `src/ndbapi/Ndb.cpp:361-380`.
 4. Hash → fragment: for hash-map tables `hash_map[hash % hash_map_len]`;
-   linear-hash and `DistrKeyHash` variants exist for old tables. Verify:
-   `src/ndbapi/NdbDictionary.cpp:778-794`.
+   linear-hash and plain key-hash variants exist for old tables. Verify:
+   `src/ndbapi/NdbDictionary.cpp:778-801`.
 5. Fragment → replica nodes from the table's fragment data; with RonDB
    dynamic primary replicas the primary may be recomputed from node state.
-   Verify: `NdbDictionaryImpl.cpp:2455`.
+   Verify: `src/ndbapi/NdbDictionaryImpl.cpp:2455`.
 6. Node choice: location domain, then same host, then primary replica;
    fully-replicated tables: any node; read-backup tables: any replica of
-   the fragment. Verify: `Ndb.cpp:786-873`.
+   the fragment. Verify: `src/ndbapi/Ndb.cpp:789-880`.
 
 This whole chain lives in `ic_apid::hash` and is driven by the
 `IC_TRANSACTION_HINT`. The MD5 and XXH3 implementations are written
@@ -515,31 +610,32 @@ vectors are the check.
 
 As built (`ic_util::md5`, `ic_util::xxh3`, `ic_apid::hash`), checked
 against the reference:
-- The key buffer is each distribution key column in attribute order,
+- The key buffer is each distribution key column in column order,
   as the record holds it: a fixed-size value in full, a variable-sized
   one behind its one or two length bytes with only the bytes it has,
   each padded with zeros to a word. A character column is first put
-  through its collation's transform (`strnxfrm_hash`), which needs the
+  through its collation's transform, which needs the
   MySQL collation tables; such a key is refused for now with
-  `IC_ERROR_NOT_SUPPORTED`. Verify: `Ndb.cpp`, `computeHash` over an
-  `NdbRecord`.
-- Which word places the key: `values[1]`, the second word of the MD5
+  `IC_ERROR_NOT_SUPPORTED`. Verify: `src/ndbapi/Ndb.cpp:657-724`.
+- Which word places the key: word 1, the second word of the MD5
   digest or the high half of XXH3, exactly as step 2 says. Verify:
-  `Ndb.cpp`, after `rondb_calc_hash`; `rondb_hash.cpp`.
+  `src/ndbapi/Ndb.cpp:570-574, 736-740`; `src/common/util/rondb_hash.cpp:52-57`.
 - XXH3 is pinned by 37 published values of the algorithm, one on each
   side of every boundary between its paths, and MD5 by RFC 1321's own
   examples and the block boundaries. The XXH3 secret is the algorithm's
   standard 192 bytes.
 - Fanout tables (step 3) are refused for now; the fields to do them
-  (`PartitionHashBaseKeyCount`, `DetailKeyCount`, `Fanout`) are parsed.
+  (table properties 166, 167 and 168) are parsed.
 - **Which nodes hold a fragment** comes with the description, in
-  `ReplicaData` (key 138): 16-bit values, big-endian, the replica
+  the replica map (table property 138): 16-bit values, big-endian, the replica
   count and the fragment count, then per fragment its log part and the
   node of each replica, primary first as the distribution handler
   placed it. The dictionary asks the distribution handler for it only
-  when answering `GET_TABINFOREQ`. Verify: `Dbdict.cpp`,
-  `packTableIntoPages`; `DbdihMain.cpp`, `execCREATE_FRAGMENTATION_REQ`;
-  `NdbDictionaryImpl.cpp`, where the log part is passed over.
+  when answering `TABLE_DESC_REQ`. Verify:
+  `src/kernel/blocks/dbdict/Dbdict.cpp:1297-1321`;
+  `src/kernel/blocks/dbdih/DbdihMain.cpp:14347-14408, 14615-14616`;
+  `src/ndbapi/NdbDictionaryImpl.cpp:4175-4195`, where the log part is
+  passed over.
 - **Which replica is primary is not fixed** (steps 5 and 6 above). With
   dynamic primary replicas, which RonDB 26.10 has, and more than one
   replica alive, the data nodes deal the primaries of a node group's
@@ -548,8 +644,8 @@ against the reference:
   share (the fragment count divided by the alive count, rounded up);
   with one replica, or one alive, that one. The reference computes the
   same rule for itself, and so does `ic_apid::hash::primary_of`.
-  Verify: `NdbDictionaryImpl.cpp`, `get_nodes` and
-  `calculate_primary_replicas`.
+  Verify: `src/ndbapi/NdbDictionaryImpl.cpp:2237-2249, 2323-2382,
+  2483-2521`.
 - **Node choice as built** (`hash::choose_node`): a fully replicated
   table goes to any started node holding any fragment; a read-backup
   table, which every table a RonDB server makes is, to any started
@@ -558,131 +654,144 @@ against the reference:
   reference first prefers a node in its own location domain, then one
   on its own host, and balances by a per-node count; none of that is
   done yet. A wrong choice only costs a hop: the coordinator forwards
-  the operation to wherever the row is. Verify: `NdbImpl::select_node`;
-  `ndb_cluster_connection.cpp`, `select_node`.
-- The `FRAGMENT` pseudo column (0xFFFE), read with a header of size
+  the operation to wherever the row is. Verify: `src/ndbapi/Ndb.cpp:789-880`;
+  `src/ndbapi/ndb_cluster_connection.cpp:1627-1773`.
+- The partition pseudo column (0xFFFE), read with a header of size
   zero, answers with one word: the partition the row is in. `ic_read
   --partition` compares it with the computed one, which is how the
   chain is checked live: seen to agree (2026-09-22) on a RonDB 26.10
   table with an INT key, hashed by XXH3, over eight partitions. Verify:
-  `DbtupRoutines.cpp`, `read_pseudo`.
+  `src/kernel/blocks/dbtup/DbtupRoutines.cpp:3247-3250, 3508-3509`.
 
-### 6.4 TCKEYREQ (GSN 12)
+### 6.4 KEY_OP_REQ (signal 12)
 
-Long form only (sections). Signal data, 8 fixed words: API connect ptr
-(TC connect ptr from seize), sender data (our operation object id),
-attrLen (total ATTRINFO words), tableId, requestInfo, tableSchemaVersion,
-transId1, transId2. Optional words 9–12 depending on flags: scanInfo,
-distribution hash value, distribution key size, stored procedure id.
-Section 0 = KEYINFO, section 1 = ATTRINFO. Verify:
+Long form only (sections). Signal data, 8 fixed words: the coordinator's
+record (its pointer from the allocation), our query's id (our operation
+object id), the column data length (total COLUMN_DATA_ORD words), the
+table id, the flags word, the table's schema version, and the
+transaction id's low and high halves. Optional words 9–12 depending on
+flags: scan information, distribution hash value, distribution key
+size, stored procedure id.
+Section 0 = KEY_DATA_ORD, section 1 = COLUMN_DATA_ORD. Verify:
 `include/kernel/signaldata/TcKeyReq.hpp:57-160`.
 
-requestInfo bits: 0 dirty, 1 no-disk, 2 distribution-key present,
-3 via SPJ, 4 commit, 5–7 operation type (0 read, 1 update, 2 insert,
+Flags word bits: 0 dirty, 1 no-disk, 2 distribution-key present,
+3 via the join block, 4 commit, 5–7 operation type (0 read, 1 update, 2 insert,
 3 delete, 4 write, 5 read exclusive, 6 refresh, 7 unlock), 8 simple,
 9 queue on redo, 10 execute, 11 start transaction, 12–13 abort option,
-14 scan takeover, 15 interpreted, 16–18 ATTRINFO words in signal (0 for
+14 scan takeover, 15 interpreted, 16–18 COLUMN_DATA_ORD words in signal (0 for
 long form), 19 reorg, and RonDB additions 20 read-committed-base,
 21 no-wait, 22 batch-safe, 23 batch-unsafe, 24 pass-queueing, plus
-replica-applier, TTL and ring-buffer flags. Verify: `TcKeyReq.hpp:279-448`.
+replica-applier, TTL and ring-buffer flags. Verify:
+`include/kernel/signaldata/TcKeyReq.hpp:285-474`.
 iClaustron documents bits 0–15 in prose in `ic_apid_handle_messages.ic`
-under the name `NDB_PRIM_KEYREQ`; the stock GSN and the RonDB bits above
+under the name `NDB_PRIM_KEYREQ`; the stock signal and the RonDB bits above
 supersede it.
 
-As built (`ic_ndb_signals::tc_key`), checked against the reference:
+As built (`ic_signals::key_ops`), checked against the reference:
 
 - **The optional words were wrong above.** After the eight fixed words
   come, each only if its flag is set and in this order: the user id and
   its version for RonDB's rate limits (flag bit 29, two words), the scan
   information (bit 14), the distribution key (bit 2). Nothing else is
-  read from a long request. Verify: `NdbOperationExec.cpp`,
-  `fillTcKeyReqHdr`; `DbtcMain.cpp`, `execTCKEYREQ`, where the words are
-  found.
+  read from a long request. Verify:
+  `src/ndbapi/NdbOperationExec.cpp:1505-1528`;
+  `src/kernel/blocks/dbtc/DbtcMain.cpp:3877-3880, 4601-4622`, where the
+  words are found.
 - **A long request must be exactly as long as its flags make it.** The
   coordinator checks the length against eight plus the optional words,
   and refuses anything else as a malicious signal. Verify:
-  `DbtcMain.cpp`, `execTCKEYREQ`, the length check after the optional
-  words.
+  `src/kernel/blocks/dbtc/DbtcMain.cpp:4624-4639`, the length check after
+  the optional words.
 - A committed read sets both the simple and the dirty flag; a simple
-  read sets only simple. Verify: `NdbOperationDefine.cpp`, the lock mode
-  switch.
+  read sets only simple. Verify: `src/ndbapi/NdbOperationDefine.cpp:342-352`,
+  the lock mode switch.
 - Operation types: read 0, update 1, insert 2, delete 3, write 4, read
-  exclusive 5, refresh 6, unlock 7. Verify: `kernel_types.h`.
+  exclusive 5, refresh 6, unlock 7. Verify: `include/kernel/kernel_types.h:40-50`.
 
-KEYINFO section: key column values in primary-key order, each padded to
+KEY_DATA_ORD section: key column values in primary-key order, each padded to
 4-byte alignment. Verify: `include/kernel/signaldata/KeyInfo.hpp:71-95`.
 
-ATTRINFO section. For a plain read: a list of attribute headers (one word
-each) naming the columns. The record path of the reference reads
+COLUMN_DATA_ORD section. For a plain read: a list of column headers (one word
+each) naming the columns. The reference's record path reads
 **packed** instead, and so do we (`ic_apid::row_codec`, as the author
-pointed out): one header, `READ_ALL` (0xFFF0) with the column count as
-its size when every column is read, otherwise `READ_PACKED` (0xFFF3)
-with a bitmask of the attribute ids after it. The row comes back behind
-one `READ_PACKED` header whose size is a result bitmap's in bytes. The
-bitmap has a bit per attribute id, set if read, and after each nullable
-column read one more, set if NULL. The values follow in attribute
-order, NULLs taking no room: a byte-sized type (characters, 8- and
-16-bit elements) at the next byte, a 32- or 64-bit one at the next
+pointed out): one header, the read-every-column pseudo column (0xFFF0)
+with the column count as its size when every column is read, otherwise
+the read-by-mask pseudo column (0xFFF3) with a bitmask of the column ids
+after it. The row comes back behind one 0xFFF3 header whose size is a
+result bitmap's in bytes. The bitmap has a bit per column id, set if
+read, and after each nullable column read one more, set if NULL. The
+values follow in column order, NULLs taking no room: a byte-sized type
+(characters, 8- and 16-bit elements) at the next byte, a 32- or 64-bit one
+at the next
 word, bit columns packed together bit by bit from a word, and whatever
 follows them after the last word they touched. A variable-sized value
 starts with its one or two length bytes. There is no packed form for
 writing: an update sends a header and value per column. Verify:
-`NdbOperationExec.cpp`, `buildSignalsNdbRecord`; `DbtupRoutines.cpp`,
-`read_packed` and `updateAttributes`; `NdbReceiver.cpp`,
-`unpackNdbRecord` and `pad_pos`.
+`src/ndbapi/NdbOperationExec.cpp:1068-1088`;
+`src/kernel/blocks/dbtup/DbtupRoutines.cpp:3513-3650, 1945-2229`;
+`src/ndbapi/NdbReceiver.cpp:990-1058, 790-824`.
 
   For a write, the section is a header and value per column, the
   value's length in bytes in the header and the value padded to words;
   a length of zero means NULL and no value follows. A key column is
   sent with the value the key section has, so that the two agree. A
   request with nothing to send, such as a delete, carries the key
-  section alone. Verify: `NdbOperationExec.cpp`,
-  `buildSignalsNdbRecord`, its final update words, and `doSendKeyReq`,
-  which sends one section or two. For a plain write: attribute header + value
+  section alone. Verify: `src/ndbapi/NdbOperationExec.cpp:1160-1303`,
+  the final update words, and `:204-205, 219-222, 342-353`, where one
+  section or two are sent. For a plain write: column header + value
 words per column. For interpreted operations and all scans the section
 starts with five length words: (1) reads before the program, (2) the
 program, (3) updates after, (4) reads after, (5) subroutines; each part is
-attribute headers plus data. Verify:
+column headers plus data. Verify:
 `include/kernel/signaldata/AttrInfo.hpp:33-97`,
-`src/ndbapi/NdbOperationExec.cpp:1345-1400`.
+`src/ndbapi/NdbOperationExec.cpp:961-986, 1143-1157, 1366-1417`.
 
-Attribute header word: bits 16–31 attribute id, bit 15 partial flag,
-bits 0–14 byte length; length 0 means NULL. Pseudo-columns
-`FRAGMENT 0xFFFE`, `ROW_COUNT`, `RANGE_NO 0xFFFB`, `READ_PACKED 0xFFF3`,
-`READ_ALL 0xFFF0`, `ROW_GCI64`, `LOCK_REF`, `OP_ID`, RonDB `AGG_RESULT
-0xFF00`, `APPEND_COLUMN 0xFC00`, `SET_PARTIAL_COLUMN 0xFC01`. Verify:
-`include/kernel/AttributeHeader.hpp:39-196`.
+Column header word: bits 16–31 column id, bit 15 partial flag,
+bits 0–14 byte length; length 0 means NULL. Pseudo-columns, by number:
+0xFFFE the partition, 0xFFFD the row count, 0xFFFB the range number,
+0xFFF3 read by mask, 0xFFF0 read every column, 0xFFE7 the row's 64-bit
+global checkpoint, 0xFFEE the lock reference, 0xFFED the operation's
+identity; RonDB's 0xFF00 the aggregation result, 0xFC00 append to a
+column, 0xFC01 write part of a column. Verify:
+`include/kernel/AttributeHeader.hpp:39-198`.
 
 ### 6.5 Replies
 
-- `TCKEYCONF` (GSN 10): API connect ptr, gci_hi, confInfo, transId1,
-  transId2, then per operation `{operation object id, attrInfoLen}`, then
-  gci_lo. confInfo: bits 0–15 number of operations, bit 16 commit flag,
-  bit 17 commit-ack marker. `attrInfoLen` bit 31 = dirty read (low bits
-  then carry the responding node). Arrives to `API_PACKED` in packed form
+- `KEY_OP_CONF` (signal 10): our pointer for the transaction, the global
+  checkpoint's high word, the information word, the transaction id's low
+  and high halves, then per operation `{our query's id, its row data
+  length}`, then the global checkpoint's low word. The information word:
+  bits 0–15 number of operations, bit 16 commit flag, bit 17 commit-ack
+  marker. The row data length's bit 31 = dirty read (low bits then carry
+  the responding node). Arrives to `BUNDLE` in bundled form
   (up to 6 sub-signals, each sub-header `len = (w & 0x1F) + 3`, block in
-  bits 16–31) or unpacked to our block. Verify:
+  bits 16–31) or alone to our block. Verify:
   `include/kernel/signaldata/TcKeyConf.hpp:36-116`,
   `src/ndbapi/TransporterFacade.cpp:288-321`.
-- `TCKEYREF` (GSN 11): connect ptr, transId1, transId2, errorCode,
-  errorData. RonDB rate-limit errors 243 and 2203. Verify:
-  `TcKeyRef.hpp:34-59`.
+- `KEY_OP_REF` (signal 11): our query's id, the transaction id's low and
+  high halves, the error code and the error data. RonDB rate-limit
+  errors 243 and 2203. Verify:
+  `include/kernel/signaldata/TcKeyRef.hpp:57-68`.
 
   **A refusal is sent only for an operation that is allowed to fail**,
-  that is one sent with `IgnoreError`, as a committed read is. An
-  operation sent with `AbortOnError`, as a write is, gets none: the
+  that is one whose abort option says to ignore an error, as a committed
+  read's does. An operation sent to abort on error, as a write is, gets
+  none: the
   coordinator aborts the transaction, and the error comes in
-  `TCROLLBACKREP` (GSN 16) instead, five words naming the transaction:
+  `TRANS_ABORTED_REP` (signal 16) instead, five words naming the transaction:
   our pointer, the transaction id, the error and its data. A
   transaction therefore waits for that report as well as for the
   confirmation. Found live (2026-09-22): an insert of a key that was
   already there waited for a refusal that never came. Verify:
-  `DbtcMain.cpp`, where a refusal is sent only when an error is allowed
-  and `TCKEY_abort` is taken otherwise, and where the rollback report is
-  sent with the transaction's return code; `TcRollbackRep.hpp`.
-- `TRANSID_AI` (GSN 5): row data (attribute header + data words) for one
+  `src/kernel/blocks/dbtc/DbtcMain.cpp:9694-9740`, where a refusal is
+  sent only when an error is allowed and the transaction is aborted
+  otherwise, and `:10576-10583, 21571-21588`, where the rollback report
+  is sent with the transaction's return code;
+  `include/kernel/signaldata/TcRollbackRep.hpp:53-59`.
+- `ROW_DATA_REP` (signal 5): row data (column header + data words) for one
   operation, first word = our operation object id; long form in section 0.
-  May arrive **before or after** the matching `TCKEYCONF`.
+  May arrive **before or after** the matching `KEY_OP_CONF`.
 
   Seen live (2026-09-21) with `ic_read` against RonDB 26.10: a
   committed read of a row by its key, of a row with a NULL column, and
@@ -690,108 +799,120 @@ bits 0–14 byte length; length 0 means NULL. Pseudo-columns
   `ic_write` (2026-09-22): an insert, an update and a delete of a row,
   each confirmed, and a key already there refused with 630 through the
   rollback report.
-- `KEYINFO20` (GSN 33): key of a scanned row when scan takeover was
+- `SCAN_ROW_KEY_REP` (signal 33): key of a scanned row when scan takeover was
   requested.
-- Commit-ack: when `TCKEYCONF` bit 17 is set, send `TC_COMMIT_ACK`
-  (GSN 469) back to TC. Verify: `Ndbif.cpp:493-520`.
+- Commit-ack: when `KEY_OP_CONF` bit 17 is set, send `COMMIT_MARKER_FREE_ORD`
+  (signal 469) back to coordinator. Verify: `src/ndbapi/Ndbif.cpp:529-576`.
 
-As built (`ic_ndb_signals::tc_key`, `packed`, and the receive thread),
+As built (`ic_signals::key_ops`, `bundle`, and the receive thread),
 with what the reference showed on the way:
 
 - **Every reply names its receiver in its first word**, which the
-  reference states as a rule for all traffic signals. `TCKEYCONF` names
-  the transaction by the pointer given at seize time, or is RNIL, and
+  reference states as a rule for all traffic signals. `KEY_OP_CONF` names
+  the transaction by the pointer given at allocate time, or is IC_NULL_PTR, and
   the transaction is then found from the operations it lists.
-  `TCKEYREF` and `TRANSID_AI` name the operation by the pointer the
-  request gave it. Verify: `Ndbif.cpp`, the dispatch of each.
-- **`TRANSID_AI` comes from the node that read the row**, which need
+  `KEY_OP_REF` and `ROW_DATA_REP` name the operation by the pointer the
+  request gave it. Verify: `src/ndbapi/Ndbif.cpp:358-369, 513-525,
+  580-582, 879-887`.
+- **`ROW_DATA_REP` comes from the node that read the row**, which need
   not be the coordinator's node. Its three header words are the
   operation pointer and the transaction id; a long one has the row in
   section 0, and one sent in fragments has a fourth word, the row's
-  whole length. Verify: `TransIdAI.hpp`.
-- **Per operation, `TCKEYCONF` gives the words of row data to expect.**
+  whole length. Verify: `include/kernel/signaldata/TransIdAI.hpp:52-61, 81-87`.
+- **Per operation, `KEY_OP_CONF` gives the words of row data to expect.**
   With the top bit set it is a dirty read, and the low bits name the
-  reading node. An operation is complete when its `TRANSID_AI` words
-  reach the count, or at the first `TRANSID_AI` of a dirty read; with no
-  words expected, `TCKEYCONF` alone completes it. A dirty read whose
+  reading node. An operation is complete when its `ROW_DATA_REP` words
+  reach the count, or at the first `ROW_DATA_REP` of a dirty read; with no
+  words expected, `KEY_OP_CONF` alone completes it. A dirty read whose
   reading node fails before its row arrives fails with 4119. Verify:
-  `NdbReceiver.hpp`, `execTCOPCONF`; `NdbReceiver.cpp`,
-  `execTRANSID_AI`; `NdbTransaction.cpp`, `receiveTCKEYCONF`.
+  `include/ndbapi/NdbReceiver.hpp:403-410`;
+  `src/ndbapi/NdbReceiver.cpp:1435-1463, 1592-1593, 1684-1685`;
+  `src/ndbapi/NdbTransaction.cpp:2813-2843`.
 - The commit marker counts only when the commit bit is set too, and
   the low word of the global checkpoint follows the operations only
-  when the signal is long enough to hold it. Verify: `TcKeyConf.hpp`,
-  `getMarkerFlag`; `receiveTCKEYCONF`.
-- **`TC_COMMIT_ACK` is two words, the transaction id,** sent to the
-  block that sent the `TCKEYCONF`, and sent even when the confirmation
-  is otherwise rejected. Verify: `NdbTransaction.cpp`,
-  `sendTC_COMMIT_ACK`; `Ndbif.cpp`.
-- **Both `TCKEYCONF` and short `TRANSID_AI` arrive packed.** A signal
-  to `API_PACKED` (2047) holds several signals of its own signal number,
+  when the signal is long enough to hold it. Verify:
+  `include/kernel/signaldata/TcKeyConf.hpp:113-116`;
+  `src/ndbapi/NdbTransaction.cpp:2845-2851`.
+- **`COMMIT_MARKER_FREE_ORD` is two words, the transaction id,** sent to the
+  block that sent the `KEY_OP_CONF`, and sent even when the confirmation
+  is otherwise rejected. Verify: `src/ndbapi/Ndbif.cpp:2052-2079`,
+  `:559-576`.
+- **Both `KEY_OP_CONF` and short `ROW_DATA_REP` arrive bundled.** A signal
+  to `BUNDLE` (2047) holds several signals of its own signal number,
   each behind a header word with its length less three in bits 0–4 and
   its block in bits 16–31. The receive thread takes it apart and routes
-  each part by its own block. Verify: `TransporterFacade.cpp`, where
-  `API_PACKED` is taken apart; `DbtcMain.cpp`, `sendPackedTCKEYCONF`;
-  `DbtupBuffer.cpp`, `sendAPI_TRANSID_AI`.
+  each part by its own block. Verify:
+  `src/ndbapi/TransporterFacade.cpp:276-322`, where `BUNDLE` is taken
+  apart; `src/kernel/blocks/dbtc/DbtcMain.cpp:7319-7336, 7421-7430`;
+  `src/kernel/blocks/dbtup/DbtupBuffer.cpp:107-135, 216-251`.
 
 ### 6.6 Completion accounting (the rule that makes `poll` correct)
 
-Per operation keep `expected_len` (from TCKEYCONF) and `received_len` (from
-TRANSID_AI), both initially unknown. The operation is complete when both
-are known, regardless of arrival order. A TCKEYREF completes it with an
+Per operation keep `expected_len` (from KEY_OP_CONF) and `received_len` (from
+ROW_DATA_REP), both initially unknown. The operation is complete when both
+are known, regardless of arrival order. A KEY_OP_REF completes it with an
 error. A transaction's `execute` is complete when completed operations
-equals sent operations, and commit state is taken from the TCKEYCONF
-commit flag. Verify: `include/ndbapi/NdbReceiver.hpp:400`,
-`src/ndbapi/NdbTransaction.cpp:2785-2853`, `NdbOperationExec.cpp:1698`.
+equals sent operations, and commit state is taken from the KEY_OP_CONF
+commit flag. Verify: `include/ndbapi/NdbReceiver.hpp:248-254, 403-410`,
+`src/ndbapi/NdbTransaction.cpp:2805-2868`,
+`src/ndbapi/NdbOperationExec.cpp:1738-1771`.
 
 ### 6.7 Commit and abort without operations
 
-`TC_COMMITREQ` (GSN 19) `{TC connect ptr, transId1, transId2}` →
-`TC_COMMITCONF` (GSN 17) `{connect ptr (bit 0 = ack expected), transId1,
-transId2, gci_hi, gci_lo}` or `TC_COMMITREF`. `TCROLLBACKREQ` (GSN 15) →
-`TCROLLBACKCONF` (13) or `TCROLLBACKREF` (14). `TCROLLBACKREP` (GSN 16) `{connect ptr, transId,
-returnCode, errorData}` is a TC-initiated abort. As built
-(`ic_ndb_signals::tc_key`): the two requests are three words, our
-pointer and the transaction id; `TCROLLBACKCONF` is those three back;
-`TC_COMMITREF` adds the error code, and `TCROLLBACKREF` that and the
-coordinator's state. Verify: `DbtcMain.cpp`, `execTC_COMMITREQ`,
-`execTCROLLBACKREQ` and where each reply is sent.
+`COMMIT_REQ` (signal 19) `{the coordinator's record, the transaction
+id's low and high halves}` → `COMMIT_CONF` (signal 17) `{our pointer
+(bit 0 = ack expected), the transaction id's two halves, the global
+checkpoint's high and low words}` or `COMMIT_REF` (18). `ROLLBACK_REQ`
+(signal 15) → `ROLLBACK_CONF` (13) or `ROLLBACK_REF` (14).
+`TRANS_ABORTED_REP` (signal 16) `{our pointer, the transaction id, the
+return code, the error data}` is a coordinator-initiated abort. As built
+(`ic_signals::key_ops`): the two requests are three words, our
+pointer and the transaction id; `ROLLBACK_CONF` is those three back;
+`COMMIT_REF` adds the error code, and `ROLLBACK_REF` that and the
+coordinator's state. Verify: `src/kernel/blocks/dbtc/DbtcMain.cpp:9816-9953`
+(commit), `:9968-10077` (rollback), and `:8223-8242, 21562-21570`,
+where the replies after a commit and after an abort are sent.
 
 **The takeover replies, as built** (`ic_apid::transaction`): both are
 three words, our pointer for the transaction and its id, sent by the
 coordinator that took over from the failed one, so from another node
-than the request went to. `TCKEY_FAILCONF` has the commit-ack marker in
-its pointer's low bit, and is acknowledged with `TC_COMMIT_ACK` to its
+than the request went to. `TAKEOVER_CONF` has the commit-ack marker in
+its pointer's low bit, and is acknowledged with `COMMIT_MARKER_FREE_ORD` to its
 sender whatever became of the transaction here; it means committed
 when a commit had been asked for, and otherwise a commit nobody asked
-for, which the reference reports as 4115. `TCKEY_FAILREF` means
+for, which the reference reports as 4115. `TAKEOVER_REF` means
 aborted: the outcome wanted if a rollback had been asked for, and
 error 4031 otherwise. The reference does nothing to the transactions
-of a failed coordinator on `NODE_FAILREP`; on `NF_COMPLETEREP` it
+of a failed coordinator on `NODE_LOST_REP`; on `NODE_LOST_DONE_REP` it
 aborts those still open with 4010, since the takeover would have
-answered for any that committed. Verify: `TcKeyFailConf.hpp`;
-`DbtcMain.cpp`, `sendTCKEY_FAILCONF`; `Ndbif.cpp`, the two replies and
-`report_node_failure_completed`; `NdbTransaction.cpp`,
-`receiveTCKEY_FAILCONF` and `receiveTCKEY_FAILREF`. Not yet seen live:
+answered for any that committed. Verify:
+`include/kernel/signaldata/TcKeyFailConf.hpp:53-64`;
+`src/kernel/blocks/dbtc/DbtcMain.cpp:14633-14694`;
+`src/ndbapi/Ndbif.cpp:1134-1222`, the two replies, and `:297-356`;
+`src/ndbapi/NdbTransaction.cpp:2888-2941, 2952-2984`. Not yet seen live:
 that needs a coordinator killed with a commit in flight, which is for
 the failure group of the integration tests. Node failure while a
-transaction is in flight: `TCKEY_FAILCONF` (8) / `TCKEY_FAILREF` (9).
-RonDB sends `TC_DEADLOCK_REP` before an abort caused by deadlock
-detection. Verify: `TcCommit.hpp:37-70`, `TcRollbackRep.hpp:33`,
-`NdbTransaction.cpp:1748-1800`, `:2876-2940`, `Ndbif.cpp:1400`.
+transaction is in flight: `TAKEOVER_CONF` (8) / `TAKEOVER_REF` (9).
+RonDB sends `DEADLOCK_FOUND_REP` (980) before an abort caused by deadlock
+detection. Verify: `include/kernel/signaldata/TcCommit.hpp:37-89`,
+`include/kernel/signaldata/TcRollbackRep.hpp:33-60`,
+`src/ndbapi/NdbTransaction.cpp:1748-1760, 1800-1807, 2888-2984`,
+`src/ndbapi/Ndbif.cpp:1448-1484`.
 
 Execute semantics we must reproduce: the first operation of a transaction
-carries the start flag; the last operation in a `Commit` execute carries
-the commit flag; the last operation of every send train carries the
-execute flag. Abort option: `AbortOnError` default for writes,
-`IgnoreError` default for reads; committed reads only allow
-`IgnoreError`.
+carries the start flag; the last operation in an execute that commits
+carries the commit flag; the last operation of every send train carries
+the execute flag. Abort option: abort on error by default for writes,
+ignore the error by default for reads; committed reads only allow
+ignoring it.
 
 ### 6.8 Unique index operations
 
-`TCINDXREQ` (GSN 519), `TCINDXCONF` (520) and `TCINDXREF` (521) have exactly the `TCKEYREQ` family
-layout; the key sent is the unique index key; `INDXKEYINFO`/`INDXATTRINFO`
-are the short-form trains (unused by us). Verify:
-`include/kernel/signaldata/TcIndx.hpp:34`,
+`UNIQUE_OP_REQ` (signal 519), `UNIQUE_OP_CONF` (520) and `UNIQUE_OP_REF`
+(521) have exactly the `KEY_OP_REQ` family
+layout; the key sent is the unique index key; signals 522 and 523 are
+the short-form trains of key and column data (unused by us). Verify:
+`include/kernel/signaldata/TcIndx.hpp:35`,
 `src/ndbapi/NdbIndexOperation.cpp:35-178`.
 
 As built (`ic_apid::transaction`, a query made with
@@ -799,11 +920,12 @@ As built (`ic_apid::transaction`, a query made with
 its id and version, not the base table's; the key is the indexed
 columns in the index's order, which are the primary key of the index's
 own table, taken from a record over the base table by name; the
-attribute information is over the base table as for any read or write.
+column data is over the base table as for any read or write.
 The coordinator finds the row's primary key through the index and runs
-the operation on the table; `TCINDXCONF` and `TCINDXREF` come back in
-the key family's layouts (`TcIndxConf` is a typedef of `TcKeyConf`,
-the refusal is built as a `TcKeyRef`), and the row as `TRANSID_AI`.
+the operation on the table; `UNIQUE_OP_CONF` and `UNIQUE_OP_REF` come back in
+the key family's layouts (the reference defines the confirmation as the
+key confirmation and builds the refusal as a key refusal), and the row
+as `ROW_DATA_REP`.
 An insert cannot go through an index; the reference refuses one with
 4200. **A read through an index takes the shared lock, always**: the
 reference sends its committed and simple index reads as plain locked
@@ -811,77 +933,92 @@ reads, and the coordinator asserts that an index request carries
 neither the dirty nor the simple flag. Found live (2026-09-22): a
 committed read sent through an index with both flags lost the link to
 the data node at once, which is what a failed assertion in a debug
-data node looks like from here. Verify: `NdbIndexOperation.cpp`,
-`indxInit`, where the access table becomes the index's own,
-`insertTuple`, `committedRead` and `simpleRead`; `DbtcMain.cpp`,
-`execTCINDXREQ`, and the assertions on the flags where the index read
-is built and where the base operation is.
+data node looks like from here. Verify:
+`src/ndbapi/NdbIndexOperation.cpp:70-72`, where the access table
+becomes the index's own, `:95-98` (insert), `:124-128` and `:112-116`
+(committed and simple reads); `src/kernel/blocks/dbtc/DbtcMain.cpp:24117-24419`,
+and the assertions on the flags where the index read is built and where
+the base operation is, `:25144-25145, 25297-25298`.
 
 ## 7. Scans
 
-- `SCAN_TABREQ` (GSN 32), 11 fixed words: API connect ptr, attr/key
-  length word, requestInfo, tableId (the **index** id for ordered index
-  scans), schema version, stored procedure id, transId1, transId2, buddy
-  connect ptr, batch byte size, first batch size; optional distribution
-  key, RonDB TTL purge window, user id, user id version, parallelism.
+- `SCAN_REQ` (signal 32), 11 fixed words: the coordinator's record, a
+  column and key length word, the flags word, the table id (the
+  **index** id for ordered index scans), the schema version, the stored
+  procedure id, the transaction id's low and high halves, the owning
+  transaction's coordinator record, the batch byte size, the first
+  batch size; optional distribution key, RonDB TTL purge window, user
+  id, user id version, parallelism.
   Sections: 0 = receiver ids (one per parallel fragment scan, which is how
-  parallelism is expressed), 1 = ATTRINFO, 2 = KEYINFO (bounds). Verify:
+  parallelism is expressed), 1 = COLUMN_DATA_ORD, 2 = KEY_DATA_ORD (bounds). Verify:
   `include/kernel/signaldata/ScanTab.hpp:39-133`.
-- requestInfo bits: 8 lock mode, 9 no-disk, 10 hold lock, 11 read
-  committed, 12 keyinfo (request KEYINFO20 for takeover), 13 tuple scan,
-  14 descending, 15 range scan, 16–25 batch size (rows, max 1 023),
-  26 distribution key, 27 via SPJ, 28 pass all confs, 29 extended conf,
+- Flags word bits: 8 lock mode, 9 no-disk, 10 hold lock, 11 read
+  committed, 12 key information (request SCAN_ROW_KEY_REP for takeover),
+  13 tuple scan, 14 descending, 15 range scan, 16–25 batch size (rows,
+  max 1 023), 26 distribution key, 27 via the join block, 28 pass all
+  confirmations, 29 extended confirmation,
   30 read-committed-base, 31 multi-fragment; RonDB bits 0–7 for ring
   buffer meta, join aggregation, parallel ordered scan, TTL, user id,
-  pass queueing, aggregation. Verify: `ScanTab.hpp:210-250`.
-- `SCAN_TABCONF` (GSN 29): connect ptr, requestInfo (bit 31 = end of
-  data), transId1, transId2, then per fragment `{apiPtrI, tcPtrI, rows,
-  len}` (or a 3-word compact form); `tcPtrI == RNIL` means that fragment is
-  finished. Verify: `ScanTab.hpp:653-688`.
-- `SCAN_TABREF` (GSN 31): connect ptr, transId, errorCode, closeNeeded.
-- `SCAN_NEXTREQ` (GSN 28): connect ptr, stopScan, transId1, transId2, then
-  the `tcPtrI`s being acknowledged (inline if ≤ 21 words, else section 0).
+  pass queueing, aggregation. Verify:
+  `include/kernel/signaldata/ScanTab.hpp:211-249, 300-304`.
+- `SCAN_CONF` (signal 29): our pointer, an information word (bit 31 =
+  end of data), the transaction id's low and high halves, then per
+  fragment `{our receiver id, the coordinator's pointer for it, rows,
+  length}` (or a 3-word compact form); the coordinator's pointer equal
+  to `IC_NULL_PTR` means that fragment is finished. Verify:
+  `include/kernel/signaldata/ScanTab.hpp:653-706`.
+- `SCAN_REF` (signal 31): our pointer, the transaction id, the error
+  code, and whether a close is needed.
+- `SCAN_MORE_REQ` (signal 28): the coordinator's record, a stop word,
+  the transaction id's low and high halves, then the coordinator's
+  pointers of the receivers being acknowledged (inline if ≤ 21 words,
+  else section 0).
   Acknowledging releases the previous batch's locks unless taken over.
-  Verify: `ScanTab.hpp:730-786`.
-- Row data arrives as `TRANSID_AI` addressed to the receiver ids.
-- Batch sizing from config `BatchSize`, `BatchByteSize`,
-  `MaxScanBatchSize` and the row width. Verify:
+  Verify: `include/kernel/signaldata/ScanTab.hpp:766-834`.
+- Row data arrives as `ROW_DATA_REP` addressed to the receiver ids.
+- Batch sizing from parameters 802 (`scan_batch_rows`), 801
+  (`scan_batch_bytes`) and 800 (`scan_batch_bytes_total`) and the row
+  width. Verify:
   `include/ndbapi/NdbReceiver.hpp:132-159`.
-- Ordered index bounds (KEYINFO section): per bound part a bound-type
-  word (`LE 0, LT 1, GE 2, GT 3, EQ 4`), then an attribute header using
-  the column's *index* attribute id, then the value words. An open bound
-  is `LE` with a NULL header for attribute 0. For multi-range scans the
+- Ordered index bounds (KEY_DATA_ORD section): per bound part a bound-type
+  word (0 ≤, 1 <, 2 ≥, 3 >, 4 =), then a column header using the
+  column's id *in the index*, then the value words. An open bound is
+  type 0 with a NULL header for column 0. For multi-range scans the
   first word of each range also carries the bound length (bits 16–31) and
   the range number (bits 4–15, max 0xFFF). Verify:
   `include/ndbapi/NdbIndexScanOperation.hpp:89-178`,
-  `src/ndbapi/NdbScanOperation.cpp:3900-3951`, `KeyInfo.hpp:71-95`.
+  `src/ndbapi/NdbScanOperation.cpp:1242-1251, 4111-4201`,
+  `include/kernel/signaldata/KeyInfo.hpp:71-95`.
   This is the target of `IC_RANGE_CONDITION`.
-- Takeover (update/delete a scanned row): a `TCKEYREQ` whose KEYINFO is the
-  raw `KEYINFO20` payload, with the scan-takeover flag and scanInfo word
-  (take-over info and fragment) set. Verify:
-  `NdbScanOperation.cpp:3295-3358`.
+- Takeover (update/delete a scanned row): a `KEY_OP_REQ` whose KEY_DATA_ORD is the
+  raw `SCAN_ROW_KEY_REP` payload, with the scan-takeover flag and the scan
+  information word (take-over info and fragment) set. Verify:
+  `src/ndbapi/NdbScanOperation.cpp:3541-3571`.
 
 ## 8. Dictionary
 
-- `GET_TABINFOREQ` (GSN 24): senderData, senderRef, requestType (0 by id,
-  1 by name, +2 for long-signal conf), tableId or name length,
-  schemaTransId; name in section 0. `GET_TABINFO_CONF` (GSN 190):
-  senderData, tableId, gci, totalLen, and the table description in
-  section 0 (fragmented if large). `GET_TABINFOREF` (GSN 23) with error
+- `TABLE_DESC_REQ` (signal 24): the caller's data, the caller's
+  reference, the request type (0 by id, 1 by name, +2 for a long
+  confirmation), the table id or the name's length, the schema
+  transaction id; name in section 0. `TABLE_DESC_CONF` (signal 190): the
+  caller's data, the table id, a global checkpoint, the total length,
+  and the table description in section 0 (fragmented if large).
+  `TABLE_DESC_REF` (signal 23) with error
   codes 709, 723, 701. Verify:
-  `include/kernel/signaldata/GetTabInfo.hpp:38-110`,
-  `src/ndbapi/NdbDictionaryImpl.cpp:3605-3629`. iClaustron has the
-  structs and GSNs but never sends the request.
+  `include/kernel/signaldata/GetTabInfo.hpp:38-144`,
+  `src/ndbapi/NdbDictionaryImpl.cpp:3606-3668`. iClaustron's C code has
+  the structures and signal numbers but never sends the request.
 
-  As built (`ic_ndb_signals::get_tab_info`, `ic_apid::dict_client`),
+  As built (`ic_signals::table_desc`, `ic_apid::dict_client`),
   each point checked against the reference:
   - The name is the internal `database/def/table`. The length word
     counts a terminating NUL, and section 0 is the name, the NUL and
     zero padding to whole words, in native byte order since the receiver
-    reads it as bytes. The request goes to `DBDICT` on any started node,
-    with requestType 3 and schemaTransId 0.
-  - The answer's six words are senderData, tableId, gci, totalLen in
-    words, tableType, senderRef. `GET_TABINFOREF` is seven words, with
+    reads it as bytes. The request goes to `DICTIONARY` on any started node,
+    with request type 3 and schema transaction id 0.
+  - The answer's six words are the caller's data, the table id, the
+    global checkpoint, the total length in words, the table's type, and
+    the sender's reference. `TABLE_DESC_REF` is seven words, with
     the error code sixth and the source line seventh; an older data node
     sends five with the code last.
   - The reference asks up to a hundred times, 50 to 100 ms apart with a
@@ -889,12 +1026,12 @@ is built and where the base operation is.
     on a timeout, each time to an alive node. 723 and 709 mean no such
     table and are final.
   - After parsing, a table placed by hash map needs its hash map, fetched
-    by id the same way (requestType 2, the id in word 4, no section).
+    by id the same way (request type 2, the id in word 4, no section).
     As built in `dict_client::get_hash_map` and
-    `dict_tab_info::parse_hash_map_info`:
+    `table_props::parse_hash_map_info`:
     - Keys: name 1, bucket array size 2, bucket array 3; the map's id and
-      version reuse the table keys `HashMapObjectId` (153) and
-      `HashMapVersion` (154). Every value defaults to zero, and there is
+      version reuse the table keys 153 (hash map id) and 154 (hash map
+      version). Every value defaults to zero, and there is
       no end marker.
     - **The bucket count is sent as a size in bytes**, two per bucket;
       the reference halves it after reading. The buckets are 16-bit
@@ -903,14 +1040,16 @@ is built and where the base operation is.
     - A row goes to fragment `buckets[hash % buckets.len()]`, the hash
       taken over the distribution key. `DEFAULT-HASHMAP-3840-8` is 3840
       buckets over 8 fragments.
-    Verify: `NdbDictionaryImpl.cpp`, `get_hashmap` and
-    `parseHashMapInfo`; `DictTabInfo.cpp`, `DictHashMapInfo::Mapping`;
-    `NdbDictionary.cpp`, `Table::getPartitionId`.
-- SimpleProperties encoding (network byte order): head word
-  `(valueType << 16) | key`; `Uint32 = 0` one word, `String = 1` and
-  `Binary = 2` length word then padded bytes, `Uint64 = 4` two words low
-  then high. Verify: `include/util/SimpleProperties.hpp:47-95`,
-  `src/common/util/SimpleProperties.cpp:36-204`. iClaustron's
+    Verify: `src/ndbapi/NdbDictionaryImpl.cpp:9623-9692`;
+    `include/kernel/signaldata/DictTabInfo.hpp:902-917`;
+    `src/common/debugger/signaldata/DictTabInfo.cpp:400-417`;
+    `src/ndbapi/NdbDictionary.cpp:778-801`.
+- The property stream (network byte order): head word
+  `(value type << 16) | key`; type 0 a 32-bit number, one word; 1 a
+  string and 2 binary data, a length word then padded bytes; 4 a 64-bit
+  number, two words low then high. Verify:
+  `include/util/SimpleProperties.hpp:47-95`,
+  `src/common/util/SimpleProperties.cpp:36-240`. iClaustron's
   `fill_create_table_info_properties` writes this format.
 
   **Two byte orders in one buffer.** Heads, numbers and lengths are
@@ -919,119 +1058,133 @@ is built and where the base operation is.
   word. So a receiver of the same byte order reads a number as
   `from_be` of the native word and a string as the native bytes of its
   words. A string's length counts its terminating NUL. The reader skips
-  keys it does not know (`unpack`, `ignoreUnknownKeys`).
-- DictTabInfo keys: table keys 1–30 and 127–171 (`TableName 1, TableId 2,
-  TableVersion 3, NoOfKeyAttr 5, NoOfAttributes 6, KeyLength 12,
-  FragmentTypeVal 13, TableTypeVal 18, PrimaryTableId 20,
-  FragmentCount 128, FragmentData 130, HashMapObjectId 153,
-  HashMapVersion 154, ReadBackupFlag 158, FullyReplicatedFlag 159,
-  PartitionCount 160`; RonDB `HashFunctionFlag 163, TTLSec 164,
-  TTLColumnNo 165, PartitionHashBaseKeyCount 166,
-  PartitionHashDetailKeyCount 167, PartitionHashFanout 168,
-  RingBufferSize 169, RingIdxColumnNo 170, RingMetaColumnNo 171`),
-  `TableEnd 999`; attribute keys 1000–1021 (`AttributeName, AttributeId,
-  AttributeSize 1003, AttributeArraySize 1005, AttributeKeyFlag 1006,
-  AttributeStorageType 1007, AttributeNullableFlag 1008, AttributeDKey
-  1010, AttributeExtType 1013, ExtPrecision/Scale/Length 1014–1016,
-  AutoIncrement 1017, ArrayType 1019, DefaultValueLen/Value 1020–1021`),
-  `AttributeEnd 1999`. **Only non-default values are sent, so the default
+  keys it does not know (`src/common/util/SimpleProperties.cpp:250-293`).
+- Table property keys (`IC_TP_*`): table keys 1–30 and 127–171 (1
+  name, 2 id, 3 version, 5 key column count, 6 column count, 12 key
+  length, 13 fragment type, 18 table type, 20 base table id, 128
+  fragment count, 130 fragment data, 153 hash map id, 154 hash map
+  version, 158 read backup, 159 fully replicated, 160 partition count;
+  RonDB's 163 hash function, 164 TTL in seconds, 165 TTL column, 166
+  fanout base key count, 167 fanout detail key count, 168 fanout, 169
+  ring buffer size, 170 ring index column, 171 ring meta column), 999
+  table end; column keys 1000–1021 (1000 name, 1001 id, 1003 element
+  size, 1005 array size, 1006 in the key, 1007 storage, 1008 nullable,
+  1010 in the distribution key, 1013 type, 1014–1016 precision, scale
+  and length, 1017 auto-increment, 1019 array kind, 1020–1021 default
+  value length and value), 1999 column end. **Only non-default values are
+  sent, so the default
   table is part of the protocol.** Verify:
   `include/kernel/signaldata/DictTabInfo.hpp:97-663`. iClaustron's
   `ic_apid_dict_signals.h` already lists keys and defaults.
 
-  How the reference reads it, and so how `ic_ndb_signals::dict_tab_info`
+  How the reference reads it, and so how `ic_signals::table_props`
   does:
-  - **The table part ends at the first `AttributeName`**, which is the
-    break key of the table mapping; `TableEnd` is not in it and is
-    skipped like any unknown key. Each attribute then runs from its
-    `AttributeName` to `AttributeEnd`, and there must be exactly
-    `NoOfAttributes` of them.
-  - **The defaults are the ones `Table::init` and `Attribute::init` set,
-    not the ones the comments beside the keys name.** The comments are
-    out of date in several places: the default fragment type is
-    hash-map partitioning (9), not a small table; `NoOfKeyAttr` starts
-    at 0, not 1; `MinLoadFactor` is 78, not 70. An attribute defaults to
-    type Unsigned, 32-bit elements, one element, fixed array, in memory.
-  - **Sizes are worked out, not read.** `translateExtType` sets the
+  - **The table part ends at the first column name key (1000)**, which
+    is where the reference's table reading stops; table end (999) is not
+    among the keys it reads and is skipped like any unknown key. Each column then
+    runs from its name key (1000) to column end (1999), and there must
+    be exactly as many as the column count (key 6) says.
+  - **The defaults are the ones the reference's reader sets before
+    reading, not the ones the comments beside the keys name**
+    (`src/common/debugger/signaldata/DictTabInfo.cpp:154-253`). The comments
+    are out of date in several places: the
+    default fragment type is hash-map partitioning (9), not a small
+    table; the key column count (key 5) starts at 0, not 1; the minimum
+    load factor (key 10) is 78, not 70. A column defaults to type
+    Unsigned, 32-bit elements, one element, fixed array, in memory.
+  - **Sizes are worked out, not read.** The reference works out the
     element size and count from type, length, precision and scale, and
-    the parser calls it for every attribute. Decimals use MySQL's
-    `decimal_bin_size` (four bytes per nine digits either side of the
-    point, less for the rest), with precision at most 65 and scale below
-    31.
-  - The character set number is the high half of `AttributeExtPrecision`.
+    its reader does so for every column
+    (`include/kernel/signaldata/DictTabInfo.hpp:501-637`,
+    `src/ndbapi/NdbDictionaryImpl.cpp:4073`). Decimals
+    take MySQL's binary decimal size (four bytes per nine digits either
+    side of the point, less for the rest, `/mysys/decimal.cc:1693-1709`),
+    with precision at most 65 and scale below 31
+    (`include/kernel/signaldata/DictTabInfo.hpp:550-561`).
+  - The character set number is the high half of the precision key
+    (1014).
     Char, Varchar, Longvarchar and Text must have one and nothing else
     may, or the table is refused.
-  - A default value is binary: a four-byte attribute header in network
+  - A default value is binary: a four-byte column header in network
     order whose low 15 bits are the value's byte size, then the value.
     **Every column is sent one; a size of zero means no default.** The
     value is not in network order, whatever the comment beside the code
-    says: `convertByteOrder` only acts on a big-endian host (or twice,
-    cancelling out, under `VM_TRACE`), so on a little-endian API the
-    bytes are used as the data node stored them. Verify:
-    `AttributeHeader.hpp`, `getByteSize`; `NdbSqlUtil.cpp`,
-    `convertByteOrder`. Found live: a first `ic_desc` printed a default
+    says: the reference's byte order conversion only acts on a
+    big-endian host (or twice, cancelling out, in a debug build), so on
+    a little-endian API the bytes are used as the data node stored
+    them. Verify: `include/kernel/AttributeHeader.hpp:237-239`;
+    `src/ndbapi/NdbDictionaryImpl.cpp:4132-4161`;
+    `src/common/util/NdbSqlUtil.cpp:1086-1124`. Found live: a first
+    `ic_desc` printed a default
     on every column.
   - **No column marked as distribution key means the whole primary key
     is.** A table created without a partitioning clause sends no
-    `AttributeDKey` at all; the reference then marks every primary key
+    distribution key flag (key 1010) at all; the reference then marks every
+    primary key
     column ("none is all"), and does the same when all of them are
-    marked. Key hashing depends on it. Verify: `NdbDictionaryImpl.cpp`,
-    `NdbTableImpl::computeAggregates`. Found live: `ndb_desc` showed
-    `DISTRIBUTION KEY` where a first `ic_desc` did not.
-  - The "frm data" `ndb_desc` counts is whichever of `FrmData` (27) or
-    `MysqlDictMetadata` (30) arrived; the reference keeps either as the
-    same blob. Verify: `NdbTableImpl::IndirectReader`.
+    marked. Key hashing depends on it. Verify:
+    `src/ndbapi/NdbDictionaryImpl.cpp:1534-1591`. Found live: the reference's table
+    description tool showed the key columns as distribution key where a
+    first `ic_desc` did not.
+  - The "frm data" the reference's table description tool counts is
+    whichever of key 27 (the old frm image) or key 30 (MySQL's
+    dictionary metadata) arrived; the reference keeps either as the same
+    blob. Verify: `src/ndbapi/NdbDictionaryImpl.cpp:3861-3871`.
 - **A table's schema version is two counters** (author, 2026-09-19):
   bits 24–31 go up by one for every online change, bits 0–23 for every
   offline change. Operations are checked against bits 0–23 only, so an
   online change leaves operations prepared with the previous version
   working, while an offline change makes them fail with a wrong schema
-  version. `ndb_desc` prints the whole word: seen live, a table altered
+  version. The reference's table description tool prints the whole
+  word: seen live, a table altered
   once online reads 16777217, which is 0x01000001. `ic_desc` prints the
-  two apart, as upper 1, lower 1 (`TableInfo::version_upper` and
+  two apart, as upper 1, lower 1 (`TableProps::version_upper` and
   `version_lower`). For the table cache
   (below) this means an online change is not noticed through errors;
   the API learns of it from the dictionary's notice (below) and
-  refetches. Verify: `Dbdict.cpp`,
-  `alter_obj_inc_schema_version` and `create_obj_inc_schema_version`;
-  `kernel_types.h`, `table_version_major`; `DbtcMain.cpp`,
-  `TableRecord::getErrorCode`; `DbspjMain.cpp` checks the same way.
+  refetches. Verify: `src/kernel/blocks/dbdict/Dbdict.cpp:207-209,
+  215-217`; `include/kernel/kernel_types.h:94`;
+  `src/kernel/blocks/dbtc/DbtcMain.cpp:27556-27565`; the join block
+  checks the same way, `src/kernel/blocks/dbspj/DbspjMain.cpp:471-484`.
 - After parsing a hash-map table, fetch its hash map object (also via
-  `GET_TABINFOREQ` by id) to fill the hash → fragment array. Verify:
-  `NdbDictionaryImpl.cpp:3703-3714`.
+  `TABLE_DESC_REQ` by id) to fill the hash → fragment array. Verify:
+  `src/ndbapi/NdbDictionaryImpl.cpp:3703-3717`.
 - Cache: per-connection local cache plus a global, mutex-protected,
   ref-counted cache keyed by internal name `db/schema/table`; schema
   change detected by table version mismatch (errors 241/284) forcing a
-  refetch. Verify: `src/ndbapi/DictCache.hpp:64-95`.
+  refetch. Verify: `src/ndbapi/DictCache.hpp:64-128`.
 
   As built (`ic_apid::dict_cache`, `ApidConnection::table_bind` and
   `index_bind`), with what was found in the reference on the way:
   - **The dictionary tells API nodes when a table changes.**
-    `ALTER_TABLE_REP` (GSN 606) goes to every API node's cluster
-    manager block (0x0FA2), unasked. Three words, table id, table
+    `TABLE_CHANGED_REP` (signal 606) goes to every API node's
+    `NODE_WATCH` block (0x0FA2), unasked. Three words, table id, table
     version and kind of change (1 altered, 2 dropped), and the internal
     name in section 0, NUL-padded to 128 bytes. The version is the one
     that no longer holds, the one before an alteration, and the name is
-    the one before a rename. Verify: `AlterTable.hpp`, `AlterTableRep`.
-  - An alteration is sent by every data node, through its own cluster
-    manager, to every API node registered there, so it arrives once per
-    data node. Verify: `Dbdict.cpp`, `alterTable_fromCommitComplete`;
-    `QmgrMain.cpp`, `execAPI_BROADCAST_REP`.
+    the one before a rename. Verify:
+    `include/kernel/signaldata/AlterTable.hpp:401-416`.
+  - An alteration is sent by every data node, through its own
+    `MEMBERSHIP` block, to every API node registered there, so it arrives once per
+    data node. Verify: `src/kernel/blocks/dbdict/Dbdict.cpp:11969-11999`;
+    `src/kernel/blocks/qmgr/QmgrMain.cpp:9186-9215`.
   - A drop is sent by the master alone, and only to API nodes whose
     reported version is 26.05 or later, or 26.02.5 and 25.10.14 in
     their series. The code, not its comment, decides: 26.04 does not
-    get it. We report 26.10. Verify: `Dbdict.cpp`, `dropTable_commit`;
-    `ndb_version.h.in`, `ndbd_support_drop_table_notification`.
+    get it. We report 26.10. Verify:
+    `src/kernel/blocks/dbdict/Dbdict.cpp:9451-9497`;
+    `include/ndb_version.h.in:1460-1488`.
   - The reference lets go of the cached object whose name, id and
     version all match, and marks a name being fetched so that what the
-    fetch brings back is not trusted. Verify: `ClusterMgr.cpp`,
-    `GSN_ALTER_TABLE_REP`; `DictCache.cpp`, `alter_table_rep`. Here the
+    fetch brings back is not trusted. Verify:
+    `src/ndbapi/ClusterMgr.cpp:934-943`; `src/ndbapi/DictCache.cpp:459-493`.
+    Here the
     fetch is repeated only if it brought back the version a notice
     named, so the copies from the other data nodes cost nothing.
   - When the last data node link goes, the reference lets go of
     everything cached except fetches under way. Verify:
-    `ClusterMgr.cpp`, where the count of connected nodes reaches zero;
-    `DictCache.cpp`, `invalidate_all`.
+    `src/ndbapi/ClusterMgr.cpp:2556-2564`, where the count of connected
+    nodes reaches zero; `src/ndbapi/DictCache.cpp:330-349`.
   - An index's internal name is `sys/def/<table id>/<index>`, or
     `<database>/<schema>/<table id>/<index>` for one made by an older
     version, which is tried when the first is not found. The index
@@ -1039,21 +1192,22 @@ is built and where the base operation is.
     found for another version is fetched again. Here the index holds
     that table object itself, so the version lives as long as the index
     does, and the cache lets go of a version's indexes with it. Verify:
-    `NdbDictionaryImpl.hpp`, `getIndexGlobal`; `NdbDictionaryImpl.cpp`,
-    `internal_index_name`, `old_internal_index_name`,
-    `create_index_obj_from_table`.
-- `LIST_TABLES_REQ` (GSN 193) / `CONF` (194) for listing.
+    `src/ndbapi/NdbDictionaryImpl.hpp:1463-1514`;
+    `src/ndbapi/NdbDictionaryImpl.cpp:2625-2682, 5816-5817`.
+- `LIST_OBJECTS_REQ` (signal 193) / `LIST_OBJECTS_CONF` (194) for listing.
 
-  As built (`ic_ndb_signals::list_tables`, `dict_client::list_dependents`):
-  the request is five words, senderData, senderRef, a flags word, table
-  id, table type. The flags word asks for names (bit 28), indexes only
+  As built (`ic_signals::list_objects`, `dict_client::list_dependents`):
+  the request is five words: the caller's data, the caller's
+  reference, a flags word, a table id and a table type. The flags word asks
+  for names (bit 28), indexes only
   (29) or the dependents of one table (30), and repeats the table id in
   its low 12 bits for data nodes that only read the older form. The
-  answer is senderData and a count, with three words per object in
+  answer is the caller's data and a count, with three words per object in
   section 0 (flags with store, temporary and state, then id, then type)
   and, when asked for, the names in section 1, each a byte length
   counting its NUL and then the name. Every current data node answers
-  in this long form (`listObjects` always expects it). The dictionary
+  in this long form (the reference's client always expects it,
+  `src/ndbapi/NdbDictionaryImpl.cpp:7539-7542`). The dictionary
   splits a long answer by hand; see §2.1.
 
   A table's indexes are its dependents of type unique hash index (3) or
@@ -1062,32 +1216,38 @@ is built and where the base operation is.
   `NDB$TNODE`) and is not one of the index's columns. Index names are
   `sys/def/<table id>/<name>`, or `<db>/<schema>/<table id>/<name>` for
   indexes made before that form; the name is the part after the last
-  separator. The primary key is not an index of its own: `ndb_desc`
-  prints it as a unique hash index made from the table's key columns.
-  Verify: `NdbDictionary.cpp`, the `-- Indexes --` section of `print`;
-  `NdbDictionaryImpl.cpp`, `create_index_obj_from_table` and
-  `internal_index_name`; `Ndb.cpp`, `externalizeIndexName`.
-- DDL: `SCHEMA_TRANS_BEGIN_REQ/CONF` → `CREATE_TABLE_REQ` (+ DictTabInfo
-  section) / `CREATE_HASH_MAP_REQ` / `CREATE_INDX_REQ` / `DROP_TABLE_REQ`
-  / `ALTER_TABLE_REQ` → `SCHEMA_TRANS_END_REQ/CONF`. Verify:
-  `include/kernel/signaldata/SchemaTrans.hpp:34-76`,
-  `CreateTable.hpp:34-62`. iClaustron implements this path end to end
+  separator. The primary key is not an index of its own: the
+  reference's table description tool prints it as a unique hash index made
+  from the table's key columns.
+  Verify: `src/ndbapi/NdbDictionary.cpp:3622-3661`;
+  `src/ndbapi/NdbDictionaryImpl.cpp:5765-5766, 2657-2682`;
+  `src/ndbapi/Ndb.cpp:1938-1957`.
+- DDL, by signal number: begin a schema transaction (731, confirmed by
+  732) → create a table (587, with a table properties section) / create
+  a hash map (297) / create an index (510) / drop a table (82) / alter a
+  table (624) → end the schema transaction (734, confirmed by 735). Verify:
+  `include/kernel/signaldata/SchemaTrans.hpp:33-88`,
+  `include/kernel/signaldata/CreateTable.hpp:33-59`. iClaustron implements
+  this path end to end
   (`execute_meta_data_transaction`) and it is carried over.
 
 ### 8.1 Column types and storage encodings
 
-Types (`NDB_TYPE_*`): Tinyint, Tinyunsigned, Smallint, Smallunsigned,
+Types (our `IC_TYPE_*`): Tinyint, Tinyunsigned, Smallint, Smallunsigned,
 Mediumint, Mediumunsigned, Int, Unsigned, Bigint, Bigunsigned, Float,
 Double, Olddecimal, Olddecimalunsigned, Decimal, Decimalunsigned, Char,
 Varchar, Binary, Varbinary, Datetime, Date, Blob, Text, Bit, Longvarchar,
 Longvarbinary, Time, Year, Timestamp, Time2, Datetime2, Timestamp2.
 Encodings: Char/Binary fixed; Varchar/Varbinary 1 length byte + data;
 Longvarchar/Longvarbinary 2 little-endian length bytes + data; Decimal
-packed binary of `decimal_bin_size(precision, scale)` bytes; Bit as a bit
-array of `array_size` bits; Date 3 bytes, Time 3, Datetime 8, Timestamp 4,
+packed binary of MySQL's binary decimal size for its precision and scale
+(`/mysys/decimal.cc:1693-1709`);
+Bit as an array of as many bits as the column's array size; Date 3 bytes,
+Time 3, Datetime 8, Timestamp 4,
 Year 1; Time2 3 + frac, Datetime2 5 + frac, Timestamp2 4 + frac where frac
 = `(scale + 1) / 2` bytes and scale is carried in precision. Verify:
-`include/ndbapi/NdbDictionary.hpp:296-356`, `DictTabInfo.hpp:500-635`.
+`include/ndbapi/NdbDictionary.hpp:296-356`,
+`include/kernel/signaldata/DictTabInfo.hpp:500-635`.
 `IC_FIELD_TYPE` in `ic_apid_datatypes.h` must be extended to cover all of
 these.
 
@@ -1095,29 +1255,150 @@ BLOB/TEXT: the main table holds a head plus inline data (V2 head 16 bytes:
 u16 varsize, u16 reserved, u32 pkid, u64 length, little-endian); the rest
 is in a parts table `NDB$BLOB_<tableid>_<colno>` with columns = main PK,
 `NDB$PART`, `NDB$PKID`, `NDB$DATA`, sharing the main table's partitioning.
-Verify: `include/ndbapi/NdbBlob.hpp:166`, `src/ndbapi/NdbBlob.cpp:72-735`.
+Verify: `include/ndbapi/NdbBlob.hpp:166`, `src/ndbapi/NdbBlob.cpp:67-236, 712-762`.
 BLOB support is not scheduled; records must leave BLOB columns out.
+
+### 8.2 Describing a collation, and its weights (signals 984–986, 2026-10-08)
+
+New in RonDB 26.04 main, in the author's separate task (Q15). Read from
+his working tree, as the change is not committed yet; to be checked on
+the wire with the dissector and the reference's test program for it.
+Paths below are into that tree.
+
+- **Who and where.** Any node, in practice an API node, sends
+  `COLLATION_DESC_REQ` (984) to the dictionary block (0xFA) of a data
+  node, which answers `COLLATION_DESC_CONF` (985) or refuses with
+  `COLLATION_DESC_REF` (986). Only a data node of version 26.10.0 or
+  later may be asked; an older one takes the unknown signal number as a
+  fatal error. `include/kernel/GlobalSignalNumbers.h:1339-1341`,
+  `include/ndb_version.h.in:1586-1591`.
+- **The request, seven words**, all of them required (a shorter request
+  is refused as malformed): the block reference to reply to, which must
+  be on the sending node; the caller's data, given back; the kind of
+  lookup, 0 by collation number, 1 by collation name, 2 by character set
+  name meaning that set's default collation; the collation number (kind
+  0, from 1 to 2047; the number a column's description keeps in the
+  upper half of its precision word); the name's length in bytes (kinds 1
+  and 2, from 1 to 64, no NUL); flags, bit 0 asking for the weights too;
+  and with weights the position to start from, 0 at first. Kinds 1 and
+  2 carry the name in section 0, padded to whole words, at most 17 words;
+  kind 0 carries no section. Names are matched without regard to case.
+  The request is never sent in fragments, and one that arrives
+  fragmented is refused. `include/kernel/signaldata/GetCollationInfo.hpp:66-109`,
+  `src/kernel/blocks/dbdict/Dbdict.cpp:13244-13372`.
+- **The confirmation, nineteen words**, in order: the caller's data; the
+  collation number found; the number of its character set's default
+  collation; the number of its character set's binary collation, 0 if
+  it has none; flags (0x1 the set's default, 0x2 binary order, 0x4 a
+  Unicode set in a standard encoding, 0x8 case-sensitive order, 0x10 a
+  pure ASCII set, 0x20 "no pad": trailing spaces count when comparing);
+  the fewest and the most bytes a character takes; the most sort-key
+  bytes one string byte becomes; a word with the most bytes upper-casing
+  makes of one byte in bits 0-7 and lower-casing in bits 8-15; the byte
+  a CHAR value is padded with; how many weight levels are compared; the
+  lowest- and the highest-sorting code point; a word with the byte
+  length of the character set's name in bits 0-15 and of the collation's
+  name in bits 16-31; then, for the weights, the number of weight runs,
+  their bytes, the number of contractions, their bytes, and the position
+  the next request continues from, or 0xFFFFFFFF when all have been sent
+  (and always without weights). Section 0 holds the character set's
+  name, a NUL, the collation's name and a NUL, padded to whole words with
+  NULs. `include/kernel/signaldata/GetCollationInfo.hpp:180-242`.
+- **The weights, in section 1** of a confirmation asked with weights,
+  only when it holds an entry: the weight runs, padded with zeros to a
+  whole word, then the contractions, padded likewise. Every number in it
+  is big-endian. `include/kernel/signaldata/GetCollationInfo.hpp:111-178`.
+  - A weight run covers consecutive code points: three bytes the first
+    code point, three bytes how many (at least 1), one byte the step
+    offset, one byte the length of the character's encoding, two bytes
+    the length of its weight string, then the first code point's bytes
+    in the character set and its weight string. Code point first + k has
+    the first one's weight string with the 16-bit number at the step
+    offset increased by k, or the same weight string when the offset is
+    0xFF; its bytes in the set are the first one's, read as a big-endian
+    number, increased by k. A Unicode set's encoding is the standard one
+    (utf8, utf16, utf16le, utf32 or ucs2), and its runs carry no bytes.
+  - The characters of a set are the code points it encodes and decodes
+    back to the same code point; each is in exactly one run, the runs in
+    increasing order.
+  - A character's weight string is the sort key of a string of that one
+    character, without padding. How weight strings combine into a longer
+    string's depends on the collation: a Unicode collation of the 9.0.0
+    algorithm lists the weights of each level in turn, separated by
+    0x0000, and contractions stand in for their characters; a few
+    collations (czech, win1250ch, tis620) also weigh a character by its
+    neighbours, which per-character weights cannot reproduce.
+  - A contraction is a sequence of code points weighed as one, such as
+    "ch" in Czech: one byte the number of code points (2 to 6), one byte
+    flags (bit 0: the second code point is weighed by the first, which
+    keeps its own weights, as for the Japanese prolonged sound mark), two
+    bytes the weight string's length, three bytes per code point in
+    string order, then the weight string of the whole sequence. One
+    holding a code point the set does not encode has no entry but keeps
+    its position.
+- **Asking in several round trips.** One confirmation with weights is
+  one signal, sent in fragments, of at most 1 MB of sections (4 KB from
+  a debug data node, so that a collation takes many). The first request
+  asks from position 0; each next one from the position the last
+  confirmation gave, until that is 0xFFFFFFFF. Positions below 0x110000
+  are code points; 0x110000 + n is the nth contraction. The data node
+  builds an answer in slices before sending it, serves one request with
+  weights at a time, and gives up building one when the asking node's
+  link goes. `include/kernel/signaldata/GetCollationInfo.hpp:44-54, 90-99`,
+  `src/kernel/blocks/dbdict/Dbdict.cpp:13491-13556, 13924-13991`.
+- **The refusal, four words:** the caller's data, the error, and the
+  request's kind and collation number as sent (0 where the request was
+  too short to carry them). Errors: 1 malformed, or sections that do not
+  fit the kind; 2 the reply address on another node than the sender's;
+  3 an unknown kind or unknown flags; 4 a collation number of 0 or 2048
+  and above; 5 a bad name (empty, too long, longer than its section, or
+  holding a NUL); 6 no such collation; 7 no such character set; 8
+  weights asked for from 0xFFFFFFFF; 9 busy with another request with
+  weights, to be sent again; 10 out of memory to build the answer in. A
+  request too short to name its reply address, or naming one on another
+  node, is refused to the block that sent it.
+  `include/kernel/signaldata/GetCollationInfo.hpp:244-270`,
+  `src/kernel/blocks/dbdict/Dbdict.cpp:13469`.
+- Looking a collation up makes the data node initialise it, as creating
+  a table that uses it does.
+- **Seen live, 2026-10-09**, through `ic_desc --collation` against the
+  development cluster's debug data nodes, and the integration group
+  `collation`: latin1_swedish_ci is number 8, its set's binary collation
+  47, one byte a character, pad byte 0x20, one level; its weights came
+  in one round trip as 226 runs covering all 256 characters; A and a
+  weigh 0x41, é 0x45 (as E), Ä and ä 0x5C (after Z, as Swedish has it).
+  utf8mb4's default is utf8mb4_0900_ai_ci, number 255, binary
+  collation 46, no pad, one to four bytes a character, one level,
+  sorting from U+0009 to U+10FFFF, and gives **0** as its sort-key
+  growth, so that word cannot bound a sort key's length for such a
+  collation. Its weights took 30 round trips of about 4.5 KB, the debug
+  node's limit, as 9 112 runs covering 1 112 064 code points, every
+  Unicode scalar value, and no contractions; A, a, Ä and ä all weigh
+  0x1C47, B and b 0x1C60, é 0x1CAA, the space 0x0209.
 
 ## 9. Interpreted programs
 
 The kernel interpreter is a register machine with 8 registers, labels,
-subroutines, `read_attr`/`write_attr`, `load_const_*`, arithmetic,
-`branch_*` (register vs register) and `branch_col_*` (column vs constant,
-including LIKE, NOT LIKE and bit masks), `interpret_exit_ok/nok/last_row`.
-RonDB adds memory-region instructions, string and integer conversions,
-searches and sorting, and `write_interpreter_output`/
-`read_interpreter_input`. Verify: `include/ndbapi/NdbInterpretedCode.hpp:80-757`,
+subroutines, instructions that read a column into a register and write
+one from it, constant loads, arithmetic, branches comparing two
+registers and branches comparing a column with a constant (including
+LIKE, NOT LIKE and bit masks), and exits that accept the row, reject
+it, or accept it as the last. RonDB adds memory-region instructions,
+string and integer conversions, searches and sorting, and instructions
+that write the program's output and read its input. Verify:
+`include/ndbapi/NdbInterpretedCode.hpp:80-1396`,
 `include/ndbapi/NdbScanFilter.hpp:42-105`.
 
 The `IC_WHERE_CONDITION` and `IC_CONDITIONAL_ASSIGNMENT` builders map
 onto the **full 26.10 instruction set**: memory addresses → the 8
 registers (more than 8 live values is an error in 0.1; a spill strategy
-using memory regions `load_const_mem`, `read_*_to_reg_*`,
-`write_*_reg_to_mem_*` is decided later); subroutine ids →
-labels/subroutines; `ic_define_boolean` → short-circuit branches;
-comparators → `branch_col_*` when one side is a constant and `branch_*`
-after `read_attr` otherwise; `ic_define_like` → `branch_col_like`; string
-operations → `string_search` and the conversion instructions. Regexp has
+using the memory-region instructions, which load constants into memory
+and move values between memory and registers, is decided later);
+subroutine ids → labels/subroutines; `ic_define_boolean` →
+short-circuit branches; comparators → a column-against-constant branch
+when one side is a constant and a register branch after a column read
+otherwise; `ic_define_like` → the column LIKE branch; string operations
+→ the string search and the conversion instructions. Regexp has
 no kernel counterpart and is evaluated API-side after the row is received
 (documented limitation). The exact opcode encodings are read from
 `src/ndbapi/NdbInterpretedCode.cpp` and `include/kernel/Interpreter.hpp`
@@ -1125,19 +1406,21 @@ when Phase 6 starts and recorded here as §9.1.
 
 ## 10. Errors
 
-Error records have: code, MySQL code, classification (18 values:
-NoError, ApplicationError, NoDataFound, ConstraintViolation, SchemaError,
-UserDefinedError, InsufficientSpace, TemporaryResourceError,
-NodeRecoveryError, OverloadError, TimeoutExpired, UnknownResultError,
-InternalError, FunctionNotImplemented, UnknownErrorCode, NodeShutdown,
-SchemaObjectExists, InternalTemporary) and a derived status (Success,
-TemporaryError, PermanentError, UnknownResult). Verify:
-`src/ndbapi/ndberror.cpp:34-1249`, `include/ndbapi/ndberror.h:64`.
+Error records have: code, MySQL code, classification (18 values: no
+error, the application's error, no such row, a constraint broken, a
+schema error, an error the user's program raised, out of space, a
+temporary lack of resources, node recovery, overload, a timeout, an
+unknown result, an internal error, not implemented, an unknown code, a
+node shutting down, an object that already exists, and a temporary
+internal condition) and a derived status (success, temporary error,
+permanent error, unknown result). Verify:
+`src/ndbapi/ndberror.cpp:34-39, 113-1184, 1195-1237, 1256-1288`,
+`include/ndbapi/ndberror.h:35-62`.
 Our table keeps code, MySQL code and classification (interface data) and
 carries our own message text. `IC_ERROR_SEVERITY_LEVEL` maps from status
 and `IC_ERROR_CATEGORY` from classification.
 
-**Never report more than is known.** The C++ API answers 4009, "cluster
+**Never report more than is known.** The reference's client answers 4009, "cluster
 failure", in states that are not one, such as a single broken link to a
 node that is still up, and an application cannot act sensibly on that.
 Our errors name what we actually know: `IC_ERROR_LINK_LOST` when our
@@ -1148,34 +1431,36 @@ retry on another node.
 
 ## 11. Events (0.3)
 
-`CREATE_EVNT_REQ`, `SUB_START_REQ` `{senderRef, senderData,
-subscriptionId, subscriptionKey, part, subscriberData, subscriberRef,
-requestInfo}` → `SUB_START_CONF` with first GCI and bucket count; data as
-`SUB_TABLE_DATA` (GSN 586) with sections attr info, after values, before
-values; epoch boundaries `SUB_GCP_COMPLETE_REP` (GSN 593) acknowledged with
-`SUB_GCP_COMPLETE_ACK`. Verify: `include/kernel/signaldata/SumaImpl.hpp:98-461`,
-`src/ndbapi/Ndbif.cpp:1240-1260`. Fragmented signals are used here.
+Signals by number, none named by us yet: create an event (700), then
+start a subscription (579) `{the caller's reference, the caller's data,
+the subscription's id, the subscription's key, the part, the
+subscriber's data, the subscriber's reference, a flags word}` →
+confirmed (581) with the first global checkpoint and the bucket count;
+row changes arrive as signal 586 with sections column information, after
+values, before values; epoch boundaries as signal 593, acknowledged with
+signal 699. Verify: `include/kernel/signaldata/SumaImpl.hpp:92-467`,
+`src/ndbapi/Ndbif.cpp:1275-1389`. Fragmented signals are used here.
 
 ## 12. Autoincrement (0.3)
 
 System table `sys/def/SYSTAB_0` keyed by table id, column `NEXTID`;
-ranges are allocated with an interpreted update (`incValue`) inside a
-transaction hinted with the table id as key. Verify: `Ndb.cpp:1646-1663`.
+ranges are allocated with an interpreted update that adds to the column inside a
+transaction hinted with the table id as key. Verify:
+`src/ndbapi/Ndb.cpp:1647-1669, 1713-1737`.
 
 ## 13. Hard limits to encode as constants
 
-`NDB_MAX_NO_OF_ATTRIBUTES_IN_KEY 32`, `NDB_MAX_ATTRIBUTES_IN_TABLE 4096`,
-`NDB_MAX_TUPLE_SIZE_IN_WORDS 18000`, `NDB_MAX_KEYSIZE_IN_WORDS 1023`,
-`NDB_MAX_ACTIVE_EVENTS 100`, `NDB_MAX_SCANFILTER_SIZE_IN_WORDS 15359`,
-`MAX_GSN 982`. Verify: `include/ndbapi/ndbapi_limits.h:30-45`,
-`GlobalSignalNumbers.h:40`.
+At most 32 key columns, 4096 columns in a table, a row of 18000 words,
+a key of 1023 words, 100 active events, a scan filter of 15359 words,
+and signal numbers up to 982. Verify: `include/ndbapi/ndbapi_limits.h:30-45`,
+`include/kernel/GlobalSignalNumbers.h:40`.
 
 ## 14. Node ids, and why nothing is sized by them
 
 The highest node id a cluster allows has risen with every era of the
 product: 255 in NDB 7.2, which is what the C code assumed, 2039 in
-RonDB 26.10 (`ndb_limits.h:70`, `MAX_NODES_ID`), and 8191 in a coming
-release. Data nodes stay in the low numbers (`MAX_DATA_NODE_ID 144`),
+RonDB 26.10 (`include/kernel/ndb_limits.h:73`), and 8191 in a coming
+release (`:76`). Data nodes stay in the low numbers (at most 144, `:62`),
 but API nodes are routinely given large ids: a stock test cluster hands
 out 1271 and 1600.
 
@@ -1189,11 +1474,12 @@ Two consequences for this library.
   check is against `IC_MAX_NODE_ID_WIRE`, the 16 bits a block reference
   gives the node id, which cannot change without changing the protocol.
 - **Node bitmaps in signals grow with it.** The connected-node bitmap in
-  `API_REGCONF` and the failed-node bitmap in `NODE_FAILREP` are sized
+  `HEARTBEAT_CONF` and the failed-node bitmap in `NODE_LOST_REP` are sized
   by the cluster's node id limit, so they long ago outgrew the 25 data
   words a signal carries and travel in a section. Any decoder for them
   must take the length from the signal rather than assume one.
-  Verify when Phase 3 reaches them: `ClusterMgr.cpp:2304`, which already
+  Verify when Phase 3 reaches them: `src/ndbapi/ClusterMgr.cpp:2649-2664`,
+  which already
   handles three different encodings of the same bitmap.
 
 
@@ -1207,15 +1493,15 @@ be treated as a hypothesis. Known differences the port must apply:
 | Socket auth | `ndbd` / `ndbd passwd` → `ok` | TLS-capable line `ndbd TLS disabled` + empty line → `ok`/`Cleartext ok` (legacy possibly still accepted, Q2) |
 | Node id hello | `"<nodeid> 1"` (2 integers) | `"<nodeid> 1 <remote nodeid> 0"` (4 integers), max 23 chars; reply `"<nodeid> 1"` |
 | Byte order | swap on receive | no swap; reject mismatch |
-| Signals | private renamed GSNs for a patched kernel | stock GSNs (§3–8) |
-| Key operations | `NDB_PRIM_KEYREQ` prose, short signal with inline KEYINFO/ATTRINFO trains | long-form `TCKEYREQ` with sections 0/1 only; new requestInfo bits 20–24 and RonDB flags |
-| Config | `get config` v1, iClaustron cluster ids | `get config_v2` with `node:` argument; v2 blob with default sections; `Rdma` section type 7 |
+| Signals | private signal numbers for a patched kernel | the stock signal numbers (§3–8) |
+| Key operations | `NDB_PRIM_KEYREQ` prose, short signal with inline KEY_DATA_ORD/COLUMN_DATA_ORD trains | long-form `KEY_OP_REQ` with sections 0/1 only; new flags-word bits 20–24 and RonDB flags |
+| Config | `get config` v1, iClaustron cluster ids | `get config_v2` with `node:` argument; v2 blob with default sections; RDMA section type 7 |
 | Config parameters | full 7.2 data-node table | API-node subset re-verified against 26.10 ids; new parameters (TLS, RDMA, location domains, active flag) |
-| Heartbeat | `API_REGREQ` 3 words | same 3 words; `API_REGCONF` gained `minDbVersion`/`minApiVersion` and RonDB restart-barrier liveness rule |
-| Node failure | `NODE_FAILREP` fixed bitmap | three formats incl. a long section; `NF_COMPLETEREP` gating of reconnect |
-| Block numbers | `IC_NDB_MIN_MODULE_ID_FOR_THREADS 32768`, `IC_NDB_PACKED_MODULE_ID 2047` | unchanged; plus fixed `API_CLUSTERMGR 4002`; kernel blocks extended to `0x111` (query blocks) |
-| Partitioning | hash maps (introduced 7.2) with MD5 | MD5 or XXH3 64-bit per table (`HashFunctionFlag`), fanout tables, read backup, fully replicated, dynamic primary replicas |
-| Dictionary | DictTabInfo keys up to ~160 | keys to 171 (TTL, hash function, fanout, ring buffer); `GET_TABINFO_CONF` long signal; `MysqlDictMetadata` replaces frm data |
+| Heartbeat | `HEARTBEAT_REQ` 3 words | same 3 words; `HEARTBEAT_CONF` gained the lowest data node and API versions and RonDB restart-barrier liveness rule |
+| Node failure | `NODE_LOST_REP` fixed bitmap | three formats incl. a long section; `NODE_LOST_DONE_REP` gating of reconnect |
+| Block numbers | `IC_NDB_MIN_MODULE_ID_FOR_THREADS 32768`, `IC_NDB_PACKED_MODULE_ID 2047` | unchanged; plus fixed `NODE_WATCH 4002`; kernel blocks extended to `0x111` (query blocks) |
+| Partitioning | hash maps (introduced 7.2) with MD5 | MD5 or XXH3 64-bit per table (table property 163), fanout tables, read backup, fully replicated, dynamic primary replicas |
+| Dictionary | table property keys up to ~160 | keys to 171 (TTL, hash function, fanout, ring buffer); `TABLE_DESC_CONF` long signal; MySQL's dictionary metadata (key 30) replaces frm data |
 | Column types | up to Datetime/Timestamp | `Time2`, `Datetime2`, `Timestamp2` with fractional seconds; `Longvarchar` in indexes |
 | Interpreter | 7.2 instruction set (registers, branches, LIKE) | plus memory regions, searches, sorting, conversions, interpreter I/O, partial column writes |
 | Transporters | TCP, SHM, SCI | TCP, SHM, RDMA; multi-transporters (DB↔DB only); API uses TCP only |
@@ -1226,14 +1512,15 @@ be treated as a hypothesis. Known differences the port must apply:
 Read from the 26.10 sources for the replanned phases 6–9 (chapter 06).
 Each step folds its part into the proper section above when it starts,
 verifies it on a live cluster, and then removes it from here. Signals
-are named as in chapter 06 §6.1, and RonDB is cited by bare file:line
-(rule of 2026-10-08, chapter 09). Paths are relative to `storage/ndb`;
-those starting with `/` are relative to the tree's root.
+are named as in "Names" at the start of this chapter, and RonDB is cited
+by bare file:line (rule of 2026-10-08, chapter 09). Paths are relative
+to `storage/ndb`; those starting with `/` are relative to the tree's
+root.
 
-Configuration parameters are named by id, with our names from chapter
-06 §6.1: 129 `TimeoutCheckPeriod`, 130 `IdleTransactionLimit`, 131
-`LockWaitLimit`, 800 `ScanBatchBytesTotal`, 801 `ScanBatchBytes`, 802
-`ScanBatchRows`.
+Configuration parameters are named by id, with our names: 129
+`timeout_check_period`, 130 `idle_transaction_limit`, 131
+`lock_wait_limit`, 800 `scan_batch_bytes_total`, 801
+`scan_batch_bytes`, 802 `scan_batch_rows`.
 
 ### 16.1 Sending a request in fragments (phase 6.6)
 
@@ -1252,43 +1539,48 @@ Configuration parameters are named by id, with our names from chapter
   fragment that begins with a section takes 8 040 words; only a
   section's last piece may be of any length. Fragments before the last
   carry as data only their section numbers and the fragment id (n + 1
-  words for n sections, :2405-2408); the last carries the signal's data,
-  then its section numbers, then the fragment id (:2445-2454).
+  words for n sections, :2420-2423); the last carries the signal's data,
+  then its section numbers, then the fragment id (:2457-2469).
 - The receiver joins pieces in 60-word segments and requires the rule
   above; a debug data node stops, a release one logs and keeps a
   corrupt section. `src/kernel/vm/SimulatedBlock.cpp:488-512`.
 - Data nodes, when they send, put the data in every fragment and the
-  highest section first (`SimulatedBlock.cpp:3810-3848`); the receiver
+  highest section first (`src/kernel/vm/SimulatedBlock.cpp:3810-3848`); the receiver
   reads only the trailing words of the first fragments, so both layouts
-  are accepted (:3046-3053), and on the last fragment keeps that
+  are accepted (:3046-3056), and on the last fragment keeps that
   fragment's data (:3196-3207).
 - The fragment id: one counter per API connection in the reference,
-  from 0 (`TransporterFacade.cpp:1531, 2335`); the data nodes' own
-  counter skips 0 (`SimulatedBlock.cpp:3757-3762`). A train is known by
+  from 0 (`src/ndbapi/TransporterFacade.cpp:1531, 2335`); the data nodes' own
+  counter skips 0 (`src/kernel/vm/SimulatedBlock.cpp:3757-3762`). A train is
+  known by
   the sender's full reference and the id
   (`src/kernel/vm/SimulatedBlock.hpp:1113-1129`). A section number of 3
   or more is reported as malicious.
 - Room to assemble trains at the coordinator is sized for one train per
   API node at a time, never interleaved
   (`src/kernel/blocks/dbtc/DbtcInit.cpp:486-498`); when it is full the
-  train is dropped and no reply is sent (`SimulatedBlock.cpp:3069-3095,
-  3255-3267`). The key, unique and scan requests are all put together
+  train is dropped and no reply is sent
+  (`src/kernel/vm/SimulatedBlock.cpp:3068-3095,
+  3256-3268`). The key, unique and scan requests are all put together
   before they run (`src/kernel/blocks/dbtc/DbtcMain.cpp:3743, 24119,
   16794`).
 - A message is at most 32 768 bytes both ways
-  (`src/common/transporter/TransporterDefinitions.hpp:85-86`); a larger
-  one is refused on send (`TransporterRegistry.cpp:1239-1241`) and is a
-  link error on receive (`Packer.cpp:171-176`). A data node drops a
+  (`include/transporter/TransporterDefinitions.hpp:85-86`); a larger
+  one is refused on send
+  (`src/common/transporter/TransporterRegistry.cpp:1239-1241`) and is a
+  link error on receive (`src/common/transporter/Packer.cpp:170-177`). A
+  data node drops a
   signal whose data words plus sections exceed 25
-  (`src/kernel/vm/TransporterCallback.cpp:289`).
+  (`src/kernel/vm/TransporterCallback.cpp:292`).
 - Limits: a row at most 18 000 words, a key at most 1 023
   (`include/kernel/ndb_limits.h:125, 129`); the fixed in-memory part at
   most 4 070 words, the variable part 8 008, the disk part 7 770
-  (`ndb_limits.h:126-128`, enforced at
+  (`include/kernel/ndb_limits.h:126-128`, enforced at
   `src/kernel/blocks/dbdict/Dbdict.cpp:7060-7087`), so about 48 KB
   without disk columns. The coordinator takes a key above 1 023 words
   or column data above 0x3FFFF words as malicious
-  (`DbtcMain.cpp:3767-3790`); the blocks that run the operation refuse
+  (`src/kernel/blocks/dbtc/DbtcMain.cpp:3767-3790`); the blocks that run the
+  operation refuse
   column data of 32 768 words or more
   (`src/kernel/blocks/dblqh/DblqhMain.cpp:10186`,
   `src/kernel/blocks/dbtup/DbtupExecQuery.cpp:951`).
@@ -1307,9 +1599,9 @@ Configuration parameters are named by id, with our names from chapter
   `/strings/ctype-simple.cc:1502`.
 - The coordinator does the same before hashing
   (`src/kernel/vm/SimulatedBlock.cpp:4794-4851`,
-  `DbtcMain.cpp:3326-3384`).
+  `src/kernel/blocks/dbtc/DbtcMain.cpp:3330-3384`).
 - A "no pad" collation would be hashed another way
-  (`NdbSqlUtil.cpp:892`); no latin1 collation is one.
+  (`src/common/util/NdbSqlUtil.cpp:892`); no latin1 collation is one.
 - The latin1 collations and their numbers: 5 latin1_german1_ci, 8
   latin1_swedish_ci (latin1's default), 15 latin1_danish_ci, 31
   latin1_german2_ci, 47 latin1_bin, 48 latin1_general_ci, 49
@@ -1329,7 +1621,7 @@ Configuration parameters are named by id, with our names from chapter
   a key padded with zeros is another key.
 - A unique index's columns keep their character set and are all
   distribution key columns of the index's table, hashed with the same
-  transform (`Dbdict.cpp:13741, 7948-7955`).
+  transform (`src/kernel/blocks/dbdict/Dbdict.cpp:13741, 7948-7955`).
 - MySQL's latin1 is the CP1252 code page as Unicode publishes it, with
   0x81, 0x8D, 0x8F, 0x90 and 0x9D, which CP1252 leaves unassigned,
   passed through as U+0081, U+008D, U+008F, U+0090 and U+009D.
@@ -1339,50 +1631,62 @@ Configuration parameters are named by id, with our names from chapter
 - Placement: the reference hashes the index key over the index's own
   table and places the transaction by that table's partition
   (`src/ndbapi/Ndb.cpp:764-773, 882-905`); the coordinator hashes the
-  index columns in the index's order (`DbtcMain.cpp:3341-3370`). The
+  index columns in the index's order
+  (`src/kernel/blocks/dbtc/DbtcMain.cpp:3341-3370`). The
   index's table inherits read backup, the hash function and full
   replication from its table, and, when the fragment types match, its
-  hash map and fragment count (`Dbdict.cpp:13644-13680`); fetching the
+  hash map and fragment count
+  (`src/kernel/blocks/dbdict/Dbdict.cpp:13643-13678`); fetching the
   index's description returns its own replica data and hash map
-  (`Dbdict.cpp:1283-1317`); every index column is a distribution key
+  (`src/kernel/blocks/dbdict/Dbdict.cpp:1283-1317`); every index column is a
+  distribution key
   (`src/ndbapi/NdbDictionaryImpl.cpp:5803-5810`).
 - The index's state is checked neither by the coordinator nor by the
-  reference's client (`DbtcMain.cpp:25099-25106, 9579`): a lookup
+  reference's client
+  (`src/kernel/blocks/dbtc/DbtcMain.cpp:25099-25106, 9579`): a lookup
   through an offline index finds nothing. A missing index gives 284, a
   wrong version 241. A dropped index is reported by
   `TABLE_CHANGED_REP` to API nodes of a new enough version
-  (`Dbdict.cpp:9470-9494`).
+  (`src/kernel/blocks/dbdict/Dbdict.cpp:9470-9494`).
 - NULL: the reference's client refuses a NULL key column with 4316
   (`src/ndbapi/NdbOperationExec.cpp:893-900`); a row with NULL in any
-  indexed column is never put in the index (`DbtcMain.cpp:27375,
+  indexed column is never put in the index
+  (`src/kernel/blocks/dbtc/DbtcMain.cpp:27375,
   27508`).
 - Locks: a committed read through an index is sent as a shared read
   with bit 20 of the flags word set (`src/ndbapi/NdbTransaction.cpp:3191-3207`),
   which lets both reads use a backup replica of a read-backup table or
-  any node of a fully replicated one (`DbtcMain.cpp:5446, 5139-5144`);
+  any node of a fully replicated one
+  (`src/kernel/blocks/dbtc/DbtcMain.cpp:5446, 5137-5146`);
   the lock is held to commit. A debug coordinator asserts that an index
-  request has no simple flag (`DbtcMain.cpp:25144-25145, 25297-25298`).
+  request has no simple flag
+  (`src/kernel/blocks/dbtc/DbtcMain.cpp:25144-25145, 25297-25298`).
   The index read is shared for a read and exclusive otherwise
-  (`DbtcMain.cpp:25125-25126`). Nothing releases the lock early.
+  (`src/kernel/blocks/dbtc/DbtcMain.cpp:25125-25126`). Nothing releases the
+  lock early.
 - A duplicate value gives 893 with the index id as error data
-  (`DbtcMain.cpp:9562-9571`). A deferred check is bit 17 of the flags
-  word, honoured on unique requests too (`DbtcMain.cpp:24357,
+  (`src/kernel/blocks/dbtc/DbtcMain.cpp:9562-9571`). A deferred check is bit
+  17 of the flags
+  word, honoured on unique requests too (`src/kernel/blocks/dbtc/DbtcMain.cpp:24357,
   7088-7091`), checked at commit
   (`src/kernel/blocks/dbtup/DbtupTrigger.cpp:902-935`).
 - Replies: `UNIQUE_OP_CONF` is never sent; the operation is confirmed
-  by `KEY_OP_CONF` (`DbtcMain.cpp:7252-7270`). `UNIQUE_OP_REF` is laid
-  out as `KEY_OP_REF`, with error data 0 (`DbtcMain.cpp:24855-24866`).
-  Out of index operation records: 288 (`DbtcMain.cpp:24305`).
+  by `KEY_OP_CONF` (`src/kernel/blocks/dbtc/DbtcMain.cpp:7252-7270`).
+  `UNIQUE_OP_REF` is laid
+  out as `KEY_OP_REF`, with error data 0
+  (`src/kernel/blocks/dbtc/DbtcMain.cpp:24855-24866`).
+  Out of index operation records: 288 (`src/kernel/blocks/dbtc/DbtcMain.cpp:24305`).
 - In the reference, an update through an index takes the indexed
-  columns from the key row (`NdbOperationExec.cpp:~1180-1230`), so it
+  columns from the key row (`src/ndbapi/NdbOperationExec.cpp:1192-1234`), so it
   cannot change them.
 
 ### 16.4 Scans (phase 8)
 
-Paths: ST = `include/kernel/signaldata/ScanTab.hpp`, TC = `DbtcMain.cpp`,
-LQH = `DblqhMain.cpp`, NSO = `src/ndbapi/NdbScanOperation.cpp`, NR =
-`src/ndbapi/NdbReceiver.cpp`, NTS = `src/ndbapi/NdbTransactionScan.cpp`,
-IF = `src/ndbapi/Ndbif.cpp`.
+Paths: ST = `include/kernel/signaldata/ScanTab.hpp`, coordinator =
+`src/kernel/blocks/dbtc/DbtcMain.cpp`, local ops =
+`src/kernel/blocks/dblqh/DblqhMain.cpp`, NSO =
+`src/ndbapi/NdbScanOperation.cpp`, NR = `src/ndbapi/NdbReceiver.cpp`,
+NTS = `src/ndbapi/NdbTransactionScan.cpp`, IF = `src/ndbapi/Ndbif.cpp`.
 
 - `SCAN_REQ` (32): eleven fixed words: the scan's coordinator record,
   a spare, the flags word, the table (the index for a range scan), its
@@ -1394,26 +1698,26 @@ IF = `src/ndbapi/Ndbif.cpp`.
   (12), a user id and its version (13–14). ST:85-132, NSO:3068-3078.
 - Flags: 8 exclusive lock, 9 no disk, 10 hold lock, 11 read committed,
   12 return each row's key, 13 storage order, 14 descending, 15 range,
-  16–25 batch rows (0: use the first batch's word, TC:17499-17504), 26
+  16–25 batch rows (0: use the first batch's word, coordinator:17499-17504), 26
   distribution key given, 27 join, 28 pass every confirmation, 29
   extended confirmation, 30 read committed base, 31 several fragments
-  per receiver (joins only, else 4003, TC:16936); bits 0–7 RonDB's
+  per receiver (joins only, else 4003, coordinator:16936); bits 0–7 RonDB's
   extensions. ST:251-318 (trust the constants, not the drawing beside
   them). A committed read sets 11; shared and simple reads set hold
   lock; an exclusive read sets 8, hold lock and 12 (NSO:1865-1897). The
-  reference always sets 13 for a table scan (NSO:1569).
+  reference always sets 13 for a table scan (NSO:1570, 1662).
 - Sections: 0 the receiver ids, whose count is the parallelism
-  (TC:16842-16856); 1 the column section, required (empty: 269),
+  (coordinator:16842-16856); 1 the column section, required (empty: 269),
   beginning with five size words (NSO:3187-3196); 2 the bounds. A large
-  request is sent in fragments (NSO:3257).
-- A scan has a coordinator record of its own, seized on the node and
+  request is sent in fragments (NSO:3273-3274).
+- A scan has a coordinator record of its own, allocated on the node and
   coordinator instance of its transaction's record, with the same
   transaction id, and names that record (`src/ndbapi/Ndb.cpp:1005-1035`,
   NSO:166-177); the coordinator requires the named record to be a valid
-  one of its own instance (TC:18035-18039). One scan per record, a
-  second gives 202 (TC:16910-16924).
-- Receiver i serves fragment record i (TC:17624), and min(receivers,
-  fragments) are used (TC:17932). The receiver id is word 0 of
+  one of its own instance (coordinator:18035-18039). One scan per record, a
+  second gives 202 (coordinator:16910-16924).
+- Receiver i serves fragment record i (coordinator:17624), and min(receivers,
+  fragments) are used (coordinator:17932). The receiver id is word 0 of
   `ROW_DATA_REP` and of `SCAN_ROW_KEY_REP`, and is named per receiver in
   `SCAN_CONF` (IF:580-660, 842-866; NTS:146-151).
 - `SCAN_CONF` (29): the scan's record, a word with the receiver count
@@ -1422,49 +1726,51 @@ IF = `src/ndbapi/Ndbif.cpp`.
   pointer, `include/kernel/ndb_limits.h:33`: that receiver is done) and
   len << 10 | rows, where rows 1023 means a fourth word holds the
   count; with the extended confirmation, rows and length apart and an
-  active mask. Inline up to 25 words, else in section 0. TC:20776-20845,
-  NTS:210-229. len counts row words and key words (LQH:26966-26969).
+  active mask. Inline up to 25 words, else in section 0. coordinator:20776-20845,
+  NTS:210-229. len counts row words and key words (local ops:26966-26969).
 - A receiver's batch is complete when its confirmation has come and the
   words received equal len; rows and confirmation come from different
   nodes in either order (NR:1719-1745). len 0 with rows means an empty
   projection.
 - The last confirmation carries end of data with the counts, and the
-  record is then free again (TC:20888-20902, 18480-18483); a
+  record is then free again (coordinator:20873-20901, 18480-18483); a
   confirmation that is exactly end of data confirms a close
-  (TC:20037-20050). A fragment that ends with no rows while others
+  (coordinator:20059-20070). A fragment that ends with no rows while others
   remain is not reported: the coordinator starts the next fragment on
-  the same receiver (TC:19278-19305, 19720-19750).
+  the same receiver (coordinator:19278-19305, 19723-19761).
 - `SCAN_ROW_KEY_REP` (33), one per row when keys are asked for: the
   receiver id, the key length, a word of operation number << 8 | scan
   number | fragment << 20, the transaction id, then the key, inline up
-  to 20 words, else in section 0 (LQH:28318-28356;
+  to 20 words, else in section 0 (local ops:28318-28356;
   `include/kernel/signaldata/ScanFrag.hpp:552`).
 - `SCAN_REF` (31): the record, the transaction id, the error, and
-  whether a close is owed: 0 for errors at the start (TC:17400-17418),
-  1 from errors during the scan (TC:19064-19127).
+  whether a close is owed: 0 for errors at the start (coordinator:17400-17418),
+  1 from errors during the scan (coordinator:19064-19127).
 - `SCAN_MORE_REQ` (28): the record, a stop word, the transaction id,
   the coordinator's pointers of the receivers to go on (inline up to
   21, else section 0); each named fragment goes on by itself, one not
-  named waits (TC:19682-19765). Stop set: the coordinator closes at
+  named waits (coordinator:19682-19765). Stop set: the coordinator closes at
   once, ignoring the list, closes the fragments, and sends the bare end
-  of data confirmation (TC:19646, 19785-20050).
+  of data confirmation (coordinator:19646, 19785-20083).
 - A batch ends at the row count or the byte count, checked after a row
-  is added, so one row may overshoot (LQH:46539-46545). The reference
+  is added, so one row may overshoot (local ops:46539-46545). The reference
   asks for bytes = min(parameter 801, parameter 800 / parallelism) and
   rows = min(parameter 802 or the scan's own, 992 with
   locks or 4 000 committed, bytes) (NR:510-534, NSO:3083-3162);
-  defaults 384 rows, 32 KB, 512 KB (`src/mgmsrv/ConfigInfo.cpp:1908-1919`,
-  `ndb_limits.h:231-254`). The 992 comes from the ten-bit operation
+  defaults 384 rows, 32 KB, 512 KB (`src/common/mgmcommon/ConfigInfo.cpp:1908-1919`,
+  `include/kernel/ndb_limits.h:231-254`). The 992 comes from the ten-bit operation
   number used by takeover. The reference asks for more only when
   every cached row is consumed (NSO:2168-2247): its policy, not the
   protocol's.
 - Timeouts: the coordinator's inactivity timer runs only while no
-  fragment is running (TC:20905-20914); past
-  parameter 130 (our `IdleTransactionLimit`) the scan fails with 296 and a close owed
-  (TC:11991-12009; the default in this tree is 3 600 000 ms,
-  `ConfigInfo.cpp:1154`). A fragment stalled past the deadlock timeout
-  gives 274 (TC:12546-12668); RonDB's deadlock detection may end a scan
-  with 296 (TC:11670-11689). The reference's client gives up with 4008
+  fragment is running (coordinator:20905-20914); past
+  parameter 130 (our `idle_transaction_limit`) the scan fails with 296 and a
+  close owed
+  (coordinator:11991-12009; the default in this tree is 3 600 000 ms,
+  `src/common/mgmcommon/ConfigInfo.cpp:1154-1163`). A fragment stalled past
+  the deadlock timeout
+  gives 274 (coordinator:12546-12668); RonDB's deadlock detection may end a scan
+  with 296 (coordinator:11670-11689). The reference's client gives up with 4008
   after three times the check interval plus the deadlock timeout
   (`src/ndbapi/ndb_cluster_connection.cpp:1285`, NSO:2261, 2318).
 - Takeover: a `KEY_OP_REQ` on the owning transaction whose key is the
@@ -1472,13 +1778,13 @@ IF = `src/ndbapi/Ndbif.cpp`.
   and bit 2 (distribution key given), and optional words after the user
   id: 1 | (the row word & 0x3FFFF) << 1 | fragment << 20, then the
   fragment as distribution key (`include/kernel/signaldata/TcKeyReq.hpp:430-503`,
-  NSO:3385-3570, `NdbOperationExec.cpp:1505-1528`). The reference
+  NSO:3385-3570, `src/ndbapi/NdbOperationExec.cpp:1505-1528`). The reference
   sends it before asking that receiver for more.
 - Node failure: a reading node lost gives `SCAN_REF` 270, temporary,
-  with a close owed (TC:13133-13224); the coordinator's node lost: the
+  with a close owed (coordinator:13133-13224); the coordinator's node lost: the
   reference reports 4028, no close is sent, the record is gone
-  (IF:280-294; NSO:2326, 5050); our API node lost: the coordinator
-  closes the scan (TC:2085-2100). Nothing resumes a scan; it starts
+  (IF:280-294; NSO:2326, 5056-5060); our API node lost: the coordinator
+  closes the scan (coordinator:2085-2100). Nothing resumes a scan; it starts
   again and rows come again.
 - Range scans: per bound column a word of bound type (0 ≤, 1 <, 2 ≥,
   3 >, 4 =; low bounds use 0 and 1, high bounds 2 and 3), a column
@@ -1486,15 +1792,15 @@ IF = `src/ndbapi/Ndbif.cpp`.
   each range's first word also holds len << 16 | range number << 4,
   range numbers up to 0xFFF and rising strictly in an ordered scan with
   several ranges; an open range is type 0 with a header of (0, 0)
-  (NSO:1102-1251, 4111-4196, 1145; LQH:26196). An ordered scan runs
+  (NSO:1102-1251, 4111-4196, 1150-1165; local ops:26196). An ordered scan runs
   every fragment in parallel, and the client needs a row or the end
   from each before returning one, refilling one receiver at a time;
   descending reverses each fragment's order and the comparison
-  (NSO:1615, 4262-4285, 4367-4420, 4860-4930).
+  (NSO:1616-1621, 4262-4285, 4367-4420, 4858-4916).
 - Pruning: bit 26 and word 11; the coordinator maps a hash through the
   hash map, or takes a fragment id when the partition is given
-  (TC:17890-17920, 18529-18543); on a fanout table a hash-pruned scan
-  is refused with 2203 unless the interval bit is set (TC:17306-17322).
+  (coordinator:17861-17914, 18529-18543); on a fanout table a hash-pruned scan
+  is refused with 2203 unless the interval bit is set (coordinator:17306-17322).
   The reference prunes a range scan only when both bounds fix every
   distribution key column (NSO:1268-1300).
 - Corrections to §7: the three-word confirmation is the default, not
@@ -1509,30 +1815,32 @@ IF = `src/ndbapi/Ndbif.cpp`.
   NULL, the next value not yet handed out
   (`src/kernel/blocks/ndbcntr/NdbcntrSysTable.cpp:34-46`). The data
   nodes create it at initial start and put no rows in it
-  (`NdbcntrMain.cpp:4667-4740`).
+  (`src/kernel/blocks/ndbcntr/NdbcntrMain.cpp:4667-4740`).
 - The key is the table id (`src/ndbapi/Ndb.cpp:1725`); the backup's
-  sequence uses 0x1F000000 (`include/ndb_constants.h:120-122`). The
+  sequence uses 0x1F000000 (`include/ndb_constants.h:120-123`). The
   client that creates a table with an auto-increment column writes the
   row, as a write of the initial value
-  (`NdbDictionaryImpl.cpp:4247-4259, 4292-4305`; `Ndb.cpp:1736-1745`).
+  (`src/ndbapi/NdbDictionaryImpl.cpp:4247-4259, 4294-4306`;
+  `src/ndbapi/Ndb.cpp:1738-1748`).
   A table may have one auto-increment column (4335). Dropping a table
   leaves its row; the next table with that id overwrites it.
 - Each counter operation is a transaction of its own, placed by the
   counter row's key and committed with its operation
-  (`Ndb.cpp:1697-1806`, hint at :1713-1715):
+  (`src/ndbapi/Ndb.cpp:1697-1805`, hint at :1713-1715):
   - taking n values: an interpreted update adding n to the counter,
     then reading it back; exclusive lock, abort on error; the values
     are new − n to new − 1 (:1722-1736);
   - setting: a write, used at create;
   - moving up only: an interpreted update that writes the value only
-    if it is larger, then reads the counter back (:1747-1768);
+    if it is larger, then reads the counter back (:1749-1769);
   - peeking: a shared read.
   The reference's client never retries; MySQL servers retry temporary
   errors up to 100 times with a 30–36 ms pause
   (`plugin/ha_ndbcluster.cc:476, 12333-12350`).
 - The client keeps a range per table: the last value handed out, the
   last reserved, the highest seen (`include/ndbapi/Ndb.hpp:1933-1943`).
-  A refill reserves cache size × step (`Ndb.cpp:1446`); the next value
+  A refill reserves cache size × step (`src/ndbapi/Ndb.cpp:1443-1445`); the
+  next value
   is the least k × step + offset above the last handed out
   (:1405-1456; an offset above the step counts as 1). MySQL servers pass
   `auto_increment_increment` and `auto_increment_offset`, and a cache
@@ -1540,7 +1848,7 @@ IF = `src/ndbapi/Ndbif.cpp`.
   (`plugin/ha_ndbcluster.cc:184-194, 12338-12340`).
 - After an insert with an explicit value, MySQL servers move the
   counter past it, upwards only, unless their cache or highest seen is
-  already above (`Ndb.cpp:1609-1695`;
+  already above (`src/ndbapi/Ndb.cpp:1609-1695`;
   `plugin/ha_ndbcluster.cc:5299-5303`). Other nodes' cached ranges are
   not told.
 - The interpreted update is a `KEY_OP_REQ` with flags bit 15 and an
@@ -1549,22 +1857,24 @@ IF = `src/ndbapi/Ndbif.cpp`.
   read the counter into a register, load the 64-bit constant, add,
   write the counter from the sum, exit with success; the final read
   names the counter column
-  (`src/ndbapi/NdbOperationExec.cpp:817-826`,
+  (`src/ndbapi/NdbOperationExec.cpp:814-827`,
   `src/ndbapi/NdbOperationInt.cpp:48-70, 387-410`,
   `include/kernel/Interpreter.hpp:110-163`;
-  run by `DbtupExecQuery.cpp:5998-6340, 9296-9347`). The conditional
+  run by `src/kernel/blocks/dbtup/DbtupExecQuery.cpp:5998-6340, 9296-9347`).
+  The conditional
   branch compares its operands in the order the row store reads them,
   not the order the reference's builder takes them
-  (`Interpreter.hpp:1363`, `DbtupExecQuery.cpp:7302-7318, 11202`).
+  (`include/kernel/Interpreter.hpp:1363`,
+  `src/kernel/blocks/dbtup/DbtupExecQuery.cpp:7302-7318, 11202`).
 - Without the interpreter the same is an exclusive read and an update
   in one transaction: two round trips, the row locked across the
   client's round trip.
 - The dictionary has only the column's auto-increment flag; the start
-  value is not stored there (`NdbDictionaryImpl.cpp:4129-4130, 4292`).
+  value is not stored there (`src/ndbapi/NdbDictionaryImpl.cpp:4129-4130, 4294`).
 - A table without a primary key gets a last column stored as `$PK`:
   64-bit unsigned, NOT NULL, primary key, auto-increment, no default
   (`plugin/ha_ndbcluster.cc:10806-10822`); its first value is 1
-  (`NdbDictionaryImpl.cpp:386`); MySQL servers take its values from the
+  (`src/ndbapi/NdbDictionaryImpl.cpp:386`); MySQL servers take its values from the
   same counter, 1 000 at a time (`plugin/ha_ndbcluster.cc:5043-5062`),
   and learn a row's key by scanning (:4298-4310).
 - TRUNCATE drops and creates the table, so its counter starts again
@@ -1583,5 +1893,388 @@ IF = `src/ndbapi/Ndbif.cpp`.
   `src/ndbapi/NdbTransaction.cpp:1190-1210`).
 - The wait limit is the larger of 120 000 ms and, over every node
   section of the configuration, parameter 129 + parameter 131 (our
-  `TimeoutCheckPeriod` + `LockWaitLimit`)
+  `timeout_check_period` + `lock_wait_limit`)
   (`src/ndbapi/ndb_cluster_connection.cpp:1262-1296`).
+
+## 17. Where the code's facts are checked (2026-10-08)
+
+The code cites this section, never RonDB (chapter 09, "Names"): a
+comment that rests on a protocol fact ends with "Verify: chapter 05
+§17.N". Module by module, each fact is given in our words with the
+RonDB file and lines that show it, checked against the 26.10 tree when
+written. Where a section above treats the same fact, that section is
+the fuller account; this one is the index the code points into.
+
+### 17.1 Portability layer (`ic_port`)
+
+`crates/ic_port/src/consts.rs`
+
+- Block numbers from 0x8000 (32768) up belong to the user threads of an API node. `include/kernel/BlockNumbers.h:33-34`
+- Signals bundled into one are addressed to block 0x7FF (2047), BUNDLE. `include/kernel/BlockNumbers.h:36-37`
+- Every API node has the fixed block 0xFA2 (4002), NODE_WATCH, which keeps track of the state of the other nodes. `include/kernel/BlockNumbers.h:42-43`
+- The kernel blocks this library addresses are COORDINATOR 0xF5, DICTIONARY 0xFA, MEMBERSHIP 0xFC, NODE_ADMIN 0xFE, CHANGE_FEED 0x101, INFO_TABLES 0x107 and LINK_ADMIN 0x10A. `include/kernel/BlockNumbers.h:50,55,58,60,63,69,72`
+- A version is encoded as `(major << 16) | (minor << 8) | build`, so 26.10.0 is 0x1A0A00. `include/ndb_version.h.in:38,48-55`
+- A block reference keeps the node id in its low 16 bits, so no node id above 65535 can travel. `include/kernel/RefConvert.hpp:161`
+- The largest node id a cluster allows is 8191; the limit before it was 2039. `include/kernel/ndb_limits.h:73,75-76`
+- A data node's id is at most 144. `include/kernel/ndb_limits.h:58-62`
+- A cluster has at most 144 data nodes: the limit of 145 counts node id 0, which is never used. `include/kernel/ndb_limits.h:39-44`
+- A row holds at most 18000 words, which is 72000 bytes. `include/ndbapi/ndbapi_limits.h:35,40`
+
+`crates/ic_port/src/ndb_err.rs`
+
+- Every error code the data nodes and the reference's client report has a class: application, configuration, no data, constraint, schema, user defined, out of space, temporary resource, node recovery, overload, timeout, node stopping, temporary internal, unknown result, unknown code, internal or not implemented. `src/ndbapi/ndberror.cpp:115-1184`
+- Each class is permanent, temporary or of unknown outcome: the temporary resource, node recovery, overload, timeout, node stopping and temporary internal classes are temporary, unknown result and unknown code are of unknown outcome, the rest permanent. `src/ndbapi/ndberror.cpp:1213-1234`
+
+### 17.2 Sockets and the management protocol (`ic_comm`, `ic_protocol`)
+
+`crates/ic_protocol/src/proto_str.rs`
+
+- The reference's client writes a request as the command on one line, one `name: value` line per argument and an empty line, and reads the reply against a table naming its first line and its fields. `src/mgmapi/mgmapi.cpp:480-558,567-571`
+- "get nodeid" asks for a node id. `src/mgmapi/mgmapi.cpp:3301`
+- The reply to it starts with "get nodeid reply". `src/mgmapi/mgmapi.cpp:3295`
+- "get config_v2" asks for the configuration in the version 2 format. `src/mgmapi/mgmapi.cpp:3136`
+- "get config" is the version 1 form of the same request. `src/mgmapi/mgmapi.cpp:3137`
+- Both forms are answered with "get config reply". `src/mgmapi/mgmapi.cpp:3127`
+- "get version" asks for the server's version, and the client asks for the version 2 configuration only when that version allows it. `src/mgmapi/mgmapi.cpp:3100,3111,3704`
+- The version 2 configuration is served from version 8.0.18 on. `include/ndb_version.h.in:502-510`
+- The reply to "get version" starts with "version", not the command and " reply". `src/mgmapi/mgmapi.cpp:3692`
+- "get status" asks for the state of every node. `src/mgmapi/mgmapi.cpp:1212`
+- The reply to it starts with "node status", again not the command and " reply". `src/mgmapi/mgmapi.cpp:1237`
+- "get connection parameter" asks for one parameter of a link, which is how a data node's dynamically assigned port is found. `src/mgmapi/mgmapi.cpp:3565`
+- The reply to it starts with "get connection parameter reply". `src/mgmapi/mgmapi.cpp:3560`
+- "transporter connect" and an empty line end the management protocol on the socket, and the signal protocol takes it over. `src/mgmapi/mgmapi.cpp:3600-3601`
+- A configuration blob is announced with the content type "ndbconfig/octet-stream". `src/mgmapi/mgmapi.cpp:3149-3150`
+- A configuration blob is announced with the transfer encoding "base64". `src/mgmapi/mgmapi.cpp:3156-3157`
+- The node id request carries the user name "mysqld". `src/mgmapi/mgmapi.cpp:3287`
+- The node id request carries the public key "a public key". `src/mgmapi/mgmapi.cpp:3289`
+- Node types are numbered 0 for a data node, 1 for an API node and 2 for a management server. `include/mgmapi/mgmapi_config_parameters.h:460-462`
+- The data nodes number node types with the same values. `include/kernel/NodeInfo.hpp:53-58`
+
+`crates/ic_comm/src/line_proto.rs`
+
+- The management server's parser reads at most 512 bytes of a line, and the reference's client checks a line against that limit. `include/util/Parser.hpp:81`, `src/mgmapi/mgmapi.cpp:521-532`
+
+### 17.3 Configuration (`ic_apic`)
+
+`crates/ic_apic/src/conf_param.rs`
+
+- In a node section, ids 3 to 14 are common to every kind of node. `include/mgmapi/mgmapi_config_parameters.h:36-46`
+- Parameter 3, node_id, is the node's id in the cluster. `include/mgmapi/mgmapi_config_parameters.h:36`
+- Parameter 5, host, is the host the node runs on. `include/mgmapi/mgmapi_config_parameters.h:38`
+- Parameter 7, data_dir, is the node's data directory. `include/mgmapi/mgmapi_config_parameters.h:40`
+- Parameter 11, dedicated, says whether the node id is reserved for one host. `include/mgmapi/mgmapi_config_parameters.h:43`
+- Parameter 9, send_buffer_total, is the send buffer shared by all the node's links. `include/mgmapi/mgmapi_config_parameters.h:41`
+- Parameter 999, section_kind, is written in every section and says which kind of section it is. `include/mgmapi/mgmapi_config_parameters.h:455-458`
+- In the system section the ids 1 to 4 and 8 mean something else than in a node section: 3 is the cluster's name there. `include/mgmapi/mgmapi_config_parameters.h:30-34`
+- Parameter 1, first_mgm_node, is the management node that holds the master copy of the configuration. `include/mgmapi/mgmapi_config_parameters.h:31`
+- Parameter 2, config_generation, is the configuration's generation. `include/mgmapi/mgmapi_config_parameters.h:32`
+- Parameter 3, cluster_name, is the cluster's name. `include/mgmapi/mgmapi_config_parameters.h:30`
+- Parameter 4, api_rdma_allowed, says whether API nodes may reach data nodes over RDMA. `include/mgmapi/mgmapi_config_parameters.h:33`
+- Parameter 8, port_base, is the port the cluster allocates ports from. `include/mgmapi/mgmapi_config_parameters.h:34`
+- Parameter 101, replica_count, is the number of replicas per fragment. `include/mgmapi/mgmapi_config_parameters.h:53`
+- Parameter 119, api_heartbeat_ms, is how often a data node expects to hear from an API node, in milliseconds. `include/mgmapi/mgmapi_config_parameters.h:74`
+- Parameter 185, node_group, is the node group of a data node. `include/mgmapi/mgmapi_config_parameters.h:156`
+- The parameters of an API node itself are 800 to 809, with RonDB's own additions at 898 and 899. `include/mgmapi/mgmapi_config_parameters.h:432-448`
+- Parameter 800, scan_batch_bytes_total, is the largest total size of a scan batch in bytes. `include/mgmapi/mgmapi_config_parameters.h:436`
+- Parameter 801, scan_batch_bytes, is the most bytes of one scan's batch. `include/mgmapi/mgmapi_config_parameters.h:437`
+- Parameter 802, scan_batch_rows, is the most rows a scan batch may hold. `include/mgmapi/mgmapi_config_parameters.h:438`
+- Parameter 803, auto_reconnect, says whether to reconnect by itself after losing a data node. `include/mgmapi/mgmapi_config_parameters.h:439`
+- Parameter 805, redo_full_action, says what to do when the redo log is under pressure. `include/mgmapi/mgmapi_config_parameters.h:441`
+- Parameter 806, hash_map_buckets, is the default number of hash map buckets for a new table. `include/mgmapi/mgmapi_config_parameters.h:442`
+- Parameter 200, arbiter_rank, is a node's rank as an arbitrator, 0 meaning never. `include/mgmapi/mgmapi_config_parameters.h:331`
+- Parameter 201, arbiter_delay, is the delay before a node acts as arbitrator. `include/mgmapi/mgmapi_config_parameters.h:332`
+- A link section uses the ids 400 to 414. `include/mgmapi/mgmapi_config_parameters.h:362-376`
+- Parameter 400, node_1, is the lower numbered node of the pair. `include/mgmapi/mgmapi_config_parameters.h:362`
+- Parameter 401, node_2, is the higher numbered node of the pair. `include/mgmapi/mgmapi_config_parameters.h:363`
+- Parameter 402, signal_ids, says whether every signal carries an id. `include/mgmapi/mgmapi_config_parameters.h:364`
+- Parameter 403, checksum, says whether every signal carries a checksum. `include/mgmapi/mgmapi_config_parameters.h:365`
+- Parameter 406, port, is the port the listening side uses; 0 means it is assigned at start and must be asked for. `include/mgmapi/mgmapi_config_parameters.h:368`
+- Parameter 407, host_1, is the host name of node 1 of the pair. `include/mgmapi/mgmapi_config_parameters.h:369`
+- Parameter 408, host_2, is the host name of node 2 of the pair. `include/mgmapi/mgmapi_config_parameters.h:370`
+- Parameter 410, server_node, is the node of the pair that listens. `include/mgmapi/mgmapi_config_parameters.h:372`
+- Parameter 411, overload_bytes, is the send buffer use at which the link counts as overloaded. `include/mgmapi/mgmapi_config_parameters.h:373`
+- Parameter 412, checksum_before_send, says whether the checksum is computed before sending. `include/mgmapi/mgmapi_config_parameters.h:374`
+- Parameter 414, ip_version, is the IP version to prefer when a host resolves to both. `include/mgmapi/mgmapi_config_parameters.h:376`
+- Parameter 409, group, is the group of links a link belongs to when a pair has more than one. `include/mgmapi/mgmapi_config_parameters.h:371`
+- A TCP link adds the ids 452 to 499. `include/mgmapi/mgmapi_config_parameters.h:378-389`
+- Parameter 454, send_buffer, is the link's send buffer in bytes. `include/mgmapi/mgmapi_config_parameters.h:379`
+- Parameter 455, recv_buffer, is the link's receive buffer in bytes. `include/mgmapi/mgmapi_config_parameters.h:380`
+- Parameter 457, socket_recv_buffer, is the socket's `SO_RCVBUF`. `include/mgmapi/mgmapi_config_parameters.h:382`
+- Parameter 458, socket_send_buffer, is the socket's `SO_SNDBUF`. `include/mgmapi/mgmapi_config_parameters.h:383`
+- Parameter 459, socket_max_segment, is the socket's `TCP_MAXSEG`. `include/mgmapi/mgmapi_config_parameters.h:384`
+- Parameter 460, bind_any, says whether the listening side binds every address. `include/mgmapi/mgmapi_config_parameters.h:385`
+- Parameter 462, require_tls, says whether the link must use TLS. `include/mgmapi/mgmapi_config_parameters.h:387`
+- Parameter 499, ipv4_only, says whether the link uses IPv4 only. `include/mgmapi/mgmapi_config_parameters.h:389`
+
+`crates/ic_apic/src/conf_blob.rs`
+
+- A version 2 configuration starts with the eight bytes "NDBCONF2" (version 1 used "NDBCONFV") and a header of seven words: the total length in words, the version, which is 2, the number of default sections, which is 5, and the numbers of data nodes, API nodes, management nodes and links. Then come the five default sections (data node, API node, management node, TCP, shared memory), the system section, the node sections, the link sections and a checksum, every word in network byte order. `src/common/mgmcommon/ConfigObject.cpp:64-65,850-877,957-1087`
+- The checksum is every word but the last exclusive-ored together, and equals the last word. `src/common/mgmcommon/ConfigObject.cpp:1089-1100`
+- A section starts with three words, its length, its number of entries and its type. An entry is a word with the value type in its top 4 bits and the id in its low 28, then one word for an integer, two words high half first for a 64-bit integer, or for a string a length that counts the closing NUL and the bytes padded with zeros to whole words. `src/common/mgmcommon/ConfigSection.cpp:290-332,928-958`
+- A value a section does not state is read from the default section for its type; an RDMA section has no default section. `src/common/mgmcommon/ConfigObject.cpp:310-319`
+- Section types are 0 invalid, 1 data node, 2 API node, 3 management node, 4 TCP, 5 shared memory, 6 system and 7 RDMA. `include/util/ConfigSection.hpp:52-61`
+
+`crates/ic_apic/src/mgm_client.rs`
+
+- An argument is written as `name: value` for a number and `name:"value"` for text, with no space before the quote, and a text argument's line may not exceed 512 bytes. `src/mgmapi/mgmapi.cpp:480,504-542,558`
+- A refused node id request comes with code 1101 when asking again may succeed, 1102 when it will not, and 1103 when the server could not match a host name and the node should ask again. `include/mgmapi/mgmapi_error.h:80-87`
+- A wanted node id that another node holds is refused with "Id N already allocated by another node." and code 1101, the same code as the refusals that time may cure; the server notes that the MySQL server reads its node id refusal texts. `src/mgmsrv/MgmtSrvr.cpp:5166-5192`
+- The node id request sends version, nodetype, nodeid, user, password, public key, endian, an optional name and log_event, and its reply carries result, nodeid and, on a refusal, error_code. `src/mgmapi/mgmapi.cpp:3268-3329`
+- The configuration request sends version, nodetype and node; its reply carries result, Content-Length, Content-Type and Content-Transfer-Encoding, and the base64 text that follows is one byte longer than Content-Length says, for its closing newline. `src/mgmapi/mgmapi.cpp:3091-3214`
+- The link parameter request sends node1, node2 and param, and its reply carries value and result. `src/mgmapi/mgmapi.cpp:3548-3585`
+- Handing the socket over sends "transporter connect" and an empty line, and the reference's client gives the socket up without closing it. `src/mgmapi/mgmapi.cpp:3587-3606`
+
+### 17.4 Block numbers (`ic_signals::blocks`)
+
+- The data node's blocks are numbered: archive 0xF4, coordinator 0xF5, distribution 0xF6, the fragment's operation block 0xF7, hash index 0xF8, row store 0xF9, dictionary 0xFA, start control 0xFB, membership 0xFC, file I/O 0xFD, node administration 0xFE, index build 0xFF, utility 0x100, change feed 0x101, ordered index 0x102, the join block 0x108, a thread administration block 0x109, link administration 0x10A, and the read workers 0x10B to 0x111. `include/kernel/BlockNumbers.h:49-79`
+- A block reference is one word: the node id in the low 16 bits, the block number in the high 16. `include/kernel/RefConvert.hpp:158-187`
+- The first block number an API node's threads may use is 0x8000. `include/kernel/BlockNumbers.h:33-34`
+- An API node may have at most 4711 threads that talk to the cluster. `src/ndbapi/TransporterFacade.hpp:67-71`
+- The bundle block, to which several small replies are sent as one signal, is 0x7FF (2047). `include/kernel/BlockNumbers.h:36-37`
+- An API node's fixed node watch block, which takes heartbeat answers and node state, is 0xFA2. `include/kernel/BlockNumbers.h:42-43`
+- The management server's configuration service block is 0xFA3. `include/kernel/BlockNumbers.h:44`
+- A reference is built as the node id or-ed with the block number shifted up 16 bits. `include/kernel/RefConvert.hpp:184-187`
+- The node of a reference is its low 16 bits. `include/kernel/RefConvert.hpp:161`
+- The block of a reference is its high 16 bits. `include/kernel/RefConvert.hpp:166`
+
+### 17.5 Signal numbers (`ic_signals::numbers`)
+
+- HEARTBEAT_CONF is signal 1. `include/kernel/GlobalSignalNumbers.h:53`
+- HEARTBEAT_REF is signal 2. `include/kernel/GlobalSignalNumbers.h:54`
+- HEARTBEAT_REQ is signal 3. `include/kernel/GlobalSignalNumbers.h:55`
+- NODE_LOST_REP is signal 26. `include/kernel/GlobalSignalNumbers.h:91`
+- NODE_LOST_DONE_REP is signal 27. `include/kernel/GlobalSignalNumbers.h:92`
+- NODE_JOINED_REP is signal 163. `include/kernel/GlobalSignalNumbers.h:249`
+- COORD_ALLOC_REQ is signal 39. `include/kernel/GlobalSignalNumbers.h:107`
+- COORD_ALLOC_CONF is signal 37. `include/kernel/GlobalSignalNumbers.h:105`
+- COORD_ALLOC_REF is signal 38. `include/kernel/GlobalSignalNumbers.h:106`
+- COORD_FREE_REQ is signal 36. `include/kernel/GlobalSignalNumbers.h:103`
+- COORD_FREE_CONF is signal 34. `include/kernel/GlobalSignalNumbers.h:101`
+- COORD_FREE_REF is signal 35. `include/kernel/GlobalSignalNumbers.h:102`
+- COMMIT_REQ is signal 19. `include/kernel/GlobalSignalNumbers.h:75`
+- COMMIT_CONF is signal 17. `include/kernel/GlobalSignalNumbers.h:73`
+- COMMIT_REF is signal 18. `include/kernel/GlobalSignalNumbers.h:74`
+- ROLLBACK_REQ is signal 15. `include/kernel/GlobalSignalNumbers.h:70`
+- ROLLBACK_CONF is signal 13. `include/kernel/GlobalSignalNumbers.h:68`
+- ROLLBACK_REF is signal 14. `include/kernel/GlobalSignalNumbers.h:69`
+- TRANS_ABORTED_REP is signal 16. `include/kernel/GlobalSignalNumbers.h:71`
+- COMMIT_MARKER_FREE_ORD is signal 469. `include/kernel/GlobalSignalNumbers.h:617`
+- TAKEOVER_CONF is signal 8. `include/kernel/GlobalSignalNumbers.h:62`
+- TAKEOVER_REF is signal 9. `include/kernel/GlobalSignalNumbers.h:63`
+- DEADLOCK_FOUND_REP is signal 980. `include/kernel/GlobalSignalNumbers.h:1330`
+- KEY_OP_REQ is signal 12. `include/kernel/GlobalSignalNumbers.h:66`
+- KEY_OP_CONF is signal 10. `include/kernel/GlobalSignalNumbers.h:64`
+- KEY_OP_REF is signal 11. `include/kernel/GlobalSignalNumbers.h:65`
+- UNIQUE_OP_REQ is signal 519. `include/kernel/GlobalSignalNumbers.h:685`
+- UNIQUE_OP_CONF is signal 520. `include/kernel/GlobalSignalNumbers.h:686`
+- UNIQUE_OP_REF is signal 521. `include/kernel/GlobalSignalNumbers.h:687`
+- ROW_DATA_REP is signal 5. `include/kernel/GlobalSignalNumbers.h:58`
+- KEY_DATA_ORD is signal 6. `include/kernel/GlobalSignalNumbers.h:59`
+- COLUMN_DATA_ORD is signal 4. `include/kernel/GlobalSignalNumbers.h:57`
+- SCAN_ROW_KEY_REP is signal 33. `include/kernel/GlobalSignalNumbers.h:99`
+- SCAN_REQ is signal 32. `include/kernel/GlobalSignalNumbers.h:98`
+- SCAN_CONF is signal 29. `include/kernel/GlobalSignalNumbers.h:95`
+- SCAN_REF is signal 31. `include/kernel/GlobalSignalNumbers.h:97`
+- SCAN_MORE_REQ is signal 28. `include/kernel/GlobalSignalNumbers.h:94`
+- TABLE_DESC_REQ is signal 24. `include/kernel/GlobalSignalNumbers.h:82`
+- TABLE_DESC_CONF is signal 190. `include/kernel/GlobalSignalNumbers.h:83`
+- TABLE_DESC_REF is signal 23. `include/kernel/GlobalSignalNumbers.h:81`
+- LIST_OBJECTS_REQ is signal 193. `include/kernel/GlobalSignalNumbers.h:281`
+- LIST_OBJECTS_CONF is signal 194. `include/kernel/GlobalSignalNumbers.h:282`
+- TABLE_CHANGED_REP is signal 606. `include/kernel/GlobalSignalNumbers.h:836`
+
+### 17.6 Message framing and bundles (`ic_signals::header`, `ic_signals::bundle`)
+
+- A message is three header words (byte order and flags, lengths; signal number, trace, section count; receiver and sender block), then an optional signal id, the data, the section lengths and sections, and an optional checksum. `src/common/transporter/TransporterInternalDefinitions.hpp:54-101`
+- A signal carries at most 25 words of data; longer data goes in a section. `src/ndbapi/NdbApiSignal.hpp:80`
+- The largest message is 32768 bytes, sent or received. `include/transporter/TransporterDefinitions.hpp:85-86`
+- The byte order value is 1 on a big-endian machine and 0 on a little-endian one. `src/common/transporter/Packer.hpp:33-36`
+- The comment that describes the header words gives these two values the other way round. `src/common/transporter/TransporterInternalDefinitions.hpp:103-105`
+- The checksum is the exclusive or of every word of the message before the checksum word. `src/common/transporter/TransporterInternalDefinitions.hpp:49-52`, `src/common/transporter/Packer.cpp:556`
+- The one significant byte order bit is repeated into bits 0, 7, 24 and 31 of the first word. `src/common/transporter/TransporterInternalDefinitions.hpp:189-194`
+- A bundled signal goes to block 2047. The receiver walks its data part by part: a header word with the block in bits 16-31 and the length less three in bits 0-4, at most 25 words, and each part is delivered to its own block as if it had come alone. `src/ndbapi/TransporterFacade.cpp:276-322`
+- The coordinator sends KEY_OP_CONF (10) to an API node bundled this way. `src/kernel/blocks/dbtc/DbtcMain.cpp:7421-7430`
+- The node that reads a row bundles a short ROW_DATA_REP (5), the part's header word being the block shifted up 16 bits plus the row data's length. `src/kernel/blocks/dbtup/DbtupBuffer.cpp:107-135`, `src/kernel/blocks/dbtup/DbtupBuffer.cpp:216-239`
+
+### 17.7 Membership and heartbeats (`ic_signals::membership`)
+
+- HEARTBEAT_REQ (3) is three words, our block reference, our version and our MySQL version, and is answered by the membership block. `include/kernel/signaldata/ApiRegSignalData.hpp:34-52`
+- HEARTBEAT_CONF (1) is the membership block's reference, its version, the heartbeat interval, its MySQL version, the oldest data node version, the node state, and the oldest API node version. `include/kernel/signaldata/ApiRegSignalData.hpp:87-109`
+- The node state is 16 words. `include/kernel/NodeState.hpp:112-113`
+- The connected-node bitmap inside it is 8 words, 256 bits, and the data node fills it with the nodes it is connected to. `include/kernel/NodeBitmask.hpp:45`, `include/kernel/NodeState.hpp:157`, `src/kernel/blocks/qmgr/QmgrMain.cpp:6234-6241`
+- The start levels: nothing 0, process up 1, starting 2, started 3, single user 4, and stopping in four phases 5 to 8. `include/kernel/NodeState.hpp:36-98`
+- HEARTBEAT_REF (2) is four words, the last but one the reason: wrong node type 1, unsupported version 2, unconfigured node 3. `include/kernel/signaldata/ApiRegSignalData.hpp:57-82`
+- The data node sends the heartbeat interval in hundredths of a second, a tenth of the configured milliseconds, and the reference multiplies it by ten. `src/kernel/blocks/qmgr/QmgrMain.cpp:6214`, `src/ndbapi/ClusterMgr.cpp:2155-2159`
+- NODE_LOST_DONE_REP (27) is five words: block, reporting node, failed node, and two more. `include/kernel/signaldata/NFCompleteRep.hpp:44-72`
+- NODE_LOST_REP (26) in its modern form is three words with the bitmap of failed nodes in a section; the two older forms carry the bitmap inline, sized for data nodes or for every node. `include/kernel/signaldata/NodeFailRep.hpp:40-69`
+- The bitmap's length is the signal data length less three. `include/kernel/signaldata/NodeFailRep.hpp:71-76`
+- The membership block sends NODE_LOST_DONE_REP to every registered API node with its own reference in the block field; zero there means the whole node only inside a data node. `src/kernel/blocks/qmgr/QmgrMain.cpp:5335-5356`, `include/kernel/signaldata/NFCompleteRep.hpp:49-54`
+- The reference's receiver reads only the failed node id. `src/ndbapi/ClusterMgr.cpp:2414-2431`
+
+### 17.8 Properties and table descriptions (`ic_signals::prop_stream`, `ic_signals::table_props`)
+
+- A property's head word is the value type shifted up 16 bits plus the key. The head, numbers and length words are written in network byte order; a two-word number goes low word first; text and bytes are copied as they are, padded to whole words. `src/common/util/SimpleProperties.cpp:36-86`
+- The reader converts the head, numbers and length words from network byte order, steps over the bytes rounded up to words, and refuses a value type it does not know. `src/common/util/SimpleProperties.cpp:191-240`
+- Keys a reader does not know are passed over. `src/common/util/SimpleProperties.cpp:253-290`
+- The value types: one-word number 0, text 1, bytes 2, two-word number 4. `include/util/SimpleProperties.hpp:52-58`
+- Text is sent with a length that counts its terminating NUL. `include/util/SimpleProperties.hpp:236-238`
+- The table keys and the column keys, with their numbers. `include/kernel/signaldata/DictTabInfo.hpp:97-215`
+- The table part ends at the first column name; a column ends at its end marker; the table end marker is not a table key. `src/common/debugger/signaldata/DictTabInfo.cpp:33-105`, `src/common/debugger/signaldata/DictTabInfo.cpp:114-137`
+- The defaults are what the table and column structures are initialised with. `src/common/debugger/signaldata/DictTabInfo.cpp:154-233`, `src/common/debugger/signaldata/DictTabInfo.cpp:235-253`
+- A column's element size and count are worked out from its type, length, precision and scale. `include/kernel/signaldata/DictTabInfo.hpp:500-637`
+- The reference reads a description into a table, column by column, this way. `src/ndbapi/NdbDictionaryImpl.cpp:3886-4166`
+- The column type, length storage and storage numbers. `include/ndb_constants.h:47-100`
+- The offline part of a table version is its low 24 bits, which is what operations are checked against. `include/kernel/kernel_types.h:94`
+- The replica data is 16-bit values in network byte order: replica count, fragment count, then per fragment its log part and the node of each replica. The dictionary gets it from the distribution block and adds it only when answering TABLE_DESC_REQ (24). `src/kernel/blocks/dbdict/Dbdict.cpp:1297-1317`
+- The reference reads the replica data and passes over each log part. `src/ndbapi/NdbDictionaryImpl.cpp:4175-4195`
+- In MySQL the largest decimal precision is 65 and the first scale that means "not specified" is 31. `/sql-common/my_decimal.h:58-70`, `/include/mysql/strings/dtoa.h:53-54`
+- A table placed by hash map sends a key hash to the fragment its map gives for the hash modulo the map's size. `src/ndbapi/NdbDictionary.cpp:794-797`
+- A hash map is described by its name (key 1), its bucket array's length in bytes (2), the buckets as 16-bit values (3), and the table keys for id and version; every value starts at zero. `include/kernel/signaldata/DictTabInfo.hpp:903`, `src/common/debugger/signaldata/DictTabInfo.cpp:400-417`
+- The reference halves the byte length to get the bucket count. `src/ndbapi/NdbDictionaryImpl.cpp:9659-9692`
+- When no column is marked as part of the distribution key, every primary key column is. `src/ndbapi/NdbDictionaryImpl.cpp:1558-1572`
+- A default value is a column header in network byte order, whose low 15 bits are the size in bytes, then the value; size zero means no default. `src/ndbapi/NdbDictionaryImpl.cpp:4132-4161`, `include/kernel/AttributeHeader.hpp:237-238`
+- The byte order conversion the reference applies to a default changes nothing on a little-endian host. `src/common/util/NdbSqlUtil.cpp:1086-1124`
+
+### 17.9 Dictionary requests and notices (`ic_signals::table_desc`, `ic_signals::list_objects`, `ic_signals::table_change`)
+
+- The reference asks for a table by name with a long answer; the name length counts the terminating NUL, and section 0 is the name padded to whole words. `src/ndbapi/NdbDictionaryImpl.cpp:3630-3667`
+- The dictionary answers with the description in section 0, through the send that fragments when it must. `src/kernel/blocks/dbdict/Dbdict.cpp:12678-12708`
+- A data node sends a signal whole when its data and sections come to at most 7400 words, and in fragments beyond that. `src/kernel/vm/SimulatedBlock.cpp:4055-4074`, `include/kernel/ndb_limits.h:311`
+- The reference gathers the fragments of the answer into one buffer sized by the total length. `src/ndbapi/NdbDictionaryImpl.cpp:3722-3752`
+- TABLE_DESC_REQ (24) is five words: caller data, caller reference, request type, table id or name length, schema transaction. Request types: by id 0, by name 1, long answer 2. The name goes in section 0. `include/kernel/signaldata/GetTabInfo.hpp:53-66`
+- TABLE_DESC_CONF (190) is six words: caller data, table id, global checkpoint, total length in words, object type, the dictionary's reference. `include/kernel/signaldata/GetTabInfo.hpp:126-143`
+- TABLE_DESC_REF (23) is seven words with the error code sixth and the source line seventh; an older node sent five, the error code last. Codes: 701 busy, 702 name too long, 709 no such id, 710 not fetchable by name, 723 no such table. `include/kernel/signaldata/GetTabInfo.hpp:84-107`, `src/ndbapi/NdbDictionaryImpl.cpp:3760-3767`
+- LIST_OBJECTS_REQ (193) is five words: caller data, caller reference, flags, table id, object type. `include/kernel/signaldata/ListTables.hpp:34-37`, `include/kernel/signaldata/ListTables.hpp:153-159`
+- LIST_OBJECTS_CONF (194) is two words, caller data and an object count, with three words per object in section 0 and the names in section 1. `include/kernel/signaldata/ListTables.hpp:202-209`
+- Each name is a length word in bytes, counting the NUL, then the name padded to whole words. `src/kernel/blocks/dbdict/Dbdict.cpp:13109-13117`
+- The dictionary sends a long list in pieces, each with the count of its own objects, and the reference adds the counts up. `src/kernel/blocks/dbdict/Dbdict.cpp:13119-13216`, `src/ndbapi/NdbDictionaryImpl.cpp:7593-7596`
+- The reference expects the long form from every data node; the older form packed each object into one word. `src/ndbapi/NdbDictionaryImpl.cpp:7539-7542`, `include/kernel/signaldata/ListTables.hpp:87-137`
+- Request flags: names wanted is bit 28, dependents only is bit 30. `include/kernel/signaldata/ListTables.hpp:67-84`
+- The older form keeps the table id in the low 12 bits of the flags word, and the reference fills it in. `include/kernel/signaldata/ListTables.hpp:95-100`, `src/ndbapi/NdbDictionaryImpl.cpp:7287-7292`
+- The reference lists a table's dependents, names included, to find its indexes. `src/ndbapi/NdbDictionaryImpl.cpp:7259-7267`
+- In each object's first word the store is bits 20-22, temporary bit 23 and state bits 24-27; the reference reads one name per object. `include/kernel/signaldata/ListTables.hpp:49-66`, `src/ndbapi/NdbDictionaryImpl.cpp:7306-7340`
+- TABLE_CHANGED_REP (606) goes to the API node's node watch block. `src/kernel/blocks/qmgr/QmgrMain.cpp:9213-9214`, `src/kernel/blocks/dbdict/Dbdict.cpp:9493-9494`
+- For an alteration, each data node's dictionary hands it to its membership block, which sends it to every API node registered there. `src/kernel/blocks/dbdict/Dbdict.cpp:11969-11999`, `src/kernel/blocks/qmgr/QmgrMain.cpp:9186-9215`
+- The version it carries is the one being replaced, and the name is the old name after a rename. `src/kernel/blocks/dbdict/Dbdict.cpp:9877-9878`, `src/kernel/blocks/dbdict/Dbdict.cpp:11975-11990`
+- For a drop it is sent once, by the master, and only to API nodes whose version is 26.05 or later, 26.02.5 or later in 26.02, or 25.10.14 or later in 25.10. `src/kernel/blocks/dbdict/Dbdict.cpp:9467-9497`, `include/ndb_version.h.in:1460-1488`
+- It is three words, table id, table version and kind of change (1 altered, 2 dropped), with the name in section 0. `include/kernel/signaldata/AlterTable.hpp:404-416`
+- The name is padded with NULs to 128 bytes. `include/kernel/ndb_limits.h:118`, `src/kernel/blocks/dbdict/Dbdict.cpp:11981-11994`
+- The reference hands it to its dictionary cache. `src/ndbapi/ClusterMgr.cpp:934-943`
+
+### 17.10 Coordinator records (`ic_signals::coord_alloc`)
+
+- The six signal numbers: COORD_FREE_CONF 34, COORD_FREE_REF 35, COORD_FREE_REQ 36, COORD_ALLOC_CONF 37, COORD_ALLOC_REF 38, COORD_ALLOC_REQ 39. `include/kernel/GlobalSignalNumbers.h:101-107`
+- The reference sends COORD_ALLOC_REQ (39) and COORD_FREE_REQ (36) as three plain words each, with no sections. `src/ndbapi/NdbApiSignal.cpp:134-155`
+- COORD_ALLOC_REQ carries our pointer, our block reference and the coordinator instance wanted. `src/ndbapi/Ndb.cpp:160-170`, `src/kernel/blocks/dbtc/DbtcMain.cpp:2371-2376`
+- COORD_ALLOC_CONF (37) is three words: our pointer, the coordinator's pointer, the coordinator's reference. `src/kernel/blocks/dbtc/DbtcMain.cpp:2446-2451`
+- COORD_ALLOC_REF (38) is two words, our pointer and an error code, sent when the node is not started, is shutting down, or has no record free. `src/kernel/blocks/dbtc/DbtcMain.cpp:2393-2427`, `src/kernel/blocks/dbtc/DbtcMain.cpp:2456-2459`
+- COORD_FREE_REQ puts the coordinator's pointer first, then our block reference, then our pointer. `src/ndbapi/Ndblist.cpp:418-421`, `src/kernel/blocks/dbtc/DbtcMain.cpp:2471-2473`
+- COORD_FREE_CONF (34) is one word, our pointer. `src/kernel/blocks/dbtc/DbtcMain.cpp:2488-2489`, `src/kernel/blocks/dbtc/DbtcMain.cpp:2518-2519`
+- COORD_FREE_REF (35) is our pointer, an error code and the source line, three words, or five when the sender's reference does not match the record's. `src/kernel/blocks/dbtc/DbtcMain.cpp:2479-2482`, `src/kernel/blocks/dbtc/DbtcMain.cpp:2523-2528`
+
+### 17.11 Key operations and column headers (`ic_signals::key_ops`, `ic_signals::column_header`)
+
+- KEY_OP_REQ (12) has eight fixed words; in the long form the key is section 0 and the column data section 1. `include/kernel/signaldata/TcKeyReq.hpp:85-95`, `include/kernel/signaldata/TcKeyReq.hpp:116-139`
+- After the eighth word come, only when their flags say so and in this order, the user id and its version, the scan information, and the distribution key. `include/kernel/signaldata/TcKeyReq.hpp:141-154`, `src/ndbapi/NdbOperationExec.cpp:1505-1528`, `src/kernel/blocks/dbtc/DbtcMain.cpp:4601-4622`
+- The coordinator refuses a long request that is not exactly as long as its flags make it, as a malicious signal. `src/kernel/blocks/dbtc/DbtcMain.cpp:4624-4639`
+- The reference finds a KEY_OP_CONF's transaction by its first word, or from the operations when that word is the null value 0xFFFFFF00. `src/ndbapi/Ndbif.cpp:518-525`, `include/kernel/ndb_limits.h:33`
+- KEY_OP_REF (11) and ROW_DATA_REP (5) name the operation by our pointer in the first word. `src/ndbapi/Ndbif.cpp:879-887`, `src/ndbapi/Ndbif.cpp:580-583`
+- KEY_OP_CONF (10) is our transaction pointer, the global checkpoint's high word, an info word and the transaction id, then two words per operation (our pointer, row data length), then the checkpoint's low word. The info word holds the operation count in its low 16 bits, the commit bit at 16, and the marker bit at 17, which counts only with the commit bit. `include/kernel/signaldata/TcKeyConf.hpp:62-131`
+- A row data length above bit 31 marks a dirty read, its low bits naming the reading node, and one ROW_DATA_REP then completes the operation whatever its length. `include/kernel/signaldata/TcKeyConf.hpp:64`, `src/ndbapi/NdbTransaction.cpp:2827-2829`, `src/ndbapi/NdbReceiver.cpp:1462`
+- The checkpoint's low word is read only when the signal is long enough to hold it. `src/ndbapi/NdbTransaction.cpp:2844-2851`
+- ROW_DATA_REP is three words, our pointer and the transaction id, then the row: inline when short, section 0 when long. A long one in fragments has a fourth word, the row's whole length. `include/kernel/signaldata/TransIdAI.hpp:52-62`, `include/kernel/signaldata/TransIdAI.hpp:81-89`, `src/ndbapi/Ndbif.cpp:619-635`
+- COMMIT_MARKER_FREE_ORD (469) is the two words of the transaction id, sent to the block that sent the KEY_OP_CONF, even when the confirmation is otherwise rejected. `src/ndbapi/Ndbif.cpp:2052-2068`, `src/ndbapi/Ndbif.cpp:559-576`
+- Operation types: read 0, update 1, insert 2, delete 3, write 4, exclusive read 5. `include/kernel/kernel_types.h:40-46`
+- Abort options: abort on error 0, ignore error 2. `include/kernel/signaldata/TcKeyReq.hpp:100-105`
+- Request flag bits: dirty 0, no disk 1, commit 4, operation 5-7, simple 8, execute 10, start 11, abort option 12-13, no wait 21, batch safe 22, batch unsafe 23. `include/kernel/signaldata/TcKeyReq.hpp:423-457`
+- In the long form the third word, the column data length, is zero. `include/kernel/signaldata/TcKeyReq.hpp:121-134`, `src/ndbapi/NdbOperationExec.cpp:1483-1486`
+- The coordinator puts at most three operations in one KEY_OP_CONF: six words. `src/kernel/blocks/dbtc/Dbtc.hpp:156`
+- KEY_OP_REF is five words: our operation pointer, the transaction id, the error code, more about the error. `include/kernel/signaldata/TcKeyRef.hpp:57-68`
+- COMMIT_REQ (19) and ROLLBACK_REQ (15) are the coordinator's pointer and the transaction id. The coordinator checks the id against the record, and a bad pointer or a wrong id gets no reply. `src/kernel/blocks/dbtc/DbtcMain.cpp:9816-9828`, `src/kernel/blocks/dbtc/DbtcMain.cpp:9948-9951`, `src/kernel/blocks/dbtc/DbtcMain.cpp:9968-9990`, `src/kernel/blocks/dbtc/DbtcMain.cpp:10065-10070`
+- The reference puts the coordinator's pointer first in both. `src/ndbapi/NdbTransaction.cpp:1750-1753`, `src/ndbapi/NdbTransaction.cpp:1802-1805`
+- COMMIT_CONF (17) is five words: our pointer, with its low bit set when a commit marker was kept, the transaction id, and the global checkpoint high then low. `include/kernel/signaldata/TcCommit.hpp:53-67`, `src/kernel/blocks/dbtc/DbtcMain.cpp:8223-8241`
+- COMMIT_REF (18) is four words, the error code last; ROLLBACK_REF (14) adds a fifth, the coordinator's state. `include/kernel/signaldata/TcCommit.hpp:82-88`, `src/kernel/blocks/dbtc/DbtcMain.cpp:10031-10037`
+- ROLLBACK_CONF (13) is three words, our pointer and the transaction id. `src/kernel/blocks/dbtc/DbtcMain.cpp:10007-10012`, `src/kernel/blocks/dbtc/DbtcMain.cpp:21565-21569`
+- TAKEOVER_CONF (8) is three words; the low bit of our pointer asks for COMMIT_MARKER_FREE_ORD, which goes to the sender. `include/kernel/signaldata/TcKeyFailConf.hpp:53-64`, `src/kernel/blocks/dbtc/DbtcMain.cpp:14661-14690`, `src/ndbapi/Ndbif.cpp:1134-1143`
+- TAKEOVER_REF (9) is three words, our pointer and the transaction id. `src/kernel/blocks/dbtc/DbtcMain.cpp:14633-14655`
+- TRANS_ABORTED_REP (16) is five words: our pointer, the transaction id, the transaction's error code, and more about the error. `include/kernel/signaldata/TcRollbackRep.hpp:53-59`, `src/kernel/blocks/dbtc/DbtcMain.cpp:21571-21587`
+- A column header holds the column id in bits 16-31, the partial read or write flag in bit 15, and the value's size in bytes in bits 0-14; the value takes that many bytes rounded up to words, and size zero is NULL. `include/kernel/AttributeHeader.hpp:220-255`
+
+### 17.12 Links, threads and signals (`ic_apid::apid_conn`, `apid_global`, `handshake`, `heartbeat`, `fragments`, `node_connect`, `node_state`, `rec_thread`, `signal_reader`, `signal_page`, `thread_conn`, `connect_thread`, `adaptive_send`, `send_pool`, `lib`)
+
+- A transaction id holds the low 12 bits of the user thread's block number less 0x8000 in bits 52 to 63 and the low 12 bits of the API node's id in bits 40 to 51; bit 12 of the node id goes in bit 39 and bit 12 of the block index in bit 38; the low 32 bits are a count that wraps without carrying into bit 32. `src/ndbapi/Ndbif.cpp:226-269`, `src/ndbapi/Ndb.cpp:2270-2280`
+- The count of a newly opened block goes on from where the last holder of the same block number left it; a holder stores its count for the block before it lets the block go. `src/ndbapi/Ndbif.cpp:111-115`, `src/ndbapi/Ndbinit.cpp:168-177`
+- The reference API sends a heartbeat every half check interval, or at its own longest registration interval if that is shorter. `src/ndbapi/ClusterMgr.cpp:570-573`, `src/ndbapi/ClusterMgr.cpp:728-731`
+- The check interval in `HEARTBEAT_CONF` (signal 1) is in hundredths of a second, and one shorter than 100 ms is raised to 100 ms. `src/ndbapi/ClusterMgr.hpp:107-108`, `src/ndbapi/ClusterMgr.cpp:2155-2171`
+- The missed count goes up at the end of every check interval, and a node whose count reaches four, with its interval known, is lost. `src/ndbapi/ClusterMgr.cpp:696-706`, `src/ndbapi/ClusterMgr.cpp:734-752`
+- The client sends a line saying what it can do about encryption ("ndbd TLS disabled" for cleartext) and an empty line, and reads one reply: "ok" from a server too old to know encryption, "Cleartext ok" when cleartext is accepted, "TLS required" when it is not. `src/common/util/SocketAuthenticator.cpp:133-169`
+- A server of the older kind reads the two lines as a user name and a password and answers "ok". `src/common/util/SocketAuthenticator.cpp:95-127`
+- The hello is four numbers, our node id, the transporter type, the far node's id and the link instance; the reply is two, the far node's id and its type, and both are checked. `src/common/transporter/Transporter.cpp:434-437`, `src/common/transporter/Transporter.cpp:479-515`
+- A hello is at most 23 bytes before its newline, the limit servers before 8.0.20 read. `src/common/transporter/Transporter.cpp:443-456`
+- The data node accepts a hello of two, three or four numbers. `src/common/transporter/TransporterRegistry.cpp:701-722`
+- A TCP link is transporter type 1; 3 is shared memory and 4 RDMA. `include/transporter/TransporterDefinitions.hpp:49-58`
+- A data node not expecting a connection from that node answers the hello with "BYE", waits up to a second for the client to close, and resets the socket if it does not. `src/common/transporter/TransporterRegistry.cpp:822-874`
+- A missed-heartbeat counter goes up at the end of every check interval and back to zero on every reply, and the node is lost when it reaches four. `src/ndbapi/ClusterMgr.cpp:696-706`, `src/ndbapi/ClusterMgr.cpp:743-752`, `src/ndbapi/ClusterMgr.cpp:2154`
+- A data node splits a signal whose data and sections together pass 7400 words; a debug build splits `ROW_DATA_REP` (signal 5) above 240 words. `include/kernel/ndb_limits.h:311-312`, `src/kernel/vm/SimulatedBlock.cpp:4055-4074`
+- The pieces are 3840 words, or 120 from a debug build; the note beside them says splitting starts above that size, but the code splits only above 7400 words. `src/kernel/vm/SimulatedBlock.hpp:1003-1012`
+- Every piece carries the original's whole signal data, then the number of each section it carries, highest first, then the fragment id; the first piece is marked 1, middle ones 2 and the last 3. `src/kernel/vm/SimulatedBlock.cpp:4099`, `src/kernel/vm/SimulatedBlock.cpp:4141-4166`, `src/kernel/vm/SimulatedBlock.cpp:4234-4283`
+- A receiver reads the fragment id from the last data word and the section numbers from the words before it. `src/ndbapi/NdbApiSignal.hpp:87-99`
+- The reference's client checks the request number in the data of every fragment of a table description, so it relies on each fragment carrying the original data. `src/ndbapi/NdbDictionaryImpl.cpp:3722-3752`
+- The reference API's send thread sends a held-back send after a grace period of 200 µs. `src/ndbapi/TransporterFacade.cpp:956-959`, `src/ndbapi/TransporterFacade.cpp:1069-1083`
+
+### 17.13 Dictionary and records (`ic_apid::dict_cache`, `dict_client`, `record`, `text_row`)
+
+- The first thread to ask for a table name leaves an entry saying it is being fetched, and threads asking meanwhile wait for that fetch. `src/ndbapi/DictCache.cpp:197-258`
+- The fetching thread stores what it got and wakes the waiters; a change notice that came during the fetch makes the stored version one that no longer holds. `src/ndbapi/DictCache.cpp:260-315`
+- `TABLE_CHANGED_REP` (signal 606) names the table and the version that no longer holds; that version is marked altered or dropped, and let go of once nobody uses it. `src/ndbapi/ClusterMgr.cpp:934-943`, `src/ndbapi/DictCache.cpp:459-493`
+- When the last data node link goes, every cached entry not being fetched is marked invalid. `src/ndbapi/ClusterMgr.cpp:2556-2564`, `src/ndbapi/DictCache.cpp:330-349`
+- An index is looked up by its current internal name, then by the older one; one bound for another version of its table is let go of and fetched again. `src/ndbapi/NdbDictionaryImpl.hpp:1463-1514`
+- An index's internal name is `sys/def/<table id>/<index>`; an older version made `<database>/<schema>/<table id>/<index>`. `src/ndbapi/NdbDictionaryImpl.cpp:2625-2682`
+- An index is described as a table of its own, with its own id and version, its columns matched to the base table's by name and the last, hidden column left out. `src/ndbapi/NdbDictionaryImpl.cpp:5723-5796`
+- A table description (`TABLE_DESC_REQ`, signal 24) is asked of any started node, each attempt with a request number of its own, up to 100 attempts, and a reply that the dictionary is busy is asked again. `src/ndbapi/NdbDictionaryImpl.cpp:3630-3668`, `src/ndbapi/NdbDictionaryImpl.cpp:3670-3695`, `src/ndbapi/NdbDictionaryImpl.cpp:3583-3594`
+- Before each new attempt the pause is 50 ms plus ten times a random number below 5, below 10 after half the attempts, and from 100 ms after three quarters; a failed send or a lost node is asked again too. `src/ndbapi/NdbDictionaryImpl.cpp:3470-3488`, `src/ndbapi/NdbDictionaryImpl.cpp:3520-3559`
+- A table placed by hash map has its hash map fetched as part of fetching the table. `src/ndbapi/NdbDictionaryImpl.cpp:3703-3717`
+- The dictionary answers `LIST_OBJECTS_REQ` (signal 193) only with `LIST_OBJECTS_CONF` (signal 194); it has no refusal. `src/kernel/blocks/dbdict/Dbdict.cpp:12730-12742`
+- A record is checked so that no two values or null bits overlap: each is a range of bits, the ranges are sorted by start and each must begin after the one before ends; a NOT NULL column has no null bit to check. `src/ndbapi/NdbDictionaryImpl.cpp:7978-8094`
+- A column's room in a record is its size in bytes, a blob's a pointer. `src/ndbapi/NdbDictionary.cpp:234-237`
+- The same column twice in a record is refused, with error 4291. `src/ndbapi/NdbDictionaryImpl.cpp:8528-8549`
+- The reference's default record puts the null bits first, one per nullable column in attribute order, then each column in attribute order right after the one before, with no padding. `src/ndbapi/NdbDictionaryImpl.cpp:8106-8127`, `src/ndbapi/NdbDictionaryImpl.cpp:8203-8204`
+- A value's size in words is its byte size rounded up. `include/kernel/AttributeHeader.hpp:246-248`
+- The row store reads a fixed-size column from a word offset in the row. `src/kernel/blocks/dbtup/DbtupRoutines.cpp:622-634`
+
+### 17.14 Key operations (`ic_apid::hash`, `key_op`, `query`, `row_codec`, `transaction`)
+
+- The bytes hashed are the distribution key columns in attribute order: a fixed-size value in full, a variable-sized one behind its one or two length bytes with only the bytes it has, a character column first transformed by its collation, each padded to a word. `src/ndbapi/Ndb.cpp:657-724`
+- The value that places a key is the second word of the hash; a table with fanout partitioning hashes a base part and a detail part apart. `src/ndbapi/Ndb.cpp:622-640`, `src/ndbapi/Ndb.cpp:729-741`
+- The hash is XXH3, its low and high halves the first two words, for a table that asks for the new hash, and MD5 otherwise. `src/common/util/rondb_hash.cpp:32-59`
+- A transaction started with a key goes to the partition of the key's hash. `src/ndbapi/Ndb.cpp:764-774`
+- The partition of a table placed by hash map is the map's entry at the hash modulo the map's length. `src/ndbapi/NdbDictionary.cpp:794-797`
+- A table that is neither read-backup nor fully replicated goes to the primary replica, a node in the client's own location domain first; a fully replicated one to any node holding any fragment; a read-backup one to any replica of the fragment. `src/ndbapi/Ndb.cpp:789-880`
+- A fragment's primary is its only live replica, or with several alive, a node group's alive nodes, sorted by id, take its fragments in turn in batches of the fragment count divided by the alive count, rounded up; this is worked out again when a node comes or goes. `src/ndbapi/NdbDictionaryImpl.cpp:2323-2381`, `src/ndbapi/NdbDictionaryImpl.cpp:2455-2535`
+- Among candidate nodes the nearest is preferred, then the one this client has chosen least, the primary winning a tie. `src/ndbapi/ndb_cluster_connection.cpp:1681-1773`
+- Pseudo column 0xFFFE reads back the partition of the row's fragment, as one word. `include/kernel/AttributeHeader.hpp:51`, `src/kernel/blocks/dbtup/DbtupRoutines.cpp:3247-3250`
+- A read set to read committed is a simple and dirty read; a simple read is simple and not dirty. `src/ndbapi/NdbOperationDefine.cpp:339-352`
+- A simple read's abort option is always to ignore errors; any other operation takes the one asked for. `src/ndbapi/NdbOperationExec.cpp:1448-1461`
+- `KEY_OP_CONF` (signal 10) gives, for each operation, the operation and the length of row data to expect; for a dirty read that word is a marker bit with the reading node's id, and a dirty read whose reading node has failed completes with error 4119. `src/ndbapi/NdbTransaction.cpp:2811-2843`, `include/ndbapi/NdbReceiver.hpp:403-410`
+- `ROW_DATA_REP` (signal 5) completes an operation when what has come reaches the length the confirmation gave, or at once for a dirty read. `src/ndbapi/NdbReceiver.cpp:1435-1463`
+- The key a request carries is each key column in attribute order, a fixed-size value in full, a variable-sized one with its length bytes and only the bytes it has, each padded to a word. `src/ndbapi/NdbOperationExec.cpp:884-923`, `src/ndbapi/NdbOperationExec.cpp:1591-1630`, `src/ndbapi/NdbRecord.hpp:151-159`
+- Key positions are numbered in attribute order. `src/ndbapi/NdbDictionaryImpl.cpp:1574-1581`
+- A read asks with pseudo column 0xFFF0 and the column count when it wants every column, otherwise with 0xFFF3 followed by a bitmask of the attribute ids wanted. `src/ndbapi/NdbOperationExec.cpp:1068-1088`
+- The row comes back behind one 0xFFF3 header whose size is the result bitmap's length in bytes: a bit for each column read and, after each nullable one, a bit set if it is NULL; then the values in attribute order, NULLs taking no room, an 8- or 16-bit column after the last word bits touched, a 32-bit or wider one at the next word, and bit columns packed together starting on a word. `src/kernel/blocks/dbtup/DbtupRoutines.cpp:3528-3628`
+- The client unpacks the row by the same rules, a variable-sized value saying its length in its first one or two bytes. `src/ndbapi/NdbReceiver.cpp:790-847`, `src/ndbapi/NdbReceiver.cpp:983-1058`
+- An operation through a unique index accesses the index's own table, whose primary key is the index columns. `src/ndbapi/NdbIndexOperation.cpp:54-74`
+- `UNIQUE_OP_REQ` (signal 519) is laid out as `KEY_OP_REQ` (signal 12), and `UNIQUE_OP_CONF` (signal 520) as `KEY_OP_CONF` (signal 10). `include/kernel/signaldata/TcIndx.hpp:30-35`, `src/kernel/blocks/dbtc/DbtcMain.cpp:24124-24127`
+- The coordinator reads the index's own table with the key the request carries, asking for the stored primary key, then runs the operation on the base table with that key. `src/kernel/blocks/dbtc/DbtcMain.cpp:25120-25192`, `src/kernel/blocks/dbtc/DbtcMain.cpp:25222-25299`
+- Both the read of the index and the operation on the table assert that the request carries neither the dirty nor the simple flag. `src/kernel/blocks/dbtc/DbtcMain.cpp:25089`, `src/kernel/blocks/dbtc/DbtcMain.cpp:25144-25145`, `src/kernel/blocks/dbtc/DbtcMain.cpp:25226`, `src/kernel/blocks/dbtc/DbtcMain.cpp:25297-25298`
+- The reference's client sends a committed or simple read through an index as an ordinary shared-lock read, and refuses an insert through one with error 4200. `src/ndbapi/NdbIndexOperation.cpp:76-128`
+- When a node's failure is reported handled, a transaction coordinated there that was sending operations or a commit fails with error 4010, and one that was rolling back counts as a success. `src/ndbapi/Ndbif.cpp:297-356`
+- `TAKEOVER_CONF` (signal 8) is taken by a transaction sending operations or a commit, and `TAKEOVER_REF` (signal 9) by one sending operations or a rollback. `src/ndbapi/Ndbif.cpp:1134-1222`
+- `TAKEOVER_CONF` says the transaction committed; one that had reads fails with error 4115, as their rows may be lost. `src/ndbapi/NdbTransaction.cpp:2888-2941`
+- `TAKEOVER_REF` says the transaction was aborted: a success if a rollback was being sent, error 4031 otherwise. `src/ndbapi/NdbTransaction.cpp:2952-2984`
+- The coordinator that takes over sends `TAKEOVER_CONF` with the transaction id, the low bit of its first word set when a commit acknowledgement is owed, routed through another node if it has no link to the API node. `src/kernel/blocks/dbtc/DbtcMain.cpp:14661-14694`
+
+### 17.15 The C header, `ic_capi`, `xtask` and the tools
+
+`include/iclaustron/ic_apid.h`
+
+- The column type numbers 0 to 33 in the C header are the numbers the data nodes send for a column's type. `include/ndb_constants.h:47-81`

@@ -1,13 +1,14 @@
 // Copyright (c) 2026 Hopsworks and/or its affiliates.
 // Licensed under the MIT License. See LICENSE in the repository root.
 
-//! Packed signals: several small signals of one kind sent to an API
-//! node as one, addressed to the block `API_PACKED` (2047).
+//! Bundled signals: several small signals of one kind sent to an API
+//! node as one, addressed to the block `BUNDLE` (2047).
 //!
-//! The transaction coordinator packs `TCKEYCONF` this way, and the node
-//! that reads a row packs a short `TRANSID_AI`. The outer signal carries
-//! the signal number every part shares. Its data is the parts one after
-//! another, each a header word and then the part's own data:
+//! The transaction coordinator bundles `KEY_OP_CONF` this way, and the
+//! node that reads a row bundles a short `ROW_DATA_REP`. The outer
+//! signal carries the signal number every part shares. Its data is the
+//! parts one after another, each a header word and then the part's own
+//! data:
 //!
 //! ```text
 //!   bits 16-31  the block the part is for
@@ -18,20 +19,18 @@
 //! signal. The receive thread takes the parts apart and routes each by
 //! its own block, as if it had come alone.
 //!
-//! Verify: `TransporterFacade.cpp`, where `API_PACKED` is taken apart;
-//! `DbtcMain.cpp`, `sendPackedTCKEYCONF`; `DbtupBuffer.cpp`,
-//! `sendAPI_TRANSID_AI`.
+//! Verify: chapter 05 §17.6.
 
 use ic_port::err;
 use ic_port::IcError;
 
 /// The most words of data a part may have.
-pub const IC_PACKED_MAX_PART_WORDS: usize = 25;
+pub const IC_BUNDLE_MAX_PART_WORDS: usize = 25;
 
-/// One part of a packed signal: where its data lies in the outer
+/// One part of a bundled signal: where its data lies in the outer
 /// signal's data, and the block it is for.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct PackedPart {
+pub struct BundlePart {
   /// The block the part is addressed to.
   pub receiver_block: u16,
   /// Where its data starts in the outer signal's data.
@@ -40,10 +39,10 @@ pub struct PackedPart {
   pub len: usize,
 }
 
-/// Take a packed signal's data apart. A part whose length runs past the
+/// Take a bundled signal's data apart. A part whose length runs past the
 /// end is an error: the rest cannot be trusted.
-pub fn unpack(data: &[u32]) -> Result<Vec<PackedPart>, IcError> {
-  let mut parts: Vec<PackedPart> = Vec::new();
+pub fn unpack(data: &[u32]) -> Result<Vec<BundlePart>, IcError> {
+  let mut parts: Vec<BundlePart> = Vec::new();
   unpack_into(data, &mut parts)?;
   Ok(parts)
 }
@@ -51,7 +50,7 @@ pub fn unpack(data: &[u32]) -> Result<Vec<PackedPart>, IcError> {
 /// As [`unpack`], into a list the caller keeps, cleared first.
 pub fn unpack_into(
   data: &[u32],
-  parts: &mut Vec<PackedPart>,
+  parts: &mut Vec<BundlePart>,
 ) -> Result<(), IcError> {
   parts.clear();
   let mut pos: usize = 0;
@@ -59,10 +58,10 @@ pub fn unpack_into(
     let header = data[pos];
     pos += 1;
     let len = (header & 0x1F) as usize + 3;
-    if len > IC_PACKED_MAX_PART_WORDS || pos + len > data.len() {
+    if len > IC_BUNDLE_MAX_PART_WORDS || pos + len > data.len() {
       return Err(IcError::new(err::IC_ERROR_INCONSISTENT_DATA));
     }
-    parts.push(PackedPart {
+    parts.push(BundlePart {
       receiver_block: (header >> 16) as u16,
       start: pos,
       len,

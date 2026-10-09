@@ -33,11 +33,11 @@ use ic_apid::dict_cache::TableDef;
 use ic_apid::key_op;
 use ic_apid::record::Record;
 use ic_apid::text_row;
-use ic_ndb_signals::tc_key;
 use ic_port::options::OptionEntry;
 use ic_port::options::OptionKind;
 use ic_port::options::OptionParser;
 use ic_port::IcError;
+use ic_signals::key_ops;
 
 const OPTIONS: [OptionEntry; 5] = [
   OptionEntry {
@@ -149,10 +149,10 @@ fn run() -> i32 {
 /// The operation an option names.
 fn operation_of(text: &str) -> Option<u32> {
   match text {
-    "insert" => Some(tc_key::IC_OP_INSERT),
-    "update" => Some(tc_key::IC_OP_UPDATE),
-    "delete" => Some(tc_key::IC_OP_DELETE),
-    "write" => Some(tc_key::IC_OP_WRITE),
+    "insert" => Some(key_ops::IC_OP_INSERT),
+    "update" => Some(key_ops::IC_OP_UPDATE),
+    "delete" => Some(key_ops::IC_OP_DELETE),
+    "write" => Some(key_ops::IC_OP_WRITE),
     _ => None,
   }
 }
@@ -190,7 +190,7 @@ fn write_row(
     }
   };
   let mut row = vec![0u8; rec.row_size() as usize];
-  let keys_only = operation == tc_key::IC_OP_DELETE;
+  let keys_only = operation == key_ops::IC_OP_DELETE;
   if let Err(text) = put_row(&def, &rec, values, keys_only, &mut row) {
     println!("{}", text);
     return 1;
@@ -224,9 +224,9 @@ fn write_row(
 
 fn what_happened(operation: u32) -> &'static str {
   match operation {
-    tc_key::IC_OP_INSERT => "Inserted",
-    tc_key::IC_OP_UPDATE => "Updated",
-    tc_key::IC_OP_DELETE => "Deleted",
+    key_ops::IC_OP_INSERT => "Inserted",
+    key_ops::IC_OP_UPDATE => "Updated",
+    key_ops::IC_OP_DELETE => "Deleted",
     _ => "Written",
   }
 }
@@ -245,7 +245,7 @@ fn put_row(
     if keys_only && !attr.primary_key {
       continue;
     }
-    let position = match rec.position_of(attr.attribute_id) {
+    let position = match rec.position_of(attr.column_id) {
       Some(position) => position,
       None => return Err(format!("No field for {}", attr.name)),
     };

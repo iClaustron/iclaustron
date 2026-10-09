@@ -15,51 +15,49 @@
 //! counts that NUL; the section is the name padded with zeroes to whole
 //! words.
 //!
-//! Verify: `GetTabInfo.hpp`; `NdbDictionaryImpl.cpp`,
-//! `NdbDictInterface::getTable` for what the API sends and
-//! `execGET_TABINFO_CONF` for how it gathers the fragments;
-//! `Dbdict.cpp`, `sendGetTabResponse`; `SimulatedBlock.cpp`,
-//! `sendFirstFragment`, and `ndb_limits.h`, `MAX_SIZE_SINGLE_SIGNAL`.
+//! The reference sends the request the same way, and gathers the
+//! fragments of the answer into one buffer.
+//! Verify: chapter 05 §17.9.
 
 use ic_port::err;
 use ic_port::IcError;
 
-/// Words in a `GET_TABINFOREQ`.
-pub const IC_GET_TABINFOREQ_LEN: usize = 5;
-/// Words in a `GET_TABINFO_CONF`.
-pub const IC_GET_TABINFO_CONF_LEN: usize = 6;
-/// Words in a `GET_TABINFOREF`.
-pub const IC_GET_TABINFOREF_LEN: usize = 7;
-/// Words in the `GET_TABINFOREF` of an older data node, which put the
+/// Words in a `TABLE_DESC_REQ`.
+pub const IC_TABLE_DESC_REQ_LEN: usize = 5;
+/// Words in a `TABLE_DESC_CONF`.
+pub const IC_TABLE_DESC_CONF_LEN: usize = 6;
+/// Words in a `TABLE_DESC_REF`.
+pub const IC_TABLE_DESC_REF_LEN: usize = 7;
+/// Words in the `TABLE_DESC_REF` of an older data node, which put the
 /// error code in its last word.
-pub const IC_GET_TABINFOREF_OLD_LEN: usize = 5;
+pub const IC_TABLE_DESC_REF_OLD_LEN: usize = 5;
 
 /// Ask by table id.
-pub const IC_GET_TABINFO_BY_ID: u32 = 0;
+pub const IC_TABLE_DESC_BY_ID: u32 = 0;
 /// Ask by table name.
-pub const IC_GET_TABINFO_BY_NAME: u32 = 1;
+pub const IC_TABLE_DESC_BY_NAME: u32 = 1;
 /// Send the answer as a long signal, with the description in a section.
-pub const IC_GET_TABINFO_LONG_CONF: u32 = 2;
+pub const IC_TABLE_DESC_LONG_CONF: u32 = 2;
 
 /// The dictionary is busy with something else; ask again shortly.
-pub const IC_GET_TABINFO_ERR_BUSY: u32 = 701;
+pub const IC_TABLE_DESC_ERR_BUSY: u32 = 701;
 /// The name is longer than the dictionary accepts.
-pub const IC_GET_TABINFO_ERR_NAME_TOO_LONG: u32 = 702;
+pub const IC_TABLE_DESC_ERR_NAME_TOO_LONG: u32 = 702;
 /// No table has that id.
-pub const IC_GET_TABINFO_ERR_NO_SUCH_ID: u32 = 709;
+pub const IC_TABLE_DESC_ERR_NO_SUCH_ID: u32 = 709;
 /// This kind of object cannot be fetched by name.
-pub const IC_GET_TABINFO_ERR_NO_FETCH_BY_NAME: u32 = 710;
+pub const IC_TABLE_DESC_ERR_NO_FETCH_BY_NAME: u32 = 710;
 /// No table has that name.
-pub const IC_GET_TABINFO_ERR_NOT_DEFINED: u32 = 723;
+pub const IC_TABLE_DESC_ERR_NOT_DEFINED: u32 = 723;
 
 /// Ask for a table's description.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct GetTabInfoReq {
+pub struct TableDescReq {
   /// Our own number for the request, which comes back in the answer.
-  pub sender_data: u32,
+  pub caller_data: u32,
   /// Our block reference, which is where the answer is sent.
-  pub sender_ref: u32,
-  /// `IC_GET_TABINFO_BY_*`, with `IC_GET_TABINFO_LONG_CONF` added.
+  pub caller_ref: u32,
+  /// `IC_TABLE_DESC_BY_*`, with `IC_TABLE_DESC_LONG_CONF` added.
   pub request_type: u32,
   /// The table id, or the name's length in bytes counting its NUL.
   pub table_id_or_name_len: u32,
@@ -67,18 +65,18 @@ pub struct GetTabInfoReq {
   pub schema_trans_id: u32,
 }
 
-impl GetTabInfoReq {
+impl TableDescReq {
   /// A request by name, the name to go in section 0 as
   /// [`name_section`] makes it.
   pub fn by_name(
-    sender_data: u32,
-    sender_ref: u32,
+    caller_data: u32,
+    caller_ref: u32,
     name: &str,
-  ) -> GetTabInfoReq {
-    GetTabInfoReq {
-      sender_data,
-      sender_ref,
-      request_type: IC_GET_TABINFO_BY_NAME | IC_GET_TABINFO_LONG_CONF,
+  ) -> TableDescReq {
+    TableDescReq {
+      caller_data,
+      caller_ref,
+      request_type: IC_TABLE_DESC_BY_NAME | IC_TABLE_DESC_LONG_CONF,
       table_id_or_name_len: name.len() as u32 + 1,
       schema_trans_id: 0,
     }
@@ -86,24 +84,24 @@ impl GetTabInfoReq {
 
   /// A request by table id, which needs no section.
   pub fn by_id(
-    sender_data: u32,
-    sender_ref: u32,
+    caller_data: u32,
+    caller_ref: u32,
     table_id: u32,
-  ) -> GetTabInfoReq {
-    GetTabInfoReq {
-      sender_data,
-      sender_ref,
-      request_type: IC_GET_TABINFO_BY_ID | IC_GET_TABINFO_LONG_CONF,
+  ) -> TableDescReq {
+    TableDescReq {
+      caller_data,
+      caller_ref,
+      request_type: IC_TABLE_DESC_BY_ID | IC_TABLE_DESC_LONG_CONF,
       table_id_or_name_len: table_id,
       schema_trans_id: 0,
     }
   }
 
   /// The words of signal data this carries.
-  pub fn encode(&self) -> [u32; IC_GET_TABINFOREQ_LEN] {
+  pub fn encode(&self) -> [u32; IC_TABLE_DESC_REQ_LEN] {
     [
-      self.sender_data,
-      self.sender_ref,
+      self.caller_data,
+      self.caller_ref,
       self.request_type,
       self.table_id_or_name_len,
       self.schema_trans_id,
@@ -134,9 +132,9 @@ pub fn name_section(name: &str) -> Vec<u32> {
 
 /// The description, in section 0 of this signal or of its fragments.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct GetTabInfoConf {
+pub struct TableDescConf {
   /// Our own number for the request.
-  pub sender_data: u32,
+  pub caller_data: u32,
   /// The table's id.
   pub table_id: u32,
   /// The global checkpoint of the description, or zero.
@@ -144,53 +142,53 @@ pub struct GetTabInfoConf {
   /// The description's whole length in words, across every fragment.
   pub total_len: u32,
   /// What kind of object it is.
-  pub table_type: u32,
+  pub table_kind: u32,
   /// The dictionary block that answered.
-  pub sender_ref: u32,
+  pub caller_ref: u32,
 }
 
-impl GetTabInfoConf {
+impl TableDescConf {
   /// Read the answer. Every fragment of a fragmented answer carries
   /// these same words at the front.
-  pub fn decode(data: &[u32]) -> Result<GetTabInfoConf, IcError> {
-    if data.len() < IC_GET_TABINFO_CONF_LEN {
+  pub fn decode(data: &[u32]) -> Result<TableDescConf, IcError> {
+    if data.len() < IC_TABLE_DESC_CONF_LEN {
       return Err(IcError::new(err::IC_ERROR_INCONSISTENT_DATA));
     }
-    Ok(GetTabInfoConf {
-      sender_data: data[0],
+    Ok(TableDescConf {
+      caller_data: data[0],
       table_id: data[1],
       gci: data[2],
       total_len: data[3],
-      table_type: data[4],
-      sender_ref: data[5],
+      table_kind: data[4],
+      caller_ref: data[5],
     })
   }
 }
 
 /// The dictionary would not give the description.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct GetTabInfoRef {
+pub struct TableDescRef {
   /// Our own number for the request.
-  pub sender_data: u32,
-  /// Why not, as an NDB error code: `IC_GET_TABINFO_ERR_*` and others.
+  pub caller_data: u32,
+  /// Why not, as an NDB error code: `IC_TABLE_DESC_ERR_*` and others.
   pub error_code: u32,
   /// Where in the data node's source it was refused, for the trace.
   pub error_line: u32,
 }
 
-impl GetTabInfoRef {
+impl TableDescRef {
   /// Read the refusal, from a current or an older data node.
-  pub fn decode(data: &[u32]) -> Result<GetTabInfoRef, IcError> {
-    if data.len() >= IC_GET_TABINFOREF_LEN {
-      return Ok(GetTabInfoRef {
-        sender_data: data[0],
+  pub fn decode(data: &[u32]) -> Result<TableDescRef, IcError> {
+    if data.len() >= IC_TABLE_DESC_REF_LEN {
+      return Ok(TableDescRef {
+        caller_data: data[0],
         error_code: data[5],
         error_line: data[6],
       });
     }
-    if data.len() >= IC_GET_TABINFOREF_OLD_LEN {
-      return Ok(GetTabInfoRef {
-        sender_data: data[0],
+    if data.len() >= IC_TABLE_DESC_REF_OLD_LEN {
+      return Ok(TableDescRef {
+        caller_data: data[0],
         error_code: data[4],
         error_line: 0,
       });
@@ -214,7 +212,7 @@ mod tests {
   #[test]
   fn a_name_is_sent_with_its_nul_and_padded_to_words() {
     let name = "ictest/def/t1";
-    let req = GetTabInfoReq::by_name(9, 0x8000_00C0, name);
+    let req = TableDescReq::by_name(9, 0x8000_00C0, name);
     // Thirteen bytes and a NUL.
     assert_eq!(req.table_id_or_name_len, 14);
     assert_eq!(req.encode()[2], 3);
@@ -236,21 +234,21 @@ mod tests {
   #[test]
   fn an_answer_says_how_long_the_whole_description_is() {
     let conf =
-      GetTabInfoConf::decode(&[9, 17, 0, 250, 2, 0xFA0001]).expect("conf");
-    assert_eq!(conf.sender_data, 9);
+      TableDescConf::decode(&[9, 17, 0, 250, 2, 0xFA0001]).expect("conf");
+    assert_eq!(conf.caller_data, 9);
     assert_eq!(conf.table_id, 17);
     assert_eq!(conf.total_len, 250);
-    assert!(GetTabInfoConf::decode(&[9, 17, 0, 250, 2]).is_err());
+    assert!(TableDescConf::decode(&[9, 17, 0, 250, 2]).is_err());
   }
 
   #[test]
   fn refusals_are_read_from_either_layout() {
     let now =
-      GetTabInfoRef::decode(&[9, 1, 3, 14, 0, 723, 1234]).expect("current");
-    assert_eq!(now.error_code, IC_GET_TABINFO_ERR_NOT_DEFINED);
+      TableDescRef::decode(&[9, 1, 3, 14, 0, 723, 1234]).expect("current");
+    assert_eq!(now.error_code, IC_TABLE_DESC_ERR_NOT_DEFINED);
     assert_eq!(now.error_line, 1234);
-    let old = GetTabInfoRef::decode(&[9, 1, 3, 14, 701]).expect("old");
-    assert_eq!(old.error_code, IC_GET_TABINFO_ERR_BUSY);
-    assert!(GetTabInfoRef::decode(&[9, 1]).is_err());
+    let old = TableDescRef::decode(&[9, 1, 3, 14, 701]).expect("old");
+    assert_eq!(old.error_code, IC_TABLE_DESC_ERR_BUSY);
+    assert!(TableDescRef::decode(&[9, 1]).is_err());
   }
 }

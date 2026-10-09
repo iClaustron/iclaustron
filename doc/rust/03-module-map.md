@@ -24,14 +24,14 @@ iclaustron/                    (this repository, branch RUST-iclaustron)
     ic_comm/                   # comm/         sockets, poll set, socket buffers, line protocol
     ic_protocol/               # protocol/     base64, mgm protocol strings
     ic_apic/                   # api/ic_apic_* mgm client, config blob decode, typed config
-    ic_ndb_signals/            # NEW           GSNs, block numbers, signal structs, codecs
+    ic_signals/                # NEW           signal numbers, block numbers, signal structs, codecs
     ic_apid/                   # api/ic_apid_* the Data API
     ic_capi/                   # NEW           C ABI (cdylib + staticlib), cbindgen header
   cpp/include/iclaustron.hpp   # NEW           header-only C++ wrapper over the C ABI
   tools/
-    ic_config_dump/            # NEW  print the cluster config fetched from ndb_mgmd
+    ic_config_dump/            # NEW  print the cluster config fetched from the management server
     ic_desc/                   # NEW  describe a table as the API sees it
-    ic_bench/                  # NEW  PK read/write benchmark vs the C++ NDB API
+    ic_bench/                  # NEW  PK read/write benchmark vs the reference API
     ic_sigdump/                # NEW  decode a captured signal stream
   tests/
     unit/                      # ports of test/test_unit.c
@@ -43,7 +43,7 @@ iclaustron/                    (this repository, branch RUST-iclaustron)
 Dependency order (no cycles):
 
 ```
-ic_port → ic_util → ic_comm → ic_protocol → ic_apic → ic_ndb_signals → ic_apid → ic_capi
+ic_port → ic_util → ic_comm → ic_protocol → ic_apic → ic_signals → ic_apid → ic_capi
 ```
 
 ## Crate `ic_port` ← `port/ic_port.c` (2 166 lines), `include/ic_port.h`, `include/ic_base_header.h`
@@ -53,7 +53,7 @@ is replaced here and nowhere else.
 
 | C | Rust module | Mode | Notes |
 |---|---|---|---|
-| `ic_base_header.h` constants (`IC_RNIL`, node/thread limits, module ids, ports) | `consts.rs` | 1:1 | `pub const`, same names; NDB version constants set to RonDB 26.10 |
+| `ic_base_header.h` constants (`IC_NULL_PTR`, node/thread limits, module ids, ports) | `consts.rs` | 1:1 | `pub const`, same names; NDB version constants set to RonDB 26.10 |
 | `ic_malloc/ic_calloc/ic_free*` per-module allocators with DEBUG leak tracking | `alloc.rs` | Redesign | Rust owns memory; keep only per-module byte counters (`AllocStats`) for diagnostics |
 | `IC_MUTEX/IC_COND/IC_SPINLOCK`, `ic_mutex_*`, `ic_cond_*` | `sync.rs` | 1:1 | Newtypes over `std::sync::Mutex`/`Condvar`; debug-build mutex ordering-level check |
 | `g_private_get/set` | `tls.rs` | 1:1 | `thread_local!` |
@@ -120,8 +120,8 @@ generically.
 | C | Rust module | Mode | Notes |
 |---|---|---|---|
 | `ic_apic_conf_read_proto.ic` (`get nodeid`, `get config_v2`, base64, keep-alive) | `mgm_client.rs` | 1:1 | plus `get status`, `get version`, `get connection parameter` (dynamic ports) |
-| `ic_apic_conf_read_transl.ic` (blob → structs) | `conf_blob.rs` | Redesign | decode the v2 blob into a generic `ConfigBlob { sections: Vec<Section { type, entries: HashMap<key, Value> }> }`; v1 dropped (26.10 mgmd always serves v2) |
-| `ic_apic_conf_param.ic` (parameter table) | `conf_param.rs` | Redesign | a small table of the parameter ids an API node uses: own node (BatchSize, BatchByteSize, MaxScanBatchSize, HeartbeatIntervalDbApi, ArbitrationRank, DefaultOperationRedoProblemAction, ...), data nodes (NodeId, HostName, NodeGroup, ServerPort, ...), TCP sections (NodeId1/2, HostName1/2, PortNumber, SendBufferMemory, ReceiveBufferMemory, Checksum, SendSignalId, TCP_SND/RCV_BUF_SIZE, TcpBind_INADDR_ANY, ...). Ids verified against `mgmapi_config_parameters.h` in 26.10 |
+| `ic_apic_conf_read_transl.ic` (blob → structs) | `conf_blob.rs` | Redesign | decode the v2 blob into a generic `ConfigBlob { sections: Vec<Section { type, entries: HashMap<key, Value> }> }`; v1 dropped (the 26.10 management server always serves v2) |
+| `ic_apic_conf_param.ic` (parameter table) | `conf_param.rs` | Redesign | a small table of the parameter ids an API node uses, under names of our own: own node (`scan_batch_rows`, `scan_batch_bytes`, `scan_batch_bytes_total`, `api_heartbeat_ms`, `arbiter_rank`, `redo_full_action`, ...), data nodes (`node_id`, `host`, `node_group`, the listening port, ...), TCP sections (`node_1`/`node_2`, `host_1`/`host_2`, `port`, `send_buffer`, `recv_buffer`, `checksum`, `signal_ids`, `socket_send_buffer`/`socket_recv_buffer`, `bind_any`, ...). Ids verified against RonDB 26.10 (chapter 05 §5.2) |
 | `include/ic_apic_data.h` data model | `data.rs` | Redesign | `ClusterConfig { nodes: Vec<NodeConfig>, api: ApiNodeConfig, tcp: Vec<TcpLinkConfig> }`; the ~180-field data-server struct is Out |
 | `ic_apic_cluster_config.ic` (raw blob key lookup) | folded into `conf_blob.rs` | 1:1 | |
 | `ic_apic_if.ic`, `ic_apic_conf_net_read.ic` (`ic_get_configuration`) | `api_config_server.rs` | 1:1 | `ApiConfigServer::fetch(connectstring, node_type, node_id)` |
@@ -131,19 +131,19 @@ generically.
 | `ic_apic_run_cs.ic` (cluster server) | — | Out | |
 | `ic_apic_proto_supp.ic` (cluster id in protocol) | — | Out | iClaustron cluster server extension |
 
-## Crate `ic_ndb_signals` — New
+## Crate `ic_signals` — New
 
 Written from [05-ndb-protocol.md](05-ndb-protocol.md), against RonDB 26.10.
 
 | Module | Content |
 |---|---|
-| `gsn.rs` | `pub const GSN_*: u32` for every signal the API sends or receives |
+| `numbers.rs` | `pub const SIG_*: u32` for every signal the API sends or receives |
 | `blocks.rs` | block numbers, block reference pack/unpack incl. the instance mapping |
-| `header.rs` | Protocol6 header encode/decode; sections; checksum; fragment flags. Ported from `fill_ndb_message_header`/`create_ndb_message` (complete in C) minus the byte swap |
-| `sections.rs` | section slices, `AttributeHeader` codec, key alignment rules |
-| `qmgr.rs` | `API_REGREQ/CONF/REF`, `NODE_FAILREP`, `NF_COMPLETEREP`, `CONNECT_REP`, node state (ported from `ic_apid_general_signals.h`, re-verified for 26.10) |
-| `tc.rs` | `TCKEYREQ/CONF/REF`, `TCINDXREQ/CONF/REF`, `TCSEIZEREQ/CONF/REF`, `TCRELEASEREQ/CONF/REF`, `TC_COMMITREQ/CONF/REF`, `TCROLLBACKREQ/CONF/REF/REP`, `TCKEY_FAILCONF/REF`, `TC_COMMIT_ACK`, `TRANSID_AI`, `TC_DEADLOCK_REP` |
-| `dict.rs` | `GET_TABINFOREQ/CONF/REF`, `LIST_TABLES_REQ/CONF`, DictTabInfo keys + defaults, SimpleProperties codec (ported from `ic_apid_dict_signals.h` and `fill_create_table_info_properties`, extended with the 26.10 keys) |
+| `header.rs` | Signal header encode/decode; sections; checksum; fragment flags. Ported from `fill_ndb_message_header`/`create_ndb_message` (complete in C) minus the byte swap |
+| `sections.rs` | section slices, column header codec, key alignment rules |
+| `membership.rs` | `HEARTBEAT_REQ/CONF/REF`, `NODE_LOST_REP`, `NODE_LOST_DONE_REP`, `NODE_JOINED_REP`, node state (ported from `ic_apid_general_signals.h`, re-verified for 26.10) |
+| `coord.rs` | `KEY_OP_REQ/CONF/REF`, `UNIQUE_OP_REQ/CONF/REF`, `COORD_ALLOC_REQ/CONF/REF`, `COORD_FREE_REQ/CONF/REF`, `COMMIT_REQ/CONF/REF`, `ROLLBACK_REQ/CONF/REF`, `TRANS_ABORTED_REP`, `TAKEOVER_CONF/REF`, `COMMIT_MARKER_FREE_ORD`, `ROW_DATA_REP`, `DEADLOCK_FOUND_REP` |
+| `dict.rs` | `TABLE_DESC_REQ/CONF/REF`, `LIST_OBJECTS_REQ/CONF`, TableProps keys + defaults, property-stream codec (ported from `ic_apid_dict_signals.h` and `fill_create_table_info_properties`, extended with the 26.10 keys) |
 | `interp.rs` | RonDB 26.10 interpreter instruction encoding (full set) |
 | `errors.rs` | NDB error code table: code, classification, status, our own message text added progressively (fallback `"NDB error <code>"`) |
 | `scan.rs`, `event.rs`, `ddl.rs` | later releases |
@@ -158,24 +158,24 @@ functions; explicit shifts and masks, no bit-field macros.
 | `ic_apid_int.h`, `ic_apid_impl.h` | `int_types.rs` | 1:1 | Rust privacy replaces the public/hidden/internal cast tiers; inline accessors become `#[inline]` methods |
 | `ic_apid_static.ic`, `ic_apid_common.ic` | `refs.rs` | 1:1 | block reference math (`0x8000 + thread_id`) |
 | `ic_apid_error.ic` | `error.rs` | 1:1 | |
-| `ic_apid_send_message.ic` | `apid_global.rs` (`NodeShared::send_words`, the send chain), `apid_conn.rs` (`queue_signal`, `send_queued`) | 1:1 | header codec moves to `ic_ndb_signals::header`; the chain is one buffer per node rather than pages |
+| `ic_apid_send_message.ic` | `apid_global.rs` (`NodeShared::send_words`, the send chain), `apid_conn.rs` (`queue_signal`, `send_queued`) | 1:1 | header codec moves to `ic_signals::header`; the chain is one buffer per node rather than pages |
 | `ic_apid_send_thread.ic` | `send_pool.rs`, `connect_thread.rs`, `handshake.rs` | 1:1 + change | one pool thread rather than a thread per node, and it ends the adaptive-send waits; 4-integer hello, TLS-capable auth line; the listen (server-side) thread is Out: API nodes only connect |
 | `ic_apid_adaptive_send.ic` | `adaptive_send.rs` | 1:1 | adjusted on the send path once an interval, not from the receive thread |
 | `ic_apid_rec_thread.ic` | `rec_thread.rs` | 1:1 | receive + route only; fix the close-down TODO and the `abort()` at disconnect |
-| `ic_apid_exec_message.ic` | `exec_message.rs` | 1:1 | runs in the user thread; unknown GSN → log and drop; no endian swap |
+| `ic_apid_exec_message.ic` | `exec_message.rs` | 1:1 | runs in the user thread; unknown signal → log and drop; no endian swap |
 | `ic_apid_handle_message_array.ic` | `dispatch.rs` | 1:1 | single protocol version (26.10) |
-| `ic_apid_heartbeat.ic` | `heartbeat.rs` | 1:1 + New | add missed-heartbeat death, `NODE_FAILREP`/`NF_COMPLETEREP`, per-thread node-down notices |
-| `ic_apid_handle_messages.ic` (stubs) | `tc_handlers.rs`, `node_handlers.rs` | **New** | `TCKEYCONF`, `TCKEYREF`, `TRANSID_AI`, commit/rollback replies, `TCKEY_FAIL*`, `TC_DEADLOCK_REP` |
-| `ic_apid_handle_dict_messages.ic` | `dict_client.rs` | New + 1:1 | `GET_TABINFOREQ` send + DictTabInfo parse (new); the DDL path is carried over but parked until the DDL release |
+| `ic_apid_heartbeat.ic` | `heartbeat.rs` | 1:1 + New | add missed-heartbeat death, `NODE_LOST_REP`/`NODE_LOST_DONE_REP`, per-thread node-down notices |
+| `ic_apid_handle_messages.ic` (stubs) | `coord_handlers.rs`, `node_handlers.rs` | **New** | `KEY_OP_CONF`, `KEY_OP_REF`, `ROW_DATA_REP`, commit/rollback replies, `TAKEOVER_CONF/REF`, `DEADLOCK_FOUND_REP` |
+| `ic_apid_handle_dict_messages.ic` | `dict_client.rs` | New + 1:1 | `TABLE_DESC_REQ` send + TableProps parse (new); the DDL path is carried over but parked until the DDL release |
 | `ic_apid_global.ic` | `global.rs` | 1:1 | `external_connect` (cluster server hand-off) Out |
 | `ic_apid_start.ic` | `program.rs` | 1:1 | option groups via `ic_port::options`; the iClaustron-cluster-server options Out |
 | `ic_apid_conn.ic` | `apid_conn.rs` | 1:1 + New | first cut built: inbox, `poll`, fragments joined, expected replies; `read_key`, `write_key`, transaction start/commit/rollback get real bodies; savepoint functions removed |
 | `ic_apid_op.ic` | `query.rs` | Redesign | built: record-based binding (04), rows owned by the query, ids from the object map; conditions and assignments still to come |
-| `ic_apid_table.ic` | `dict_cache.rs`, `record.rs` | 1:1 + New | binding via the dictionary built in `dict_cache.rs` (`TableDef`, `IndexDef`, the shared cache, invalidation by `ALTER_TABLE_REP`); `Record` from a field spec and the default record built in `record.rs`; index key records still to come |
-| `ic_apid_trans.ic` (stubs) | `transaction.rs` | New | built: TC records, ids, start/execute/commit flags, completion accounting, commit and rollback, unique-key queries through `TCINDXREQ`, a lost coordinator link; still to come: `TCKEY_FAILCONF`/`REF`, callbacks |
+| `ic_apid_table.ic` | `dict_cache.rs`, `record.rs` | 1:1 + New | binding via the dictionary built in `dict_cache.rs` (`TableDef`, `IndexDef`, the shared cache, invalidation by `TABLE_CHANGED_REP`); `Record` from a field spec and the default record built in `record.rs`; index key records still to come |
+| `ic_apid_trans.ic` (stubs) | `transaction.rs` | New | built: coordinator records, ids, start/execute/commit flags, completion accounting, commit and rollback, unique-key queries through `UNIQUE_OP_REQ`, a lost coordinator link; still to come: `TAKEOVER_CONF`/`REF`, callbacks |
 | `ic_apid_where.ic`, `ic_apid_cond_assign.ic` (stubs) | `where_cond.rs`, `cond_assign.rs`, `interp_gen.rs` | New | builder → RonDB 26.10 interpreter program |
 | — | `hash.rs` | New | distribution key, hash choice per table, hash map → partition → node, with the data nodes' dynamic primary rule; location domain and host proximity still to come. The digests themselves are `ic_util::md5` and `ic_util::xxh3`, written from the public algorithms |
-| — | `row_codec.rs` | New | `TRANSID_AI` ↔ record row; ATTRINFO/KEYINFO from record rows; first cut built: key, packed read request, packed row unpacked |
+| — | `row_codec.rs` | New | `ROW_DATA_REP` ↔ record row; COLUMN_DATA_ORD/KEY_DATA_ORD from record rows; first cut built: key, packed read request, packed row unpacked |
 | — | `key_op.rs` | New | the first key operation, a committed read waited for; a stepping stone to `transaction.rs` |
 | `ic_apid_range.ic`, `ic_apid_tablespace.ic` | `range.rs`, `tablespace.rs` | later releases | |
 

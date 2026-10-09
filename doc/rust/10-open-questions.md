@@ -5,13 +5,13 @@
 | Topic | Decision |
 |---|---|
 | RonDB versions | 26.10 only; no gating for older versions |
-| Scope | API node only: read configuration from `ndb_mgmd`, never write it; no cluster server, manager, client, process controller, bootstrap, configurator, file server, replication server |
+| Scope | API node only: read configuration from the management server, never write it; no cluster server, manager, client, process controller, bootstrap, configurator, file server, replication server |
 | Name | iClaustron |
 | License | MIT |
-| Row binding | NdbRecord-like records over C structs (chapter 04); the 64-bit slot array is not implemented |
+| Row binding | records over C structs, of the kind the reference API also uses (chapter 04); the 64-bit slot array is not implemented |
 | Savepoints | removed from the API |
 | Threading | dedicated receive threads that only receive and route; user threads execute signals; user threads never receive |
-| 0.1 scope | key lookups (read all lock modes, insert, update, delete, write; unique keys) with commit/rollback, node failure protocols, dictionary, C ABI; scans, SPJ and the rest later. Revised 2026-10-08: the interpreter is no longer in 0.1 (see below) |
+| 0.1 scope | key lookups (read all lock modes, insert, update, delete, write; unique keys) with commit/rollback, node failure protocols, dictionary, C ABI; scans, pushdown joins and the rest later. Revised 2026-10-08: the interpreter is no longer in 0.1 (see below) |
 | Errors | NDB codes and classification kept, our own message texts |
 | Hash table | `std::collections::HashMap` |
 | Windows | not supported |
@@ -31,12 +31,21 @@
 |---|---|
 | Names | nothing is taken from RonDB, names included; whatever travels on the wire stays identical. Signals, blocks, configuration parameters, fields, keys and modules get names of our own (new stems; `_REQ`/`_CONF`/`_REF`/`_REP`, and `_ORD` or `_REP` where there would be no suffix). RonDB names appear nowhere in code or docs; chapter 05 cites by bare file:line and by signal number (chapter 09) |
 | Order of work | phase 6: our own names, then tables with BLOB columns, the 4012 timeout, unique keys, every row size; phase 7: C API, documentation, examples in Rust and C, release 0.1; phase 8: the executor, scans and latin1 (moved from phase 6 the same day); phase 9: basic interpreter and AUTO_INCREMENT (chapter 06) |
-| Character sets | latin1 only in these phases, UTF-8 perhaps later; needed for hashing keys and for merging ordered scans. The author writes the latin1 collation module himself (chapter 06 §8.6, before ordered range scans); other character sets keep falling back to round-robin placement |
+| Character sets | needed for hashing keys and for merging ordered scans. Revised the same day: encodings, weights and orderings are retrieved from the data nodes through a dictionary request RonDB 26.04 main adds in a separate task, and kept in the global dictionary (chapter 06 §8.6); public standards may be compiled in. latin1 is tested first; until a character set is described, its keys are placed round robin |
+| Protocol method | protocols are developed mainly by listening to the network, read with a Wireshark dissector of our own (chapter 06 §6.7); the author answers what the wire does not show; the RonDB source is read only to settle the rest (chapter 09) |
+| Wireshark dissector (was Q14) | not in this repository: written in C in a Wireshark source tree of its own, under Wireshark's licence, built with Wireshark (chapter 06 §6.7) |
+| Collation weights (was Q15) | `COLLATION_DESC_REQ` (984–986) with the weights flag returns every character's and every contraction's weight string, in as many round trips as the collation needs (chapter 05 §8.2); RonDB 26.04 main, the author's task, 2026-10-08 |
 | Scans | synchronous and asynchronous, and fitting the executor model; the executor is built first in phase 8 |
 | TLS (was Q8) | not in phases 6–9 |
 | Location domains | not in phases 6–9 |
 | C++ header, other language bindings | moved from phase 7 to phase 10 |
 | AUTO_INCREMENT | phase 9, with tables without a primary key, after the interpreter and scans it uses |
+
+## Decided (2026-10-09)
+
+| Topic | Decision |
+|---|---|
+| `LIST_OBJECTS_CONF` (was Q17) | Answered by the author: two words of its own, then the fragment trailer even when sent whole (none, a fragment id, or the number of each carried section and a fragment id: 2 to 5 words, 0 to 2 sections); a long answer goes in 240-word pieces with the fragment bits set, which `ic_apid::fragments` joins. Nothing to change in the client (chapter 05 §2.1). |
 
 ## Still open
 
@@ -48,11 +57,12 @@ you object.
 | Q2 | Does a 26.10 data node accept the legacy `ndbd`/`ndbd passwd` socket auth, or only the `ndbd TLS ...` line? | Test on day one of Phase 3; implement the TLS-capable line first. |
 | Q3 | Multi-cluster: the C header carries `cluster_id` on every call (the "grid"). Keep it, or one cluster per `ApidGlobal`? | **Recommendation:** one cluster per `ApidGlobal`; applications needing several clusters create several globals. Removes a parameter from every call and every table in the C ABI. |
 | Q4 | Joinable transactions (several user threads on one transaction): drop for good, or keep as a later item? | **Recommendation:** drop from the header; revisit only with a concrete user. |
-| Q5 | Which version does the API announce in `get nodeid` and `API_REGREQ`: RonDB 26.10.0 exactly, or the running mgmd's version? | **Recommendation:** announce 26.10.0 (`0x1A0A00`) and our own MySQL version field as the same; confirm the compatibility check on a live node. |
+| Q5 | Which version does the API announce in `get nodeid` and `HEARTBEAT_REQ`: RonDB 26.10.0 exactly, or the running management server's version? | **Recommendation:** announce 26.10.0 (`0x1A0A00`) and our own MySQL version field as the same; confirm the compatibility check on a live node. |
 | Q6 | Which non-C/C++ languages get a smoke-test binding (phase 10 since 2026-10-08, was phase 7)? | Suggest Python (`ctypes`) and Java (Panama) as the two that matter to RonDB users; Go and Node if cheap. |
 | Q7 | Platforms for 0.1: Linux x86_64 and aarch64, macOS aarch64? | **Recommendation:** all three; RonDB ships on ARM. |
-| Q9 | Should `ApidGlobal::connect` also support an explicit node id from the connectstring (`nodeid=N`) and the `bind-address` option, as `ndb_cluster_connection` does? | **Recommendation:** yes, both are cheap and operators expect them. |
+| Q9 | Should `ApidGlobal::connect` also support an explicit node id from the connectstring (`nodeid=N`) and the `bind-address` option, as the reference API's connection object does? | **Recommendation:** yes, both are cheap and operators expect them. |
 | Q10 | Rows in the C API: the Rust query owns its rows; chapter 04 said C rows are the caller's memory. | **Recommendation:** C gets pointers to the query's own rows (`ic_apid_query_key_row`, `ic_apid_query_attr_row`), valid until the query is freed: no copy, nothing pointing into the caller's memory. Decide at the start of phase 7. |
 | Q11 | The names of signals and blocks. | The first draft is in chapter 06 §6.1; the author reviews it before the rename. |
 | Q12 | Writes through a unique index. | **Recommendation:** refuse an update through an index whose attribute record holds an indexed column, and keep refusing a write through an index (chapter 06 §6.5, item 8). |
 | Q13 | AUTO_INCREMENT prefetch: how many values the client reserves at a time. | **Recommendation:** 512 by default, as MySQL servers use, settable per table binding; decide in phase 9. |
+| Q16 | The hash of a key in a no-pad collation, such as utf8mb4's default: the data nodes hash it with the collation's own hash function, not over its sort key (chapter 05 §16.2). | For the author: describe that function in chapter 05, or let the data node give a key's hash; until then such keys are placed round robin. Collations that weigh a character by its neighbours (czech, win1250ch, tis620) stay round robin in any case. |

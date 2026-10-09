@@ -24,6 +24,8 @@ use std::path::Path;
 use std::process::Command;
 use std::process::Stdio;
 
+mod names;
+
 fn main() {
   let args: Vec<String> = std::env::args().collect();
   let cmd: &str = if args.len() > 1 {
@@ -38,6 +40,7 @@ fn main() {
     "test-integration" => run_test_integration(rest),
     "header" => run_header(),
     "tags" => run_tags(rest),
+    "names" => names::run_names(rest),
     _ => {
       print_help();
       0
@@ -53,6 +56,7 @@ fn print_help() {
   println!("  test-integration  [connectstring] run tests against a cluster");
   println!("  header            regenerate and diff the C header");
   println!("  tags [--no-legacy] build a vim tags file with Universal Ctags");
+  println!("  names [rondb-tree] no RonDB name in our code or docs");
 }
 
 /// Run a program with arguments in the workspace root, return its exit code.

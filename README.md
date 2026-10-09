@@ -1,8 +1,8 @@
 # iClaustron
 
-A client library for RonDB 26.10 data nodes (the NDB API) written in
-C-like Rust, MIT licensed, usable from Rust, C, C++ and any language that
-can call C.
+A client library for RonDB 26.10 data nodes (an API node speaking the
+NDB protocol) written in C-like Rust, MIT licensed, usable from Rust, C,
+C++ and any language that can call C.
 
 Status: Phase 0 (bootstrap). Nothing works yet. The plan and design live in
 [`doc/rust/`](doc/rust/README.md); start with the index there.

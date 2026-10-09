@@ -181,8 +181,9 @@ counts CPU unstretched; and the harm of spinning is understated. Each
 is a thing the model has no part for: caches (a woken thread on a cold
 core, a spinning thread evicting a neighbour's lines), fast and slow
 cores as such, the data node's own thread structure (a read passes a
-receive, a TC, an LDM and a send thread, here merged into three
-stages), and core contention as an average rather than a queue.
+receive thread, a coordinator thread, a thread that runs the operation
+on its fragment and a send thread, here merged into three stages), and
+core contention as an average rather than a queue.
 
 Predictions to check it by, at eight threads and batch 300: the data
 node receive thread at close to 100 %; a second client receive thread
