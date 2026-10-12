@@ -6,13 +6,13 @@
 //! C sent every operation wherever it liked.
 //!
 //! **The bytes hashed** are the distribution key columns in attribute
-//! order, each as the record holds it and padded to a word: a fixed-size
-//! value in full, a variable-sized one behind its one or two length
-//! bytes with only the bytes it has. A character column is first
-//! transformed by its collation, which needs the MySQL collation tables
-//! this library does not carry, so such a key is refused for now; a
-//! table whose distribution key is integers or binary strings is placed
-//! exactly.
+//! order, each padded to a word: a fixed-size value in full, a
+//! variable-sized one behind its one or two length bytes with only the
+//! bytes it has, as the record holds them; a character column as its
+//! collation puts it (`collation_map`), from the weights the data nodes
+//! described, fetched when the table was bound. A character column
+//! whose collation is not known or cannot be placed leaves its key
+//! unplaced, and the transaction goes to the next node in turn.
 //!
 //! **The hash** is the table's: MD5 for a table made before RonDB
 //! 22.10.1, XXH3 otherwise, as `IC_TP_HASH_FUNCTION` says. What places the
@@ -45,10 +45,11 @@
 use ic_port::err;
 use ic_port::IcError;
 use ic_signals::table_props;
+use ic_signals::table_props::ColumnProps;
 
+use crate::collation_map::CollationMap;
 use crate::dict_cache::IndexDef;
 use crate::dict_cache::TableDef;
-use crate::node_connect::words_as_bytes;
 use crate::record::Record;
 use crate::row_codec;
 
@@ -60,43 +61,58 @@ pub fn distribution_key(
 ) -> Result<Vec<u8>, IcError> {
   let mut bytes: Vec<u8> = Vec::new();
   distribution_fields(key_rec, key_row, &mut |value: &[u8]| {
-    bytes.extend_from_slice(value);
-    while bytes.len() % 4 != 0 {
-      bytes.push(0);
-    }
+    push_padded(&mut bytes, value);
   })?;
   Ok(bytes)
 }
 
-/// A distribution key that fits here is hashed from the stack: a key
-/// of a few integers, which is most of them, costs no allocation.
+/// A key that fits here is hashed from the stack: a key of a few
+/// integers, which is most of them, costs no allocation.
 const IC_KEY_ON_STACK: usize = 128;
 
-/// The distribution key into `out` if it fits, and how many bytes it
-/// took; `None` if it does not fit, for the caller to allocate.
-fn distribution_key_into(
-  key_rec: &Record,
-  key_row: &[u8],
-  out: &mut [u8],
-) -> Result<Option<usize>, IcError> {
+/// A value onto the key, padded with zeros to a word.
+fn push_padded(bytes: &mut Vec<u8>, value: &[u8]) {
+  bytes.extend_from_slice(value);
+  while bytes.len() % 4 != 0 {
+    bytes.push(0);
+  }
+}
+
+/// A walk over a key's columns, giving each column's part to a taker.
+type KeyWalk<'a> = dyn Fn(&mut dyn FnMut(&[u8])) -> Result<(), IcError> + 'a;
+
+/// The fields `walk` gives, each padded to a word, hashed by `table`'s
+/// function and placed by its hash map: on the stack when they fit,
+/// walked again into a vector when they do not.
+fn partition_by(table: &TableDef, walk: &KeyWalk<'_>) -> Result<u32, IcError> {
+  // A fanout of one, the default, is no fanout at all.
+  if table.info().fanout > 1 {
+    return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
+  }
+  let map = match table.hash_map() {
+    Some(map) => map,
+    None => return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED)),
+  };
+  let mut buf = [0u8; IC_KEY_ON_STACK];
   let mut at: usize = 0;
-  distribution_fields(key_rec, key_row, &mut |value: &[u8]| {
+  walk(&mut |value: &[u8]| {
     let padded = (value.len() + 3) & !3;
-    if at + padded <= out.len() {
-      out[at..at + value.len()].copy_from_slice(value);
-      out[at + value.len()..at + padded].fill(0);
+    if at + padded <= buf.len() {
+      buf[at..at + value.len()].copy_from_slice(value);
+      buf[at + value.len()..at + padded].fill(0);
     }
     at += padded;
   })?;
-  if at > out.len() {
-    return Ok(None);
+  if at <= buf.len() {
+    return Ok(map.fragment_of(partition_hash(table, &buf[..at])));
   }
-  Ok(Some(at))
+  let mut bytes: Vec<u8> = Vec::with_capacity(at);
+  walk(&mut |value: &[u8]| push_padded(&mut bytes, value))?;
+  Ok(map.fragment_of(partition_hash(table, &bytes)))
 }
 
-/// Each distribution key value, in attribute order, given to `take`:
-/// the value's bytes as they lie in the row, a variable-length one with
-/// its length in front, as the reference feeds them to the hash.
+/// Each distribution key column's part of the key, in attribute order,
+/// given to `take` (see `take_column`).
 fn distribution_fields(
   key_rec: &Record,
   key_row: &[u8],
@@ -105,13 +121,10 @@ fn distribution_fields(
   if key_row.len() < key_rec.row_size() as usize {
     return Err(IcError::new(err::IC_ERROR_RECORD_LAYOUT));
   }
-  for attr in &key_rec.table().info().attributes {
+  let table = key_rec.table();
+  for (place, attr) in table.info().attributes.iter().enumerate() {
     if !attr.distribution_key {
       continue;
-    }
-    if attr.is_char_type() {
-      // Its collation's transform is needed first.
-      return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
     }
     let field = match key_rec.position_of(attr.column_id) {
       Some(position) => match key_rec.field(position) {
@@ -122,19 +135,84 @@ fn distribution_fields(
     };
     let start = field.offset() as usize;
     let size = field.size() as usize;
-    let value = &key_row[start..start + size];
-    let len = match attr.array_kind {
-      table_props::IC_ARRAY_KIND_SHORT_VARSIZE => 1 + value[0] as usize,
-      table_props::IC_ARRAY_KIND_LONG_VARSIZE => {
-        2 + value[0] as usize + 256 * value[1] as usize
-      }
-      _ => size,
-    };
-    if len > size {
-      return Err(IcError::new(err::IC_ERROR_VALUE_TOO_LONG));
-    }
-    take(&value[..len]);
+    let collation = table.collation_at(place).map(|map| map.as_ref());
+    take_column(attr, collation, &key_row[start..start + size], take)?;
   }
+  Ok(())
+}
+
+/// Each column of a unique index's own key, in the index's order, given
+/// to `take` as a table's distribution key is: found by name in
+/// `key_rec`, which is over the indexed table. A NULL is refused, as a
+/// row with one is not in the index.
+fn index_fields(
+  index: &IndexDef,
+  key_rec: &Record,
+  key_row: &[u8],
+  take: &mut dyn FnMut(&[u8]),
+) -> Result<(), IcError> {
+  if key_row.len() < key_rec.row_size() as usize {
+    return Err(IcError::new(err::IC_ERROR_RECORD_LAYOUT));
+  }
+  let own = index.as_table();
+  for (place, column) in own.info().attributes.iter().enumerate() {
+    if !column.primary_key {
+      continue;
+    }
+    let field_id = key_rec.table().field_id(&column.name)?;
+    let position = match key_rec.position_of(field_id) {
+      Some(position) => position,
+      None => return Err(IcError::new(err::IC_ERROR_KEY_RECORD)),
+    };
+    if key_rec.is_null(key_row, position) {
+      return Err(IcError::new(row_codec::IC_NDB_ERROR_NULL_KEY));
+    }
+    let field = match key_rec.field(position) {
+      Some(field) => field,
+      None => return Err(IcError::new(err::IC_ERROR_KEY_RECORD)),
+    };
+    let start = field.offset() as usize;
+    let size = field.size() as usize;
+    let collation = own.collation_at(place).map(|map| map.as_ref());
+    take_column(column, collation, &key_row[start..start + size], take)?;
+  }
+  Ok(())
+}
+
+/// One column's part of the key, given to `take`, which pads it to a
+/// word. A value as it lies in the row: a fixed-size one in full, a
+/// variable-sized one behind its one or two length bytes with only the
+/// bytes it has. A character value as its collation puts it, from a
+/// CHAR's whole field or a VARCHAR's bytes after its length (chapter 05
+/// §6.3, §16.2); without a known collation it cannot be placed.
+fn take_column(
+  attr: &ColumnProps,
+  collation: Option<&CollationMap>,
+  value: &[u8],
+  take: &mut dyn FnMut(&[u8]),
+) -> Result<(), IcError> {
+  let size = value.len();
+  let (head, len) = match attr.array_kind {
+    table_props::IC_ARRAY_KIND_SHORT_VARSIZE => (1, 1 + value[0] as usize),
+    table_props::IC_ARRAY_KIND_LONG_VARSIZE => {
+      (2, 2 + value[0] as usize + 256 * value[1] as usize)
+    }
+    _ => (0, size),
+  };
+  if len > size {
+    return Err(IcError::new(err::IC_ERROR_VALUE_TOO_LONG));
+  }
+  if !attr.is_char_type() {
+    take(&value[..len]);
+    return Ok(());
+  }
+  let map = match collation {
+    Some(map) => map,
+    None => return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED)),
+  };
+  let mut part: Vec<u8> = Vec::new();
+  map.key_part(&value[head..len], size - head, head == 0, &mut part)?;
+  take(&part);
   Ok(())
 }
 
@@ -149,59 +227,31 @@ pub fn partition_hash(table: &TableDef, key: &[u8]) -> u32 {
 
 /// The partition the row with this key is in, or why it cannot be
 /// known: a table with no hash map, or with fanout partitioning, or a
-/// key that needs a collation.
+/// character key column whose collation is not known or cannot be
+/// placed.
 pub fn partition_of(
   table: &TableDef,
   key_rec: &Record,
   key_row: &[u8],
 ) -> Result<u32, IcError> {
-  // A fanout of one, the default, is no fanout at all.
-  if table.info().fanout > 1 {
-    return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
-  }
-  let map = match table.hash_map() {
-    Some(map) => map,
-    None => return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED)),
-  };
-  let mut buf = [0u8; IC_KEY_ON_STACK];
-  if let Some(len) = distribution_key_into(key_rec, key_row, &mut buf)? {
-    return Ok(map.fragment_of(partition_hash(table, &buf[..len])));
-  }
-  let key = distribution_key(key_rec, key_row)?;
-  Ok(map.fragment_of(partition_hash(table, &key)))
+  partition_by(table, &|take| distribution_fields(key_rec, key_row, take))
 }
 
 /// The partition of the index's own table that a unique key is in, or
-/// why it cannot be known: as for a table, and for an index over a
-/// character column, whose collation's transform is needed first.
-/// `key_row` is laid out by `key_rec` over the indexed table. The bytes
-/// hashed are the key a unique request carries, the indexed columns in
-/// the index's order each padded to a word, built in `scratch`, which
-/// is what the coordinator hashes over the index's table. Verify:
-/// chapter 05 §6.8.
+/// why it cannot be known, as for a table. `key_row` is laid out by
+/// `key_rec` over the indexed table. The bytes hashed are the indexed
+/// columns in the index's order, each as a table's distribution key
+/// column would be, character ones through their collations, which is
+/// what the coordinator hashes over the index's table. Verify: chapter
+/// 05 §6.8, §16.2.
 pub fn index_partition_of(
   index: &IndexDef,
   key_rec: &Record,
   key_row: &[u8],
-  scratch: &mut Vec<u32>,
 ) -> Result<u32, IcError> {
-  let own = index.as_table();
-  let info = own.info();
-  if info.fanout > 1 {
-    return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
-  }
-  let map = match own.hash_map() {
-    Some(map) => map,
-    None => return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED)),
-  };
-  for column in &info.attributes {
-    if column.primary_key && column.is_char_type() {
-      // Its collation's transform is needed first.
-      return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
-    }
-  }
-  row_codec::index_key_info_into(index, key_rec, key_row, scratch)?;
-  Ok(map.fragment_of(partition_hash(own, words_as_bytes(scratch))))
+  partition_by(index.as_table(), &|take| {
+    index_fields(index, key_rec, key_row, take)
+  })
 }
 
 /// Node ids a node choice collects, kept inline up to this many: a
@@ -477,23 +527,22 @@ mod tests {
     let t = table(true, true, 0);
     let rec = Record::default_for(&t, None).expect("record");
     let row = row_of(&rec, 0x0102_0304, b"xy");
-    let mut scratch: Vec<u32> = Vec::new();
     // The index's key is c and a, in that order, not the table's.
     let index =
       index_over(&t, &[("c", IC_TYPE_INT, 1), ("a", IC_TYPE_INT, 1)], true);
-    let placed =
-      index_partition_of(&index, &rec, &row, &mut scratch).expect("placed");
+    let placed = index_partition_of(&index, &rec, &row).expect("placed");
     let at_c = rec.field(2).expect("c").offset() as usize;
     let mut key: Vec<u8> = row[at_c..at_c + 4].to_vec();
     key.extend_from_slice(&0x0102_0304u32.to_le_bytes());
     let map = index.as_table().hash_map().expect("map");
     let want = map.fragment_of(partition_hash(index.as_table(), &key));
     assert_eq!(placed, want);
-    // A character column waits for collations; no map, no placement.
+    // A character column without a known collation, or an index
+    // without a hash map, is not placed.
     let by_name = index_over(&t, &[("b", IC_TYPE_VARCHAR, 8)], true);
-    assert!(index_partition_of(&by_name, &rec, &row, &mut scratch).is_err());
+    assert!(index_partition_of(&by_name, &rec, &row).is_err());
     let unmapped = index_over(&t, &[("a", IC_TYPE_INT, 1)], false);
-    assert!(index_partition_of(&unmapped, &rec, &row, &mut scratch).is_err());
+    assert!(index_partition_of(&unmapped, &rec, &row).is_err());
   }
 
   fn row_of(rec: &Record, a: u32, b: &[u8]) -> Vec<u8> {
@@ -622,17 +671,27 @@ mod tests {
   #[test]
   fn the_key_on_the_stack_is_the_key_on_the_heap() {
     let t = table(true, true, 0);
+    let map = t.hash_map().expect("map");
+    // A short key, on the stack, as distribution_key makes it.
     let rec = Record::default_for(&t, None).expect("record");
     let row = row_of(&rec, 7, b"hi");
-    let mut buf = [0xFFu8; IC_KEY_ON_STACK];
-    let len = distribution_key_into(&rec, &row, &mut buf)
-      .expect("key")
-      .expect("fits");
-    assert_eq!(&buf[..len], &distribution_key(&rec, &row).expect("key")[..]);
-    // A key that does not fit is left to the heap.
-    let mut small = [0u8; 4];
-    let got = distribution_key_into(&rec, &row, &mut small).expect("key");
-    assert_eq!(got, None);
+    let key = distribution_key(&rec, &row).expect("key");
+    assert_eq!(
+      partition_of(&t, &rec, &row).expect("placed"),
+      map.fragment_of(partition_hash(&t, &key))
+    );
+    // A key too long for the stack, walked again onto the heap.
+    let long = [7u8; 2 * IC_KEY_ON_STACK + 1];
+    let placed = partition_by(&t, &|take| {
+      take(&long[..]);
+      Ok(())
+    })
+    .expect("placed");
+    let mut bytes = long.to_vec();
+    while bytes.len() % 4 != 0 {
+      bytes.push(0);
+    }
+    assert_eq!(placed, map.fragment_of(partition_hash(&t, &bytes)));
   }
 
   #[test]

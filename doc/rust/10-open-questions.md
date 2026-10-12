@@ -47,6 +47,12 @@
 |---|---|
 | `LIST_OBJECTS_CONF` (was Q17) | Answered by the author: two words of its own, then the fragment trailer even when sent whole (none, a fragment id, or the number of each carried section and a fragment id: 2 to 5 words, 0 to 2 sections); a long answer goes in 240-word pieces with the fragment bits set, which `ic_apid::fragments` joins. Nothing to change in the client (chapter 05 §2.1). |
 
+## Decided (2026-10-12)
+
+| Topic | Decision |
+|---|---|
+| The hash of a key in a no-pad collation (was Q16) | Described by the author and seen live: 64-bit FNV-1a over the collation's 16-bit weights, level by level with a zero weight between levels and zero weights within a level skipped, the first three levels always and a fourth only where the string has a weight there; utf8mb4_0900_bin folds its bytes. The result's eight bytes are the column's part of the hashed key (chapter 05 §6.3). Every collation in the `charset` group places keys as the data nodes do; the neighbour-weighted ones are placed in turn. |
+
 ## Still open
 
 The recommendation is the default and the plan proceeds on it unless
@@ -65,4 +71,3 @@ you object.
 | Q11 | The names of signals and blocks. | The first draft is in chapter 06 §6.1; the author reviews it before the rename. |
 | Q12 | Writes through a unique index. | **Recommendation:** refuse an update through an index whose attribute record holds an indexed column, and keep refusing a write through an index (chapter 06 §6.5, item 8). |
 | Q13 | AUTO_INCREMENT prefetch: how many values the client reserves at a time. | **Recommendation:** 512 by default, as MySQL servers use, settable per table binding; decide in phase 9. |
-| Q16 | The hash of a key in a no-pad collation, such as utf8mb4's default. Known (chapter 05 §16.2, the author 2026-10-09): the collation's hash function turns the value, a CHAR's trailing spaces stripped, into 8 bytes, which take the column's place in the key buffer that XXH3 or MD5 hashes; every no-pad collation but utf8mb4_0900_bin uses a variant of 64-bit FNV over its weights, offset basis 14695981039346656037, prime 1099511628211, each unit XORed in before the multiplication (FNV-1a), a unit being a whole 16-bit weight. How many levels are hashed depends on the collation (the author); likely the levels it compares, the count its description gives. Within a level, zero weights are skipped; the 0x0000 separators between levels are hashed as weights too (the author). utf8mb4_0900_bin hashes its bytes, trailing spaces stripped, folding each byte b into a 64-bit n1 as n1 XOR (((n1 AND 63) + n2) × b + (n1 << 8)), n2 then growing by 3, n1 from 0, n2 from the seed, 0 in RonDB (the author). Open: whether the weight hash's level count is the levels compared, to be settled live with keys in utf8mb4_0900_ai_ci, _as_ci and _as_cs columns, our partition against `read_partition`. | For the author. Once answered, the hash is written from the description and checked live against `read_partition` on utf8mb4_0900_ai_ci keys; until then such keys are placed round robin. Collations that weigh a character by its neighbours (czech, win1250ch, tis620) stay round robin in any case. |

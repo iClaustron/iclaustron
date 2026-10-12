@@ -378,20 +378,15 @@ impl ApidConnection {
   /// is in, to be given to [`start_transaction`](Self::start_transaction)
   /// with `index.as_table()`, as the coordinator places the index read
   /// there. Any node when it cannot be worked out, such as for an index
-  /// over a character column until collations are supported. The key
-  /// is built in the connection's scratch buffer, so this allocates
-  /// nothing.
+  /// over a character column whose collation is not known or cannot be
+  /// placed. A key of a few short columns is built on the stack.
   pub fn hint_for_unique_key(
-    &mut self,
+    &self,
     index: &IndexDef,
     key_rec: &Record,
     key_row: &[u8],
   ) -> TransactionHint {
-    let mut scratch = std::mem::take(&mut self.key_scratch);
-    let placed =
-      hash::index_partition_of(index, key_rec, key_row, &mut scratch);
-    self.key_scratch = scratch;
-    match placed {
+    match hash::index_partition_of(index, key_rec, key_row) {
       Ok(partition) => TransactionHint::Partition(partition),
       Err(_) => TransactionHint::Any,
     }

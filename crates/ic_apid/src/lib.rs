@@ -26,6 +26,8 @@
 //! - [`dict_client`]: fetching a table's description.
 //! - [`dict_cache`]: the descriptions every thread shares, and binding.
 //! - [`collation_client`]: what a collation is, and its weights.
+//! - [`collation_map`]: a collation as placing a key with a character
+//!   column uses it.
 //! - [`record`]: how a table's fields lie in a row the application owns.
 //! - [`row_codec`]: rows to and from the words of a key operation.
 //! - [`key_op`]: the first key operations, by primary key.
@@ -47,6 +49,7 @@ pub mod adaptive_send;
 pub mod apid_conn;
 pub mod apid_global;
 pub mod collation_client;
+pub mod collation_map;
 pub mod connect_thread;
 pub mod dict_cache;
 pub mod dict_client;

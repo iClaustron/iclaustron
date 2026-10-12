@@ -629,9 +629,9 @@ against the reference:
   as the record holds it: a fixed-size value in full, a variable-sized
   one behind its one or two length bytes with only the bytes it has,
   each padded with zeros to a word. A character column is first put
-  through its collation's transform, which needs the
-  MySQL collation tables; such a key is refused for now with
-  `IC_ERROR_NOT_SUPPORTED`. Verify: `src/ndbapi/Ndb.cpp:657-724`.
+  through its collation, from the weights the data nodes describe,
+  fetched when the table is bound (below). Verify:
+  `src/ndbapi/Ndb.cpp:657-724`.
 - **Binary columns** (the author, 2026-10-09): `BINARY` and `VARBINARY`
   have no character set. A `VARBINARY` goes into the hash as it is
   stored, its length byte or bytes and then its bytes, nothing
@@ -650,6 +650,78 @@ against the reference:
   `VARBINARY` keys of every length from 0 to 20, trailing spaces kept,
   for keys of 250 to 300 bytes behind two length bytes, and for
   `BINARY(5)` keys.
+- **Character columns** (step 8.6, done ahead of phase 8; seen live
+  2026-10-12, the integration group `charset`; the rules from the
+  author, 2026-10-09, where marked). The client and the coordinator
+  hash a character column's data, a CHAR's whole field or a VARCHAR's
+  bytes after its length bytes, put through its collation, and that
+  part is padded with zeros to a word like any other column's.
+  `src/ndbapi/Ndb.cpp:654-717`, `src/kernel/vm/SimulatedBlock.cpp:4794-4851`,
+  `src/kernel/blocks/dbtc/DbtcMain.cpp:3330-3384`.
+  - *The characters* come from the bytes by the set's encoding (UTF-8,
+    UTF-16 either way round, UCS-2, UTF-32, or for a set of one byte a
+    character the table its weight runs give, 8.2), and *a string's
+    weights* are its characters' weight strings in order. A contraction
+    stands for the characters it joins, the longest one starting at a
+    character first; failing that, a pair whose second character is
+    weighed by the first, as a Japanese kana and the prolonged sound
+    mark after it. Either kind's weight string is the whole sequence's,
+    the first character's own weights included.
+  - *Pad space collations*: the weights run together as a sort key,
+    and if it is shorter than the collation's sort-key growth times the
+    column's largest length in bytes, the sort key of a single space
+    repeated after it to that length; cut to it if longer.
+    `src/common/util/NdbSqlUtil.cpp:847-882, 920-932`.
+  - *No pad collations*, the Unicode 9.0.0 ones, utf8mb4_0900_bin
+    aside: a CHAR's trailing spaces stripped, then 64-bit FNV-1a, from
+    14695981039346656037, each 16-bit weight XORed in as one number and
+    the product with 1099511628211 taken after (the author); the
+    weights level by level, a zero weight hashed between levels (the
+    author), zero weights within a level skipped (the author). The
+    levels are those the collation compares: the first three always,
+    separators and all, even when empty; a fourth, the kana level of
+    utf8mb4_ja_0900_as_cs_ks, only when the string has a weight there,
+    as the characters' own weight strings show it (seen live). The
+    eight bytes of the result, little-endian, are the column's part.
+    `src/common/util/NdbSqlUtil.cpp:886-916`.
+  - *utf8mb4_0900_bin* (the author): trailing spaces stripped, a
+    VARCHAR's too; then for each byte b, n1 = n1 XOR (((n1 AND 63) +
+    n2) × b + (n1 << 8)) and n2 grows by 3, both from 0, n2's start
+    being RonDB's seed; n1's eight bytes, little-endian.
+  - *Not placed*, and so sent to the next node in turn, a hop and not a
+    wrong answer: the collations that weigh a character by its
+    neighbours (latin2_czech_cs, cp1250_czech_cs, tis620_thai_ci), and
+    sets of several bytes a character that are not Unicode.
+  - *Seen live to match the data nodes*, with CHAR and VARCHAR keys of
+    ASCII, Latin, Greek, Cyrillic, CJK, Hangul, kana, combining and
+    supplementary characters, each also in upper and lower case and
+    with trailing spaces: latin1's eight collations; utf8mb4_general_ci,
+    _bin, _unicode_ci, _unicode_520_ci, _0900_ai_ci, _0900_as_ci,
+    _0900_as_cs, _0900_bin, _es_trad_0900_ai_ci, _de_pb_0900_ai_ci,
+    _sv_0900_ai_ci, _ja_0900_as_cs, _ja_0900_as_cs_ks and
+    _zh_0900_as_cs; utf8mb3_general_ci, _unicode_ci and _bin;
+    ucs2_general_ci, utf16_general_ci, utf16le_general_ci,
+    utf32_general_ci, latin2_general_ci and cp1251_general_ci; keys of
+    several columns mixing collations and integers, with the
+    distribution key a subset in another order, and with the key's
+    columns in another order than the table's; and unique indexes over
+    one and two character columns, against the index's own rows.
+  - The latin1 collations and their numbers: 5 latin1_german1_ci, 8
+    latin1_swedish_ci (latin1's default), 15 latin1_danish_ci, 31
+    latin1_german2_ci, 47 latin1_bin, 48 latin1_general_ci, 49
+    latin1_general_cs, 94 latin1_spanish_ci. MySQL's latin1 is the
+    CP1252 code page as Unicode publishes it, with 0x81, 0x8D, 0x8F,
+    0x90 and 0x9D, which CP1252 leaves unassigned, passed through as
+    U+0081, U+008D, U+008F, U+0090 and U+009D. `/strings/ctype-latin1.cc:366, 637, 672`,
+    `/strings/ctype-extra.cc:6571, 6809, 7523, 7557, 8509`.
+  - Neither side counts characters. The row store checks on a write
+    that a character column is well formed (744), and a key the
+    coordinator cannot transform fails with 290. The client does not pad
+    a CHAR with spaces; the application must, as a key padded with zeros
+    is another key. A unique index's columns keep their character set
+    and are hashed with the same transform.
+    `src/kernel/blocks/dbtup/DbtupRoutines.cpp:2402`,
+    `src/kernel/blocks/dbdict/Dbdict.cpp:13741, 7948-7955`.
 - Which word places the key: word 1, the second word of the MD5
   digest or the high half of XXH3, exactly as step 2 says. Verify:
   `src/ndbapi/Ndb.cpp:570-574, 736-740`; `src/common/util/rondb_hash.cpp:52-57`.
@@ -1726,73 +1798,7 @@ Configuration parameters are named by id, with our names: 129
 
 ### 16.2 Hashing a latin1 key (phase 8.6)
 
-- For each distribution key column with a character set, the client
-  hashes the column's data: a CHAR's whole field, a VARCHAR's bytes
-  after its one or two length bytes, which are not hashed. The data is
-  turned into weights by the collation and padded with 0x20 up to
-  m × the column's largest data length, m being 2 for latin1_german2_ci
-  and 1 otherwise; the result is zero-padded to a word.
-  `src/ndbapi/Ndb.cpp:654-717`, `src/common/util/NdbSqlUtil.cpp:845-932`,
-  `/strings/ctype-simple.cc:1502`.
-- The coordinator does the same before hashing
-  (`src/kernel/vm/SimulatedBlock.cpp:4794-4851`,
-  `src/kernel/blocks/dbtc/DbtcMain.cpp:3330-3384`).
-- How the padding is done, for a "pad space" collation: the value's
-  sort key, and if it comes out shorter than m × the largest data
-  length, the sort key of a single space repeated after it until it is
-  that long. `src/common/util/NdbSqlUtil.cpp:847-882, 920-932`.
-- A "no pad" collation, every one of the Unicode 9.0.0 collations such
-  as utf8mb4's default utf8mb4_0900_ai_ci, is hashed another way: a
-  CHAR's trailing spaces are stripped, the collation's own hash function
-  turns the value into a 64-bit number, and that number's eight bytes,
-  in the machine's order, are the column's part of the key that is then
-  hashed. The author confirms the framing (2026-10-09): every no-pad
-  collation produces an 8-byte buffer this way, and in a key of several
-  columns it is concatenated with the other columns' buffers, so what
-  goes into XXH3 or MD5 is always a whole number of words per column.
-  The function (the author, 2026-10-09): every no-pad collation but
-  utf8mb4_0900_bin hashes with a variant of 64-bit FNV over the
-  collation's weights, starting from the offset basis
-  14695981039346656037 and multiplying by the prime 1099511628211; each
-  unit is XORed in first and the product taken after, as FNV-1a does,
-  and the unit is a whole 16-bit weight, XORed in as one number. How
-  many levels go in depends on the collation (the author); the likely
-  count is the levels the collation compares, which its description
-  gives (8.2). Within a level a weight of zero, an ignorable
-  character's, is skipped; the 0x0000 separators between levels are
-  hashed, as weights like any other (the author). utf8mb4_0900_bin
-  hashes its bytes instead (the author): trailing spaces stripped first;
-  then for each byte b, with two 64-bit numbers n1 and n2, n1 becomes n1
-  XOR (((n1 AND 63) + n2) × b + (n1 shifted left 8)), and n2 grows by
-  3; n1 starts at 0 and n2 at the seed, 0 in RonDB; n1's eight bytes
-  are the result. Still to settle before the weight hash is written
-  (Q16): the level count, to be read off the wire by comparing keys'
-  partitions against the data nodes'.
-  `src/common/util/NdbSqlUtil.cpp:886-916`.
-  No latin1 collation is one.
-- The latin1 collations and their numbers: 5 latin1_german1_ci, 8
-  latin1_swedish_ci (latin1's default), 15 latin1_danish_ci, 31
-  latin1_german2_ci, 47 latin1_bin, 48 latin1_general_ci, 49
-  latin1_general_cs, 94 latin1_spanish_ci; no others.
-  `/strings/ctype-latin1.cc:366, 637, 672`,
-  `/strings/ctype-extra.cc:6571, 6809, 7523, 7557, 8509`. 31 expands
-  seven characters to two weights; 47 takes each byte as its weight;
-  the others give one weight per byte. Every one gives the space the
-  weight 0x20.
-- A binary string column has no character set in the dictionary
-  (`plugin/ha_ndbcluster.cc:8844-8864`).
-- Neither side counts characters. The row store checks on a write that
-  a character column is well formed (744,
-  `src/kernel/blocks/dbtup/DbtupRoutines.cpp:2402`), which every latin1
-  byte string is; a key the coordinator cannot transform fails with 290.
-- The client does not pad a CHAR with spaces; the application must, as
-  a key padded with zeros is another key.
-- A unique index's columns keep their character set and are all
-  distribution key columns of the index's table, hashed with the same
-  transform (`src/kernel/blocks/dbdict/Dbdict.cpp:13741, 7948-7955`).
-- MySQL's latin1 is the CP1252 code page as Unicode publishes it, with
-  0x81, 0x8D, 0x8F, 0x90 and 0x9D, which CP1252 leaves unassigned,
-  passed through as U+0081, U+008D, U+008F, U+0090 and U+009D.
+Folded into 6.3, seen live, 2026-10-12.
 
 ### 16.3 Unique keys (phase 6.5)
 

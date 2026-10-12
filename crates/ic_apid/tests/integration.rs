@@ -28,9 +28,11 @@
 //! `types`, `failure`; `blob_guard`, which checks that rows of a table
 //! with a blob column are not deleted and that writes leave the blobs
 //! alone (chapter 06 §6.2); `timeout`, which checks that a transaction
-//! whose node stops answering ends with 4012 (chapter 06 §6.3); and
-//! `collation`, which asks the data nodes what a collation is and for
-//! its weights (RonDB 26.04 main and later).
+//! whose node stops answering ends with 4012 (chapter 06 §6.3);
+//! `charset`, which checks that keys with character columns are placed
+//! where the data nodes place them, in every collation claimed
+//! (chapter 06 §8.6); and `collation`, which asks the data nodes what a
+//! collation is and for its weights (RonDB 26.04 main and later).
 //! Each test is its own program against the cluster, as an application
 //! would be: it takes an API node id, binds its tables, does its work
 //! through the public API and lets go.
@@ -2180,6 +2182,630 @@ fn timeout_a_transaction_whose_node_stops_answering_ends_with_4012() {
     "node {} stopped after the connection let go of its records",
     victim
   );
+}
+
+// ---- charset ----
+
+/// A string in a character set's encoding, for a key row, or `None`
+/// if the set cannot hold it.
+fn encode(charset: &str, text: &str) -> Option<Vec<u8>> {
+  match charset {
+    "utf8mb4" => Some(text.as_bytes().to_vec()),
+    "utf8mb3" | "ucs2" if text.chars().any(|c| c as u32 > 0xFFFF) => None,
+    "utf8mb3" => Some(text.as_bytes().to_vec()),
+    "utf16" | "ucs2" => Some(
+      text
+        .encode_utf16()
+        .flat_map(|unit| unit.to_be_bytes())
+        .collect(),
+    ),
+    "utf16le" => Some(
+      text
+        .encode_utf16()
+        .flat_map(|unit| unit.to_le_bytes())
+        .collect(),
+    ),
+    "utf32" => Some(
+      text
+        .chars()
+        .flat_map(|c| (c as u32).to_be_bytes())
+        .collect(),
+    ),
+    "latin1" => text
+      .chars()
+      .map(|c| {
+        if (c as u32) < 0x100 {
+          Some(c as u8)
+        } else {
+          None
+        }
+      })
+      .collect(),
+    "latin2" => text.chars().map(latin2_byte).collect(),
+    "cp1251" => text.chars().map(cp1251_byte).collect(),
+    _ => panic!("no encoder for {}", charset),
+  }
+}
+
+/// The latin2 (ISO 8859-2) byte of the few letters the tests use.
+fn latin2_byte(c: char) -> Option<u8> {
+  let byte = match c {
+    'Ł' => 0xA3,
+    'ł' => 0xB3,
+    'ó' => 0xF3,
+    'Ó' => 0xD3,
+    'ź' => 0xBC,
+    'Ź' => 0xAC,
+    'č' => 0xE8,
+    'Č' => 0xC8,
+    'š' => 0xB9,
+    'Š' => 0xA9,
+    'ž' => 0xBE,
+    'Ž' => 0xAE,
+    c if (c as u32) < 0x80 => c as u8,
+    _ => return None,
+  };
+  Some(byte)
+}
+
+/// The cp1251 byte of the Cyrillic letters the tests use: А to я are
+/// 0xC0 to 0xFF in order.
+fn cp1251_byte(c: char) -> Option<u8> {
+  match c as u32 {
+    0x410..=0x44F => Some((c as u32 - 0x410 + 0xC0) as u8),
+    n if n < 0x80 => Some(n as u8),
+    _ => None,
+  }
+}
+
+/// Put a string's bytes into a column of a key row: a CHAR padded with
+/// the set's spaces, a VARCHAR behind its length.
+fn put_raw(
+  rec: &Record,
+  column: &str,
+  bytes: &[u8],
+  space: &[u8],
+  row: &mut [u8],
+) {
+  let id = rec.table().field_id(column).expect("the column");
+  let position = rec.position_of(id).expect("in the record");
+  let field = rec.field(position).expect("the field");
+  let attr = rec.table().field(id).expect("the column");
+  let at = field.offset() as usize;
+  let size = field.size() as usize;
+  match attr.array_kind {
+    ic_signals::table_props::IC_ARRAY_KIND_SHORT_VARSIZE => {
+      assert!(1 + bytes.len() <= size, "{} bytes do not fit", bytes.len());
+      row[at] = bytes.len() as u8;
+      row[at + 1..at + 1 + bytes.len()].copy_from_slice(bytes);
+    }
+    ic_signals::table_props::IC_ARRAY_KIND_LONG_VARSIZE => {
+      assert!(2 + bytes.len() <= size, "{} bytes do not fit", bytes.len());
+      row[at..at + 2].copy_from_slice(&(bytes.len() as u16).to_le_bytes());
+      row[at + 2..at + 2 + bytes.len()].copy_from_slice(bytes);
+    }
+    _ => {
+      assert!(bytes.len() <= size, "{} bytes do not fit", bytes.len());
+      for (i, byte) in row[at..at + size].iter_mut().enumerate() {
+        *byte = space[i % space.len()];
+      }
+      row[at..at + bytes.len()].copy_from_slice(bytes);
+    }
+  }
+}
+
+/// One collation to check, with the strings to store and look up.
+struct CollationCase {
+  charset: &'static str,
+  collation: &'static str,
+  strings: Vec<&'static str>,
+}
+
+/// Strings every set of the tests holds.
+const ASCII_STRINGS: [&str; 8] = [
+  "", "a", "abc", "Hello", "zebra", "ABC xyz", "x1y2z3", "llama",
+];
+/// Strings latin1 holds beyond those.
+const LATIN1_STRINGS: [&str; 10] = [
+  "café", "Ärger", "Aerger", "straße", "strasse", "ÅÄÖ", "mañana", "Øl", "ÿ",
+  "Æble",
+];
+/// Strings Unicode holds beyond those.
+const UNICODE_STRINGS: [&str; 12] = [
+  "日本語",
+  "한국어",
+  "Ελληνικά",
+  "Привет",
+  "ﬁx",
+  "e\u{301}t\u{e9}",
+  "ǅemal",
+  "カー",
+  "かー",
+  "ｶｰ",
+  "中文",
+  "chico",
+];
+
+/// For each collation, a VARCHAR(20) and a CHAR(12) keyed table made by
+/// a MySQL server and filled with the strings; then each string and
+/// its upper-case, lower-case and trailing-space variants are placed
+/// both ways, ours and the data nodes', wherever the collation finds
+/// a row for them. Every mismatch is gathered and reported at once.
+fn check_collations(conn: &mut ApidConnection, cases: &[CollationCase]) {
+  let mut failures: Vec<String> = Vec::new();
+  for (n, case) in cases.iter().enumerate() {
+    let mut sql = format!("CREATE DATABASE IF NOT EXISTS {};", IC_IT_DB);
+    for (table, column) in [("v", "VARCHAR(20)"), ("f", "CHAR(12)")] {
+      sql.push_str(&format!(
+        "DROP TABLE IF EXISTS {db}.ck{t}{n};
+         CREATE TABLE {db}.ck{t}{n} (
+           k {column} CHARACTER SET {cs} COLLATE {coll} NOT NULL PRIMARY KEY,
+           v INT) ENGINE=NDB;",
+        db = IC_IT_DB,
+        t = table,
+        n = n,
+        column = column,
+        cs = case.charset,
+        coll = case.collation
+      ));
+      let mut values: Vec<String> = Vec::new();
+      for (i, text) in case.strings.iter().enumerate() {
+        if table == "f" && text.chars().count() > 12 {
+          continue;
+        }
+        values.push(format!("('{}', {})", text, i));
+      }
+      sql.push_str(&format!(
+        "INSERT IGNORE INTO {}.ck{}{} VALUES {};",
+        IC_IT_DB,
+        table,
+        n,
+        values.join(", ")
+      ));
+    }
+    if mysql(&sql).is_none() {
+      return;
+    }
+    let space = encode(case.charset, " ").expect("a space");
+    let mut found: usize = 0;
+    for table in ["v", "f"] {
+      let t = bind(conn, &format!("ck{}{}", table, n));
+      for text in &case.strings {
+        let mut variants: Vec<String> = vec![
+          text.to_string(),
+          text.to_uppercase(),
+          text.to_lowercase(),
+          format!("{} ", text),
+          format!("{}  ", text),
+        ];
+        variants.dedup();
+        for variant in variants {
+          let limit = if table == "f" { 12 } else { 20 };
+          if variant.chars().count() > limit {
+            continue;
+          }
+          let bytes = match encode(case.charset, &variant) {
+            Some(bytes) => bytes,
+            // A variant the set cannot hold, such as Ÿ in latin1.
+            None => continue,
+          };
+          let mut row = t.row();
+          put_raw(&t.rec, "k", &bytes, &space, &mut row);
+          let ours = match ic_apid::hash::partition_of(&t.def, &t.rec, &row) {
+            Ok(partition) => partition,
+            Err(e) => {
+              failures.push(format!(
+                "{} {}: {:?} not placed ({})",
+                case.collation, table, variant, e.code
+              ));
+              continue;
+            }
+          };
+          match key_op::read_partition(conn, &t.rec, &row) {
+            Ok(Some(theirs)) => {
+              found += 1;
+              if theirs != ours {
+                failures.push(format!(
+                  "{} {}: {:?} is in partition {}, ours {}",
+                  case.collation, table, variant, theirs, ours
+                ));
+              }
+            }
+            // No row that the collation calls equal: nothing to check.
+            Ok(None) => {}
+            Err(e) => failures.push(format!(
+              "{} {}: {:?} could not be read ({})",
+              case.collation, table, variant, e.code
+            )),
+          }
+        }
+      }
+    }
+    eprintln!("{}: {} keys checked", case.collation, found);
+    if found < case.strings.len() {
+      failures.push(format!(
+        "{}: only {} keys found for {} strings",
+        case.collation,
+        found,
+        case.strings.len()
+      ));
+    }
+  }
+  assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// The strings for a set: ASCII, then latin1's, then Unicode's, as far
+/// as the set goes.
+fn strings_for(latin1: bool, unicode: bool) -> Vec<&'static str> {
+  let mut strings: Vec<&'static str> = ASCII_STRINGS.to_vec();
+  if latin1 || unicode {
+    strings.extend_from_slice(&LATIN1_STRINGS);
+  }
+  if unicode {
+    strings.extend_from_slice(&UNICODE_STRINGS);
+  }
+  strings
+}
+
+#[test]
+fn charset_latin1_keys_in_every_collation() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let mut cases: Vec<CollationCase> = Vec::new();
+  for collation in [
+    "latin1_swedish_ci",
+    "latin1_german1_ci",
+    "latin1_danish_ci",
+    "latin1_german2_ci",
+    "latin1_bin",
+    "latin1_general_ci",
+    "latin1_general_cs",
+    "latin1_spanish_ci",
+  ] {
+    cases.push(CollationCase {
+      charset: "latin1",
+      collation,
+      strings: strings_for(true, false),
+    });
+  }
+  check_collations(&mut conn, &cases);
+}
+
+#[test]
+fn charset_utf8_pad_space_keys() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let mut cases: Vec<CollationCase> = Vec::new();
+  for collation in [
+    "utf8mb4_general_ci",
+    "utf8mb4_bin",
+    "utf8mb4_unicode_ci",
+    "utf8mb4_unicode_520_ci",
+  ] {
+    let mut strings = strings_for(true, true);
+    strings.push("😀");
+    cases.push(CollationCase {
+      charset: "utf8mb4",
+      collation,
+      strings,
+    });
+  }
+  for collation in ["utf8mb3_general_ci", "utf8mb3_unicode_ci", "utf8mb3_bin"] {
+    cases.push(CollationCase {
+      charset: "utf8mb3",
+      collation,
+      strings: strings_for(true, true),
+    });
+  }
+  check_collations(&mut conn, &cases);
+}
+
+#[test]
+fn charset_utf8mb4_0900_keys() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let mut cases: Vec<CollationCase> = Vec::new();
+  for collation in [
+    "utf8mb4_0900_ai_ci",
+    "utf8mb4_0900_as_ci",
+    "utf8mb4_0900_as_cs",
+    "utf8mb4_0900_bin",
+    "utf8mb4_es_trad_0900_ai_ci",
+    "utf8mb4_de_pb_0900_ai_ci",
+    "utf8mb4_sv_0900_ai_ci",
+    "utf8mb4_ja_0900_as_cs",
+    "utf8mb4_ja_0900_as_cs_ks",
+    "utf8mb4_zh_0900_as_cs",
+  ] {
+    let mut strings = strings_for(true, true);
+    strings.push("😀");
+    cases.push(CollationCase {
+      charset: "utf8mb4",
+      collation,
+      strings,
+    });
+  }
+  check_collations(&mut conn, &cases);
+}
+
+#[test]
+fn charset_other_sets() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let mut cases: Vec<CollationCase> = Vec::new();
+  for (charset, collation) in [
+    ("ucs2", "ucs2_general_ci"),
+    ("utf16", "utf16_general_ci"),
+    ("utf16le", "utf16le_general_ci"),
+    ("utf32", "utf32_general_ci"),
+  ] {
+    cases.push(CollationCase {
+      charset,
+      collation,
+      strings: strings_for(true, true),
+    });
+  }
+  let mut latin2 = ASCII_STRINGS.to_vec();
+  latin2.extend_from_slice(&["Łódź", "čšž", "ŽŠČ"]);
+  cases.push(CollationCase {
+    charset: "latin2",
+    collation: "latin2_general_ci",
+    strings: latin2,
+  });
+  let mut cyrillic = ASCII_STRINGS.to_vec();
+  cyrillic.extend_from_slice(&["Привет", "мир"]);
+  cases.push(CollationCase {
+    charset: "cp1251",
+    collation: "cp1251_general_ci",
+    strings: cyrillic,
+  });
+  check_collations(&mut conn, &cases);
+}
+
+#[test]
+fn charset_neighbour_collations_are_placed_in_turn() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  let sql = format!(
+    "CREATE DATABASE IF NOT EXISTS {db};
+     DROP TABLE IF EXISTS {db}.cz;
+     CREATE TABLE {db}.cz (
+       k VARCHAR(20) CHARACTER SET latin2 COLLATE latin2_czech_cs NOT NULL
+         PRIMARY KEY, v INT) ENGINE=NDB;
+     INSERT INTO {db}.cz VALUES ('chata', 1);",
+    db = IC_IT_DB
+  );
+  if mysql(&sql).is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let t = bind(&mut conn, "cz");
+  let mut row = t.row();
+  put_raw(&t.rec, "k", b"chata", b" ", &mut row);
+  // Czech weighs a character by its neighbours: not placed, and the
+  // operation still finds its row wherever it goes.
+  assert!(ic_apid::hash::partition_of(&t.def, &t.rec, &row).is_err());
+  assert_eq!(
+    conn.hint_for_key(&t.def, &t.rec, &row),
+    TransactionHint::Any
+  );
+  assert!(key_op::read_partition(&mut conn, &t.rec, &row)
+    .expect("read")
+    .is_some());
+}
+
+#[test]
+fn charset_keys_of_several_columns() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  // Columns of three collations and an integer in one key; the same
+  // with the distribution key a subset in another order; and a key
+  // whose columns come in another order than the table's.
+  let sql = format!(
+    "CREATE DATABASE IF NOT EXISTS {db};
+     DROP TABLE IF EXISTS {db}.mk;
+     CREATE TABLE {db}.mk (
+       a VARCHAR(10) CHARACTER SET latin1 COLLATE latin1_swedish_ci NOT NULL,
+       b INT NOT NULL,
+       c VARCHAR(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+       d CHAR(4) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+       v INT,
+       PRIMARY KEY (a, b, c, d)) ENGINE=NDB;
+     DROP TABLE IF EXISTS {db}.mkp;
+     CREATE TABLE {db}.mkp (
+       a VARCHAR(10) CHARACTER SET latin1 COLLATE latin1_swedish_ci NOT NULL,
+       b INT NOT NULL,
+       c VARCHAR(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+       d CHAR(4) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+       v INT,
+       PRIMARY KEY (a, b, c, d)) ENGINE=NDB PARTITION BY KEY (c, b);
+     DROP TABLE IF EXISTS {db}.mko;
+     CREATE TABLE {db}.mko (
+       c VARCHAR(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_as_cs NOT NULL,
+       v INT,
+       a CHAR(5) CHARACTER SET latin1 COLLATE latin1_bin NOT NULL,
+       PRIMARY KEY (a, c)) ENGINE=NDB;",
+    db = IC_IT_DB
+  );
+  if mysql(&sql).is_none() {
+    return;
+  }
+  let rows = [
+    ("abc", 1, "Hello", "x"),
+    ("café", 2, "Ärger", "yz"),
+    ("ÅÄÖ", 3, "日本語", "äb"),
+    ("", 4, "", ""),
+    ("zz", -5, "😀", "w"),
+  ];
+  let mut sql = String::new();
+  for table in ["mk", "mkp"] {
+    let mut values: Vec<String> = Vec::new();
+    for (a, b, c, d) in rows {
+      values.push(format!("('{}', {}, '{}', '{}', 0)", a, b, c, d));
+    }
+    sql.push_str(&format!(
+      "INSERT INTO {}.{} VALUES {};",
+      IC_IT_DB,
+      table,
+      values.join(", ")
+    ));
+  }
+  let mut values: Vec<String> = Vec::new();
+  for (a, _, c, _) in rows {
+    values.push(format!("('{}', 0, '{}')", c, a));
+  }
+  sql.push_str(&format!(
+    "INSERT INTO {}.mko VALUES {};",
+    IC_IT_DB,
+    values.join(", ")
+  ));
+  mysql(&sql);
+
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let mut failures: Vec<String> = Vec::new();
+  for table in ["mk", "mkp", "mko"] {
+    let t = bind(&mut conn, table);
+    for (a, b, c, d) in rows {
+      // As stored, and with the case of the case-insensitive columns
+      // changed, which names the same row.
+      let mut variants = vec![(a.to_string(), c.to_string(), d.to_string())];
+      if table != "mko" {
+        variants.push((a.to_uppercase(), c.to_uppercase(), d.to_uppercase()));
+      }
+      for (a, c, d) in variants {
+        let mut row = t.row();
+        let latin1 = encode("latin1", &a).expect("latin1");
+        put_raw(&t.rec, "a", &latin1, b" ", &mut row);
+        put_raw(&t.rec, "c", c.as_bytes(), b" ", &mut row);
+        if table != "mko" {
+          t.put(&mut row, "b", &b.to_string());
+          put_raw(&t.rec, "d", d.as_bytes(), b" ", &mut row);
+        }
+        let ours = match ic_apid::hash::partition_of(&t.def, &t.rec, &row) {
+          Ok(partition) => partition,
+          Err(e) => {
+            failures.push(format!(
+              "{} {:?}: not placed ({})",
+              table,
+              (&a, b, &c, &d),
+              e.code
+            ));
+            continue;
+          }
+        };
+        match key_op::read_partition(&mut conn, &t.rec, &row) {
+          Ok(Some(theirs)) if theirs == ours => {}
+          other => failures.push(format!(
+            "{} {:?}: ours {}, the data nodes' {:?}",
+            table,
+            (&a, b, &c, &d),
+            ours,
+            other.map_err(|e| e.code)
+          )),
+        }
+      }
+    }
+  }
+  assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn charset_unique_keys_over_character_columns() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  let sql = format!(
+    "CREATE DATABASE IF NOT EXISTS {db};
+     DROP TABLE IF EXISTS {db}.uc;
+     CREATE TABLE {db}.uc (
+       id INT NOT NULL PRIMARY KEY,
+       u VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+       w VARCHAR(20) CHARACTER SET latin1 COLLATE latin1_swedish_ci NOT NULL,
+       v INT,
+       UNIQUE KEY uc_u (u),
+       UNIQUE KEY uc_wu (w, u)) ENGINE=NDB;
+     INSERT INTO {db}.uc VALUES
+       (1, 'Hello', 'one', 1), (2, 'Ärger', 'café', 2),
+       (3, '日本語', 'ÅÄÖ', 3), (4, '', '', 4), (5, '😀', 'zz', 5);",
+    db = IC_IT_DB
+  );
+  if mysql(&sql).is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let t = bind(&mut conn, "uc");
+  let keys = [
+    ("Hello", "one"),
+    ("HELLO", "ONE"),
+    ("Ärger", "café"),
+    ("ärger", "CAFÉ"),
+    ("日本語", "ÅÄÖ"),
+    ("", ""),
+    ("😀", "zz"),
+  ];
+  let mut failures: Vec<String> = Vec::new();
+  for (name, columns) in [("uc_u", vec!["u"]), ("uc_wu", vec!["w", "u"])] {
+    let index = bind_unique_index(&mut conn, name, "uc");
+    let key_rec = record_over(&t, &columns);
+    let own = index.as_table();
+    let mut own_ids: Vec<u32> = Vec::new();
+    for column in &columns {
+      own_ids.push(own.field_id(column).expect("in the index"));
+    }
+    let own_rec = Record::default_for(own, Some(own_ids.as_slice()))
+      .expect("a record over the index's table");
+    for (u, w) in keys {
+      let mut key = vec![0; key_rec.row_size() as usize];
+      let mut own_key = vec![0; own_rec.row_size() as usize];
+      put_raw(&key_rec, "u", u.as_bytes(), b" ", &mut key);
+      put_raw(&own_rec, "u", u.as_bytes(), b" ", &mut own_key);
+      if columns.len() == 2 {
+        let latin1 = encode("latin1", w).expect("latin1");
+        put_raw(&key_rec, "w", &latin1, b" ", &mut key);
+        put_raw(&own_rec, "w", &latin1, b" ", &mut own_key);
+      }
+      let ours = match conn.hint_for_unique_key(&index, &key_rec, &key) {
+        TransactionHint::Partition(partition) => partition,
+        other => {
+          failures.push(format!(
+            "{} {:?}: not placed: {:?}",
+            name,
+            (u, w),
+            other
+          ));
+          continue;
+        }
+      };
+      match key_op::read_partition(&mut conn, &own_rec, &own_key) {
+        Ok(Some(theirs)) if theirs == ours => {}
+        other => failures.push(format!(
+          "{} {:?}: ours {}, the data nodes' {:?}",
+          name,
+          (u, w),
+          ours,
+          other.map_err(|e| e.code)
+        )),
+      }
+    }
+  }
+  assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 // ---- collation ----

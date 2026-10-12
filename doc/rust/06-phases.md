@@ -1092,12 +1092,11 @@ module planned earlier the same day:
   others busy. The codec, with the weight runs and contractions read and
   stepped, is in `ic_signals::collation_desc`; the dissector decodes the
   three signals and the weights of an answer that comes whole.
-- **What the weights do not cover** (Q16): a few collations (czech,
+- **What the weights do not cover:** a few collations (czech,
   win1250ch, tis620) weigh a character by its neighbours, which
   per-character weights cannot rebuild, so their keys stay placed round
-  robin; and for a no-pad collation the data nodes hash a key with the
-  collation's own hash function rather than over its sort key (chapter
-  05 §16.2), which is not data the weights carry.
+  robin. A no-pad collation's key is hashed with the collation's own
+  function, which the author described (was Q16; chapter 05 §6.3).
 - **Work:**
   - the request and its reply in `ic_signals`, and the round trips in
     `ic_apid::collation_client`, shown by `ic_desc --collation` and
@@ -1124,6 +1123,25 @@ module planned earlier the same day:
 - **Exit:** placement and merge are exact for latin1 in all eight of
   its collations; another character set the data nodes describe works
   the same way and gets its own test when it is first used.
+
+Placement done ahead of phase 8 (2026-10-12; the integration group
+`charset` passes): `ic_apid::collation_map` turns a collation the data
+nodes describe into the transform its keys are hashed through (pad
+space: the padded sort key; no pad: FNV-1a over the weights;
+utf8mb4_0900_bin: a fold of the bytes), decoding UTF-8, UTF-16, UCS-2,
+UTF-32 and any set of one byte a character. Binding a table, or an
+index, fetches the collation of each character column a key is hashed
+by into the dictionary cache, once per collation for the process; a
+collation that cannot place keys leaves them placed in turn.
+`hash::partition_of` and `hash::index_partition_of` put character
+columns through it, so tables and unique indexes with character keys
+are placed exactly. Seen live to match the data nodes for latin1's
+eight collations, utf8mb4's pad-space and fourteen of its 9.0.0
+collations including Spanish, German, Swedish, Japanese and Chinese
+tailorings, utf8mb3, ucs2, utf16, utf16le, utf32, latin2 and cp1251,
+for keys of several columns and for unique indexes (chapter 05 §6.3).
+Still to do in this step: text in and out through compiled-in tables
+in `text_row`; the merge is 8.7's.
 
 ### 8.7 Ordered index range scans (1.5 weeks)
 

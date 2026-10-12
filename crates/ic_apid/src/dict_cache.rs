@@ -62,6 +62,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
+use ic_port::debug::IC_NDB_MESSAGE_LEVEL;
 use ic_port::err;
 use ic_port::sync::IcCond;
 use ic_port::sync::IcMutex;
@@ -73,6 +74,8 @@ use ic_signals::table_props::HashMapProps;
 use ic_signals::table_props::TableProps;
 
 use crate::apid_conn::ApidConnection;
+use crate::collation_client;
+use crate::collation_map::CollationMap;
 use crate::dict_client;
 
 /// How many times a bind fetches again because what it fetched was
@@ -90,6 +93,10 @@ pub struct TableDef {
   attr_index: Vec<u32>,
   /// Whether any column is a blob, asked on every delete.
   has_blob: bool,
+  /// By attribute place, the collation each character column a key is
+  /// hashed through is put through, where one is known: a table's
+  /// distribution key columns, an index's own key columns.
+  collations: Vec<Option<Arc<CollationMap>>>,
 }
 
 /// The place of each column in `attributes`, by column id.
@@ -131,7 +138,25 @@ impl TableDef {
       valid: AtomicBool::new(true),
       attr_index,
       has_blob,
+      collations: Vec::new(),
     }
+  }
+
+  /// The table with the collations of its hashed character columns.
+  pub(crate) fn with_collations(
+    mut self,
+    collations: Vec<Option<Arc<CollationMap>>>,
+  ) -> TableDef {
+    self.collations = collations;
+    self
+  }
+
+  /// The collation the column at `place` among the attributes is put
+  /// through when a key is hashed, if the column is a character column
+  /// a key is hashed by and its collation is known and placeable
+  /// (chapter 06 §8.6).
+  pub fn collation_at(&self, place: usize) -> Option<&Arc<CollationMap>> {
+    self.collations.get(place)?.as_ref()
   }
 
   /// Everything the dictionary said about the table.
@@ -226,13 +251,19 @@ impl std::fmt::Debug for IndexDef {
 impl IndexDef {
   /// An index over one version of its table, as the dictionary
   /// described it, with the hash map that places its own rows.
+  #[cfg(test)]
   pub(crate) fn new(
     info: TableProps,
     table: Arc<TableDef>,
     hash_map: Option<Arc<HashMapProps>>,
   ) -> IndexDef {
+    IndexDef::with_own(TableDef::new(info, hash_map), table)
+  }
+
+  /// An index over one version of its table, given its own table.
+  pub(crate) fn with_own(own: TableDef, table: Arc<TableDef>) -> IndexDef {
     IndexDef {
-      own: Arc::new(TableDef::new(info, hash_map)),
+      own: Arc::new(own),
       table,
       valid: AtomicBool::new(true),
     }
@@ -334,6 +365,10 @@ impl Entry {
 struct CacheState {
   entries: BTreeMap<String, Entry>,
   hash_maps: Vec<Arc<HashMapProps>>,
+  /// By number, each collation fetched: its map, or none for one whose
+  /// keys cannot be placed from its weights. A collation never changes,
+  /// so these are kept for as long as the process runs.
+  collations: BTreeMap<u32, Option<Arc<CollationMap>>>,
 }
 
 /// What a thread found when it looked a name up.
@@ -421,6 +456,23 @@ impl DictCache {
       }
     }
     None
+  }
+
+  /// A collation kept already: its map, or `Some(None)` for one known
+  /// not to place keys; `None` if it has not been fetched.
+  fn collation(&self, number: u32) -> Option<Option<Arc<CollationMap>>> {
+    let state = self.state.lock();
+    state.collations.get(&number).cloned()
+  }
+
+  /// Keep a collation, or what another thread kept first.
+  fn add_collation(
+    &self,
+    number: u32,
+    map: Option<Arc<CollationMap>>,
+  ) -> Option<Arc<CollationMap>> {
+    let mut state = self.state.lock();
+    state.collations.entry(number).or_insert(map).clone()
   }
 
   /// Keep a hash map, or the one another thread kept first.
@@ -604,7 +656,64 @@ fn fetch_table(
 ) -> Result<TableDef, IcError> {
   let info = dict_client::get_table_named(conn, name)?;
   let hash_map = hash_map_of(cache, conn, &info)?;
-  Ok(TableDef::new(info, hash_map))
+  let collations = key_collations(cache, conn, &info, false);
+  Ok(TableDef::new(info, hash_map).with_collations(collations))
+}
+
+/// By attribute place, the collations of the character columns a key
+/// is hashed through: a table's distribution key columns, or with
+/// `of_index` an index's own key columns. Each is fetched with its
+/// weights the first time any thread needs it, and kept. One that
+/// cannot be fetched, or whose keys its weights cannot place, leaves
+/// its column without one, and such a key is placed in turn: a hop, not
+/// a wrong answer (chapter 06 §8.6).
+fn key_collations(
+  cache: &DictCache,
+  conn: &mut ApidConnection,
+  info: &TableProps,
+  of_index: bool,
+) -> Vec<Option<Arc<CollationMap>>> {
+  let mut out: Vec<Option<Arc<CollationMap>>> = Vec::new();
+  for attr in &info.attributes {
+    let hashed = if of_index {
+      attr.primary_key
+    } else {
+      attr.distribution_key
+    };
+    if !hashed || !attr.is_char_type() || attr.charset == 0 {
+      out.push(None);
+      continue;
+    }
+    out.push(collation_for(cache, conn, attr.charset));
+  }
+  out
+}
+
+/// A collation's map, from the cache or the data nodes.
+fn collation_for(
+  cache: &DictCache,
+  conn: &mut ApidConnection,
+  number: u32,
+) -> Option<Arc<CollationMap>> {
+  if let Some(kept) = cache.collation(number) {
+    return kept;
+  }
+  match collation_client::describe_by_number(conn, number, true) {
+    Ok(collation) => {
+      let map = CollationMap::new(&collation).ok().map(Arc::new);
+      cache.add_collation(number, map)
+    }
+    Err(e) => {
+      // Not kept: asking again later may do better.
+      ic_port::debug_print!(
+        IC_NDB_MESSAGE_LEVEL,
+        "Collation {} could not be fetched: {}",
+        number,
+        e.message()
+      );
+      None
+    }
+  }
 }
 
 /// The hash map a table or index is placed by, from the cache or the
@@ -705,9 +814,12 @@ fn fetch_index(
   }
   index_is_online(&info)?;
   // The index's own replicas and hash map, which it inherits from its
-  // table or has of its own, place a transaction that goes through it.
+  // table or has of its own, place a transaction that goes through it,
+  // and its character columns are hashed through their collations.
   let hash_map = hash_map_of(cache, conn, &info)?;
-  Ok(IndexDef::new(info, Arc::clone(table), hash_map))
+  let collations = key_collations(cache, conn, &info, true);
+  let own = TableDef::new(info, hash_map).with_collations(collations);
+  Ok(IndexDef::with_own(own, Arc::clone(table)))
 }
 
 /// Refuse an index that is not online. The coordinator does not check,
