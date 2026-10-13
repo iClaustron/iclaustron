@@ -1728,12 +1728,37 @@ fn build_sections(
       attr_info,
     )?;
   }
+  sections_fit(key, attr_info)
+}
+
+/// Refuse what a data node would take for a malformed request rather
+/// than a large one: it is never sent.
+fn sections_fit(key: &[u32], attr_info: &[u32]) -> Result<(), IcError> {
+  if key.len() > key_ops::IC_MAX_KEY_WORDS {
+    return Err(IcError::new(err::IC_ERROR_KEY_TOO_LONG));
+  }
+  if attr_info.len() >= key_ops::IC_MAX_COLUMN_DATA_WORDS {
+    return Err(IcError::new(err::IC_ERROR_RECORD_SIZE_TOO_BIG));
+  }
   Ok(())
 }
 
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn sections_too_long_are_refused() {
+    let key = vec![1u32; key_ops::IC_MAX_KEY_WORDS];
+    let attr = vec![2u32; key_ops::IC_MAX_COLUMN_DATA_WORDS - 1];
+    assert!(sections_fit(&key, &attr).is_ok());
+    let long_key = vec![1u32; key_ops::IC_MAX_KEY_WORDS + 1];
+    let e = sections_fit(&long_key, &[]).expect_err("key");
+    assert_eq!(e.code, err::IC_ERROR_KEY_TOO_LONG);
+    let long_attr = vec![2u32; key_ops::IC_MAX_COLUMN_DATA_WORDS];
+    let e = sections_fit(&key, &long_attr).expect_err("column data");
+    assert_eq!(e.code, err::IC_ERROR_RECORD_SIZE_TOO_BIG);
+  }
 
   #[test]
   fn a_transaction_is_done_only_when_ended_and_empty() {

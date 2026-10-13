@@ -811,7 +811,9 @@ a row may be 72 000 bytes. From reading (chapter 05 §16.1):
   stays together on its link, which staging already gives.
 - A row is at most 18 000 words, of which the fixed in-memory part
   4 070, the variable part 8 008 and the disk part 7 770: about 48 KB
-  without disk columns. A key is at most 1 023 words, column data under
+  without disk columns. From 2026-10 (the author, 2026-10-12): the
+  variable parts of the in-memory and of the disk columns 8 158 words
+  each, the fixed part and the row as before. A key is at most 1 023 words, column data under
   32 768 words.
 - A coordinator without room to put a train together drops it and
   answers nothing, which 6.3's timer catches.
@@ -843,6 +845,45 @@ Changes:
   read back by primary and by unique key and checked through MySQL; a
   fragmented request between plain ones in one batch, two in one
   batch, one rolled back before it was sent.
+
+As built (2026-10-13; the `big_rows` group passes), item by item:
+1. `header::encode_train` splits as above and returns a `Train`: its
+   length, its number of messages, where the last message and the
+   signal's data lie; `out` is cut back on error. `encode` refuses data
+   and sections over 25 together. Segment and fragment sizes are
+   `IC_SECTION_SEGMENT_WORDS` and `IC_FRAGMENT_SECTION_WORDS`.
+2. `Staged` has `last_at` and `data_at`; `patch_staged` writes the
+   flags there and computes the last message's checksum again.
+   `stage_signal` and `queue_signal_for_generation` use the encoder, and
+   the connection counts fragment ids from 1, skipping 0, advanced only
+   by a train. The two direct sends (`send_for_generation`,
+   `NodeConnection::send_signal`) carry control and dictionary
+   signals, never a key request, and stay whole.
+3. `build_sections` refuses a key above 1 023 words with
+   `IC_ERROR_KEY_TOO_LONG` (7156, new) and column data of 32 768 words
+   or more with `IC_ERROR_RECORD_SIZE_TOO_BIG` (7077).
+4. `fragments` takes the joined data from the last fragment; a unit
+   test joins a train of our own encoder's.
+5. Unit tests at every boundary of the exit, with checksums and signal
+   ids, and the patch of a staged train.
+6. The disk columns' exit is met by the `big_rows` group rather than
+   `types`. Its tables fill each part of a row exactly, at the limits
+   of 2026-10 (chapter 05 §13): `big_mem` the fixed and the in-memory
+   variable part, about 48 KB; `big_disk` both variable parts, 65 486
+   bytes, next to the 65 535 a MySQL server allows. A row past that,
+   up to 72 000 bytes, needs the inline parts of blob columns, which
+   iClaustron neither reads nor writes before phase 10; the encoder's
+   unit tests cover the largest row. Tests: each table by primary and
+   unique key, shrunk and grown back by an update; a byte more in any
+   part refused by the data nodes; rows MySQL wrote read whole; trains
+   and whole requests in one batch; a train rolled back unsent. The
+   group makes the log file group `ic_it_lg` and tablespace `ic_it_ts`
+   when the cluster has none, and keeps them. First run, on the
+   earlier limits: a full in-memory variable part stopped both data
+   nodes in TUP's allocator, a RonDB bug mended with the new limits;
+   the trains had arrived and been joined.
+7. Chapter 05 §16.1 folded into §2.2 and §13; §2's 7 400-word "limit"
+   corrected.
 
 ### 6.7 The wire made readable: a Wireshark dissector (2 weeks, second in order)
 

@@ -241,9 +241,12 @@ iClaustron's
 `fill_ndb_message_header` and `create_ndb_message` implement this correctly
 and are carried over.
 
-Limits: a message is at most 32 768 bytes, sent or received; a single
-section is at most 7 400 words in
-one signal; the receive loop handles up to 1 024 signals per call. Verify:
+Limits: a message is at most 32 768 bytes, sent or received; the data
+nodes split what they send above 7 400 words (§2.1), which is where
+they split, not a limit on what they receive; the receive loop handles
+up to 1 024 signals per call. A data node drops a signal whose data
+words and sections come to more than 25
+(`src/kernel/vm/TransporterCallback.cpp:292`). Verify:
 `include/transporter/TransporterDefinitions.hpp:85-86`,
 `include/kernel/ndb_limits.h:304-311`, `src/common/transporter/Packer.cpp:40`.
 
@@ -278,8 +281,8 @@ this for `LIST_OBJECTS_CONF`: each piece's object count counts only that
 piece's objects, and the reference's client adds them up
 (`src/ndbapi/NdbDictionaryImpl.cpp:7582-7596`). A
 piece may also carry one section, or none. A generic reassembler keeps
-the first piece's data, so such values must come from the joined
-sections. Verify: `src/kernel/blocks/dbdict/Dbdict.cpp:13119-13219`.
+one piece's data (ours, like the data nodes', the last piece's), so such
+values must come from the joined sections. Verify: `src/kernel/blocks/dbdict/Dbdict.cpp:13119-13219`.
 
 The shapes of `LIST_OBJECTS_CONF` (the author, 2026-10-09): two words
 of its own, the caller's data and the object count, and then:
@@ -321,6 +324,82 @@ reassemble at least `TABLE_DESC_CONF` and `ROW_DATA_REP`, not only event
 traffic as an earlier revision said. `ic_apid::fragments` does it, in
 the user thread that executes the signal. The largest whole signal,
 7400 words, fits in our 32 KB receive limit.
+
+### 2.2 Sending a signal in fragments (phase 6.6, 2026-10-12)
+
+A request whose sections are too large for one message goes as a train
+of fragments, laid out as the reference's API node lays it out, which
+differs from the data nodes' layout in §2.1. Seen live (2026-10-13):
+the coordinator joins our trains of two and three fragments, several
+in one send, with whole requests between them, and passes the
+operation on to the node that runs it in fragments of its own. `header::encode_train`
+writes it; the coordinator puts the train together before it runs the
+request. Verify: `src/ndbapi/TransporterFacade.cpp:2272-2274, 2302-2470`,
+`src/kernel/blocks/dbtc/DbtcMain.cpp:3743, 24119, 16794`.
+
+- **When.** A signal goes whole when its sections come to at most 8 040
+  words, its own data not counted; above that it is split.
+  `src/ndbapi/NdbOperationExec.cpp:219-230`,
+  `src/ndbapi/TransporterFacade.cpp:2312-2318`.
+- **Pieces.** Each fragment carries up to 8 040 words of sections, the
+  most a 32 KB message holds with room for its header. Sections go in
+  order: a fragment carries the rest of one section, any sections that
+  fit whole, and may begin the next. Every piece of a section but its
+  last is a multiple of 60 words: a piece that begins part-way into a
+  fragment is cut short to a multiple of 60, and when not even 60 words
+  are left, the section waits for the next fragment; a fragment that
+  begins with a piece takes 8 040 words, itself a multiple of 60. A
+  section's last piece may be of any length, a whole section included.
+  `src/ndbapi/TransporterFacade.cpp:2359-2391`.
+- **Why 60.** A 26.10 data node keeps a section in segments of 60 words
+  and joins pieces segment by segment; a debug data node stops on a
+  ragged piece, a release one logs and keeps a corrupt section.
+  `src/kernel/vm/SimulatedBlock.cpp:488-512`. Our segment size is one
+  constant, `IC_SECTION_SEGMENT_WORDS`; any multiple of 60 satisfies
+  26.10.
+- **Data.** The fragments before the last carry as data only the
+  numbers of the sections they carry and the fragment id, n + 1 words
+  for n sections; the last carries the signal's data, then its section
+  numbers, then the fragment id. A data node takes the data words and
+  the sections together up to 25 in one signal, which for the last
+  fragment counts its section numbers twice: a `KEY_OP_REQ`, 8 words
+  with two sections, comes to 13. `src/ndbapi/TransporterFacade.cpp:2420-2423,
+  2457-2469`. The receiver keeps the last fragment's data
+  (`src/kernel/vm/SimulatedBlock.cpp:3196-3207`), and so does
+  `ic_apid::fragments`.
+- **Fragment id.** A train is known by the sender's block reference and
+  the fragment id (`src/kernel/vm/SimulatedBlock.hpp:1113-1129`). The
+  reference counts ids per API connection from 0
+  (`src/ndbapi/TransporterFacade.cpp:1531, 2335`); the data nodes' own
+  counter skips 0 (`src/kernel/vm/SimulatedBlock.cpp:3757-3762`), and so
+  does ours, one counter per user thread, which is one sender block. A
+  section number of 3 or more is taken as malicious.
+- **Room.** The coordinator has room to put together one train per API
+  node at a time, never interleaved
+  (`src/kernel/blocks/dbtc/DbtcInit.cpp:486-498`). Without room it drops
+  the train and answers nothing
+  (`src/kernel/vm/SimulatedBlock.cpp:3068-3095, 3256-3268`), which the
+  reply timer of §6.9 catches. Our trains stay whole on their link: a
+  thread's batch is written with one append, so trains of different
+  threads never interleave.
+- **What a data node takes for malformed.** A key above 1 023 words or
+  column data above 0x3FFFF words makes the coordinator take a request
+  for malicious (`src/kernel/blocks/dbtc/DbtcMain.cpp:3767-3790`); the
+  blocks that run the operation refuse column data of 32 768 words or
+  more (`src/kernel/blocks/dblqh/DblqhMain.cpp:10186`,
+  `src/kernel/blocks/dbtup/DbtupExecQuery.cpp:951`). We refuse both
+  before sending: a key above 1 023 words with
+  `IC_ERROR_KEY_TOO_LONG` (7156), column data of 32 768 words or more
+  with `IC_ERROR_RECORD_SIZE_TOO_BIG` (7077).
+- **Staged requests.** A request packed when its query is defined has
+  its flags set at the send; in a train they are in the last fragment,
+  and only its checksum is computed again.
+
+The largest rows, and so the largest requests, are in §13. A write of
+the largest row a MySQL server makes, both variable parts full, is
+about 16 400 words of column data: three fragments with a one-word key.
+The largest row there is, 18 000 words, with the largest key goes in
+three as well.
 
 ## 3. Block numbers and references
 
@@ -1664,6 +1743,51 @@ a key of 1023 words, 100 active events, a scan filter of 15359 words,
 and signal numbers up to 982. Verify: `include/ndbapi/ndbapi_limits.h:30-45`,
 `include/kernel/GlobalSignalNumbers.h:40`.
 
+A row's parts have limits of their own: the fixed-size part in memory
+at most 4 070 words, the variable-size part 8 008, the disk part 7 770
+(`include/kernel/ndb_limits.h:126-128`, enforced when a table is made,
+`src/kernel/blocks/dbdict/Dbdict.cpp:7060-7087`). Seen live
+(2026-10-12, by making tables through a MySQL server and growing a
+column a byte at a time): a table one byte over is refused with 944
+"Fixed size part of row can at most be 16280 bytes" or 943 "On-disk
+part of row can at most be 31080 bytes". One VARBINARY of 32 014 bytes
+fills the variable part; one of 31 054 the disk part; a VARBINARY
+costs the fixed part a word. A MySQL server allows a row of at most
+65 535 bytes, BLOB and TEXT apart (`/sql/handler.h:625`, which the
+NDB handler does not raise), so the largest row it makes is about
+65 KB: in memory alone about 48 KB. Only the inline parts of blob
+columns can take a row made through MySQL past that; we neither read
+nor write blob columns before phase 10.
+
+**The limits from 2026-10** (the author, 2026-10-12, with the mend
+below): the fixed-size part 16 280 bytes, as before; the variable-size
+part 8 158 words, for the in-memory columns and for the disk columns
+alike; the whole row 72 000 bytes. The overheads measured above hold:
+16 bytes beside one in-memory VARBINARY and 24 beside the disk columns
+of `big_disk`. Seen live (2026-10-13, the `big_rows` group): a
+VARBINARY of 32 614 bytes fills the in-memory variable part, one of
+32 090 beside an INT and two BINARY(255) the disk part, both in one row
+made through MySQL (65 486 bytes); a byte more in any part is refused
+by the data nodes; rows with every part full are written, grown,
+shrunk and read by primary and unique key.
+
+**A full variable part stopped the data nodes: a RonDB bug.** Seen
+live (2026-10-12, release build): an insert whose in-memory
+VARBINARY(32 014) was full, a variable part of about 8 005 words,
+stopped the data node that ran it with error 2301, an assertion in
+`src/kernel/blocks/dbtup/DbtupVarAlloc.cpp:633`, and the other node
+the same way on the next such insert: the whole cluster. The request
+itself had arrived whole: the coordinator had joined our train and
+handed the operation on (§2.2). The allocation of the row's variable
+part (`src/kernel/blocks/dbtup/DbtupExecQuery.cpp:4682`) asked for
+more than 7 784 words, the least free space of the fullest list of
+pages (`DbtupVarAlloc.cpp:52-65`), and finding no list for it the
+node stopped (`:621-634`). The author (2026-10-12): the variable part
+of in-memory columns may grow beyond that, up to what a table may
+declare. So the stop is a bug in RonDB, not a limit, mended with the
+limits above; the `big_rows` tests fill every part, and stop a data
+node that is not mended.
+
 ## 14. Node ids, and why nothing is sized by them
 
 The highest node id a cluster allows has risen with every era of the
@@ -1733,68 +1857,7 @@ Configuration parameters are named by id, with our names: 129
 
 ### 16.1 Sending a request in fragments (phase 6.6)
 
-- The reference sends a key operation whole when its sections together
-  are at most 8 040 words; above that it splits it. The signal's own
-  data words do not count. `src/ndbapi/NdbOperationExec.cpp:219-230`,
-  `src/ndbapi/TransporterFacade.cpp:2272-2274, 2312-2318`.
-- The fragment state is two bits of header word 1, the value's high bit
-  at bit 1 and its low bit at bit 25: 1 first, 2 middle, 3 last.
-  `src/common/transporter/TransporterInternalDefinitions.hpp:247-262`.
-  Our decoder agrees (`header.rs`).
-- Layout as an API node sends it, `src/ndbapi/TransporterFacade.cpp:2302-2470`:
-  sections go in order, a fragment carries whole sections and may begin
-  the next one; a piece of a section that begins part-way into a
-  fragment is a multiple of 60 words and at least 60 (:2359-2391); a
-  fragment that begins with a section takes 8 040 words; only a
-  section's last piece may be of any length. Fragments before the last
-  carry as data only their section numbers and the fragment id (n + 1
-  words for n sections, :2420-2423); the last carries the signal's data,
-  then its section numbers, then the fragment id (:2457-2469).
-- The receiver joins pieces in 60-word segments and requires the rule
-  above; a debug data node stops, a release one logs and keeps a
-  corrupt section. `src/kernel/vm/SimulatedBlock.cpp:488-512`.
-- Data nodes, when they send, put the data in every fragment and the
-  highest section first (`src/kernel/vm/SimulatedBlock.cpp:3810-3848`); the receiver
-  reads only the trailing words of the first fragments, so both layouts
-  are accepted (:3046-3056), and on the last fragment keeps that
-  fragment's data (:3196-3207).
-- The fragment id: one counter per API connection in the reference,
-  from 0 (`src/ndbapi/TransporterFacade.cpp:1531, 2335`); the data nodes' own
-  counter skips 0 (`src/kernel/vm/SimulatedBlock.cpp:3757-3762`). A train is
-  known by
-  the sender's full reference and the id
-  (`src/kernel/vm/SimulatedBlock.hpp:1113-1129`). A section number of 3
-  or more is reported as malicious.
-- Room to assemble trains at the coordinator is sized for one train per
-  API node at a time, never interleaved
-  (`src/kernel/blocks/dbtc/DbtcInit.cpp:486-498`); when it is full the
-  train is dropped and no reply is sent
-  (`src/kernel/vm/SimulatedBlock.cpp:3068-3095,
-  3256-3268`). The key, unique and scan requests are all put together
-  before they run (`src/kernel/blocks/dbtc/DbtcMain.cpp:3743, 24119,
-  16794`).
-- A message is at most 32 768 bytes both ways
-  (`include/transporter/TransporterDefinitions.hpp:85-86`); a larger
-  one is refused on send
-  (`src/common/transporter/TransporterRegistry.cpp:1239-1241`) and is a
-  link error on receive (`src/common/transporter/Packer.cpp:170-177`). A
-  data node drops a
-  signal whose data words plus sections exceed 25
-  (`src/kernel/vm/TransporterCallback.cpp:292`).
-- Limits: a row at most 18 000 words, a key at most 1 023
-  (`include/kernel/ndb_limits.h:125, 129`); the fixed in-memory part at
-  most 4 070 words, the variable part 8 008, the disk part 7 770
-  (`include/kernel/ndb_limits.h:126-128`, enforced at
-  `src/kernel/blocks/dbdict/Dbdict.cpp:7060-7087`), so about 48 KB
-  without disk columns. The coordinator takes a key above 1 023 words
-  or column data above 0x3FFFF words as malicious
-  (`src/kernel/blocks/dbtc/DbtcMain.cpp:3767-3790`); the blocks that run the
-  operation refuse
-  column data of 32 768 words or more
-  (`src/kernel/blocks/dblqh/DblqhMain.cpp:10186`,
-  `src/kernel/blocks/dbtup/DbtupExecQuery.cpp:951`).
-- Correction to §2: "a single section is at most 7 400 words" is where
-  data nodes split what they send, not a limit on what they receive.
+Folded into §2.2 and §13, seen live, 2026-10-13.
 
 ### 16.2 Hashing a latin1 key (phase 8.6)
 
@@ -2214,6 +2277,8 @@ the fuller account; this one is the index the code points into.
 - A bundled signal goes to block 2047. The receiver walks its data part by part: a header word with the block in bits 16-31 and the length less three in bits 0-4, at most 25 words, and each part is delivered to its own block as if it had come alone. `src/ndbapi/TransporterFacade.cpp:276-322`
 - The coordinator sends KEY_OP_CONF (10) to an API node bundled this way. `src/kernel/blocks/dbtc/DbtcMain.cpp:7421-7430`
 - The node that reads a row bundles a short ROW_DATA_REP (5), the part's header word being the block shifted up 16 bits plus the row data's length. `src/kernel/blocks/dbtup/DbtupBuffer.cpp:107-135`, `src/kernel/blocks/dbtup/DbtupBuffer.cpp:216-239`
+- A data node drops a signal whose data words and sections come to more than 25; `encode` refuses one. `src/kernel/vm/TransporterCallback.cpp:292`
+- `encode_train` sends a signal whole up to 8 040 words of sections and as a train of fragments above, laid out as §2.2 says: pieces of whole 60-word segments but a section's last, the data in the last fragment only. `src/ndbapi/TransporterFacade.cpp:2302-2470`, `src/kernel/vm/SimulatedBlock.cpp:488-512`
 
 ### 17.7 Membership and heartbeats (`ic_signals::membership`)
 
@@ -2342,6 +2407,8 @@ the fuller account; this one is the index the code points into.
 - Every piece carries the original's whole signal data, then the number of each section it carries, highest first, then the fragment id; the first piece is marked 1, middle ones 2 and the last 3. `src/kernel/vm/SimulatedBlock.cpp:4099`, `src/kernel/vm/SimulatedBlock.cpp:4141-4166`, `src/kernel/vm/SimulatedBlock.cpp:4234-4283`
 - A receiver reads the fragment id from the last data word and the section numbers from the words before it. `src/ndbapi/NdbApiSignal.hpp:87-99`
 - The reference's client checks the request number in the data of every fragment of a table description, so it relies on each fragment carrying the original data. `src/ndbapi/NdbDictionaryImpl.cpp:3722-3752`
+- A data node joining a train keeps the last fragment's data, and reads only the trailing section numbers and fragment id of the others; `fragments` keeps the last's too. `src/kernel/vm/SimulatedBlock.cpp:3046-3056, 3196-3207`
+- Fragment ids are counted per sender, skipping 0; `apid_conn` counts them per user thread. `src/kernel/vm/SimulatedBlock.cpp:3757-3762`
 - The reference API's send thread sends a held-back send after a grace period of 200 µs. `src/ndbapi/TransporterFacade.cpp:956-959`, `src/ndbapi/TransporterFacade.cpp:1069-1083`
 
 ### 17.13 Dictionary and records (`ic_apid::dict_cache`, `dict_client`, `record`, `text_row`)

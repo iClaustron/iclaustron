@@ -377,6 +377,34 @@ impl CoordRecord {
 /// The next release id from `seed`, which it moves on: a 64-bit mix of
 /// a counter, its high half, never zero, which the coordinator takes as
 /// a free without one.
+/// The fragment id after `id`, skipping 0, which a data node's own
+/// counter never uses.
+fn fragment_id_after(id: u32) -> u32 {
+  id.wrapping_add(1).max(1)
+}
+
+/// Set data word `data_word` of the request `staged` names in `out`,
+/// and the checksum of the message that holds it.
+fn patch_words(
+  out: &mut [u32],
+  staged: &Staged,
+  data_word: usize,
+  value: u32,
+  use_checksum: bool,
+) {
+  let at = staged.at as usize;
+  let len = staged.len as usize;
+  let last = at + staged.last_at as usize;
+  let word = at + staged.data_at as usize + data_word;
+  if len == 0 || at + len > out.len() || word >= at + len {
+    return;
+  }
+  out[word] = value;
+  if use_checksum {
+    out[at + len - 1] = header::compute_checksum(&out[last..at + len - 1]);
+  }
+}
+
 fn release_id_after(seed: &mut u64) -> u32 {
   loop {
     *seed = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
@@ -470,6 +498,9 @@ pub struct ApidConnection {
   pub(crate) next_reply_check: u64,
   /// Where the next release id comes from.
   release_seed: u64,
+  /// The id of the next train of fragments this thread sends, which
+  /// with its block names the train to the receiver. Never 0.
+  next_fragment_id: u32,
   pub(crate) key_scratch: Vec<u32>,
   pub(crate) attr_scratch: Vec<u32>,
   /// Pages of signals taken from the inbox, read, and given back on the
@@ -501,8 +532,15 @@ pub(crate) struct Staged {
   pub generation: u32,
   /// Where it begins in that node's staged buffer, in words.
   pub at: u32,
-  /// Its length in words; zero for nothing staged.
+  /// Its length in words, every fragment together; zero for nothing
+  /// staged.
   pub len: u32,
+  /// Where its last message begins, in words from `at`: zero unless it
+  /// went as a train of fragments.
+  pub last_at: u32,
+  /// Where its signal data begins, in words from `at`. The data is in
+  /// the last message only.
+  pub data_at: u32,
 }
 
 impl std::fmt::Debug for ApidConnection {
@@ -558,6 +596,7 @@ impl ApidConnection {
       reply_wait_nanos,
       next_reply_check: 0,
       release_seed,
+      next_fragment_id: 1,
       key_scratch: Vec::new(),
       attr_scratch: Vec::new(),
     })
@@ -638,18 +677,37 @@ impl ApidConnection {
       Some(node) => node.uses_checksum(),
       None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_NODE)),
     };
+    let fragment_id = self.next_fragment_id;
     let index = self.outgoing_index(node_id, generation);
     let out = &mut self.outgoing[index].words;
-    header::encode(header, data, sections, use_checksum, out)?;
+    let train = header::encode_train(
+      header,
+      data,
+      sections,
+      use_checksum,
+      fragment_id,
+      out,
+    )?;
+    self.fragment_id_taken(&train);
     ic_port::debug_print!(
       IC_NDB_MESSAGE_LEVEL,
-      "-> node {} {} ({} words, {} sections) queued",
+      "-> node {} {} ({} words, {} sections, {} messages) queued",
       node_id,
       numbers::sig_name(header.sig_no()).unwrap_or("unknown"),
       data.len(),
-      sections.len()
+      sections.len(),
+      train.messages
     );
     Ok(())
+  }
+
+  /// A signal went as a train with the current fragment id: the next
+  /// train gets another. Counted per thread, which is per sender block,
+  /// from 1 and skipping 0 when it wraps.
+  fn fragment_id_taken(&mut self, train: &header::Train) {
+    if train.messages > 1 {
+      self.next_fragment_id = fragment_id_after(self.next_fragment_id);
+    }
   }
 
   /// True if anything waits to be written, staged requests apart.
@@ -708,20 +766,33 @@ impl ApidConnection {
       Some(node) => node.uses_checksum(),
       None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_NODE)),
     };
+    let fragment_id = self.next_fragment_id;
     let index = self.outgoing_index(node_id, generation);
     let out = &mut self.outgoing[index].staged;
     let at = out.len();
-    let len = header::encode(header, data, sections, use_checksum, out)?;
+    let train = header::encode_train(
+      header,
+      data,
+      sections,
+      use_checksum,
+      fragment_id,
+      out,
+    )?;
+    self.fragment_id_taken(&train);
     Ok(Staged {
       node_id,
       generation,
       at: at as u32,
-      len: len as u32,
+      len: train.len as u32,
+      last_at: train.last_at as u32,
+      data_at: train.data_at as u32,
     })
   }
 
   /// Set one word of a staged request, its data word `data_word`, and
-  /// its checksum again if the link carries them.
+  /// its checksum again if the link carries them. A request that goes
+  /// as a train has its data in the last fragment, whose checksum is
+  /// the only one that changes.
   pub(crate) fn patch_staged(
     &mut self,
     staged: &Staged,
@@ -734,16 +805,7 @@ impl ApidConnection {
     };
     let index = self.outgoing_index(staged.node_id, staged.generation);
     let out = &mut self.outgoing[index].staged;
-    let at = staged.at as usize;
-    let len = staged.len as usize;
-    let word = at + header::IC_SIGNAL_HEADER_WORDS + data_word;
-    if len == 0 || at + len > out.len() || word >= at + len {
-      return;
-    }
-    out[word] = value;
-    if use_checksum {
-      out[at + len - 1] = header::compute_checksum(&out[at..at + len - 1]);
-    }
+    patch_words(out, staged, data_word, value, use_checksum);
   }
 
   /// A staged request that is not to go after all.
@@ -1548,6 +1610,59 @@ mod tests {
     let later = start + 10 * IC_REPLY_WAIT_CHECK_NANOS;
     assert!(reply_check_due(&mut next, later));
     assert!(!reply_check_due(&mut next, later + 1));
+  }
+
+  #[test]
+  fn fragment_ids_skip_zero() {
+    assert_eq!(fragment_id_after(1), 2);
+    assert_eq!(fragment_id_after(u32::MAX), 1);
+  }
+
+  #[test]
+  fn a_patch_lands_in_the_data_of_a_train() {
+    use ic_signals::blocks::IC_BLOCK_COORDINATOR;
+    let header = SignalHeader::new(12, 0x8003, IC_BLOCK_COORDINATOR);
+    let data = [1u32, 2, 3, 4, 5, 6, 7, 8];
+    let key = [9u32; 3];
+    for attr_len in [100usize, 20_000] {
+      let attr = vec![10u32; attr_len];
+      for use_checksum in [false, true] {
+        // Something staged before it, to see that offsets are its own.
+        let mut out: Vec<u32> = Vec::new();
+        header::encode(&header, &[1], &[], use_checksum, &mut out)
+          .expect("before");
+        let at = out.len();
+        let train = header::encode_train(
+          &header,
+          &data,
+          &[&key, &attr],
+          use_checksum,
+          5,
+          &mut out,
+        )
+        .expect("train");
+        let staged = Staged {
+          node_id: 1,
+          generation: 1,
+          at: at as u32,
+          len: train.len as u32,
+          last_at: train.last_at as u32,
+          data_at: train.data_at as u32,
+        };
+        patch_words(&mut out, &staged, 4, 0xF1A6, use_checksum);
+        // Every message still reads, checksums and all, and the word
+        // set is the signal's fifth data word.
+        let mut from = at;
+        let mut last: Option<header::Message<'_>> = None;
+        while from < out.len() {
+          let message = header::decode(&out[from..]).expect("decode");
+          from += message.total_words;
+          last = Some(message);
+        }
+        let last = last.expect("a message");
+        assert_eq!(last.data[..8], [1, 2, 3, 4, 0xF1A6, 6, 7, 8]);
+      }
+    }
   }
 
   #[test]

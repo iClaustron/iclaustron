@@ -31,8 +31,11 @@
 //! whose node stops answering ends with 4012 (chapter 06 §6.3);
 //! `charset`, which checks that keys with character columns are placed
 //! where the data nodes place them, in every collation claimed
-//! (chapter 06 §8.6); and `collation`, which asks the data nodes what a
-//! collation is and for its weights (RonDB 26.04 main and later).
+//! (chapter 06 §8.6); `collation`, which asks the data nodes what a
+//! collation is and for its weights (RonDB 26.04 main and later); and
+//! `big_rows`, which writes and reads rows too large for one message,
+//! in memory and on disk (chapter 06 §6.6). That group makes a log file
+//! group and a tablespace if the cluster has none, and keeps them.
 //! Each test is its own program against the cluster, as an application
 //! would be: it takes an API node id, binds its tables, does its work
 //! through the public API and lets go.
@@ -2806,6 +2809,692 @@ fn charset_unique_keys_over_character_columns() {
     }
   }
   assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+// ---- big_rows ----
+
+/// The tablespace the `big_rows` group's disk columns go in.
+const IC_IT_TABLESPACE: &str = "ic_it_ts";
+/// The log file group made for it when the cluster has none.
+const IC_IT_LOGFILE_GROUP: &str = "ic_it_lg";
+// The limits of a row's parts, in RonDB from 2026-10 (the author,
+// 2026-10-12): the fixed-size part 16 280 bytes, the variable-size part
+// of the in-memory columns 8 158 words, and of the disk columns as
+// much, the whole row 72 000 bytes. A MySQL server makes no row over
+// 65 535 bytes, BLOB and TEXT apart; only the inline parts of blob
+// columns would take a row past that, and those are neither read nor
+// written before phase 10. So each part is filled, both variable parts
+// at once, and the whole row is left to the encoder's unit tests.
+
+/// Bytes of the BINARY column that, after 63 BINARY(255), the key, the
+/// unique column and the VARBINARY's place, fills `big_mem`'s fixed
+/// part to its last word.
+const IC_IT_BIG_FIXED_TAIL: usize = 108;
+/// The VARBINARY that fills the variable part of the in-memory columns:
+/// with its two length bytes and the 16 bytes the part takes besides
+/// (measured against the earlier limit, 8 008 words), 8 158 words.
+const IC_IT_BIG_VAR: usize = 32614;
+/// The VARBINARY that, beside an INT and two BINARY(255) and the 24
+/// bytes the part takes besides (measured against the earlier limit,
+/// 7 770 words), fills the disk part's 8 158 words. With
+/// [`IC_IT_BIG_VAR`] in memory the row's columns come to 65 486 bytes,
+/// next to the 65 535 a MySQL server allows.
+const IC_IT_BIG_DISK_VAR: usize = 32090;
+
+/// The tablespace the disk columns go in, made once and kept: a cluster
+/// has at most one log file group, and one already there is used.
+fn setup_tablespace() -> Option<()> {
+  let files = mysql(
+    "SELECT DISTINCT FILE_TYPE, LOGFILE_GROUP_NAME, TABLESPACE_NAME \
+     FROM information_schema.FILES WHERE ENGINE = 'ndbcluster'",
+  )?;
+  let mut group = String::new();
+  let mut have_space = false;
+  for line in files.lines() {
+    let fields: Vec<&str> = line.split('\t').collect();
+    if fields.len() < 3 {
+      continue;
+    }
+    if fields[0] == "UNDO LOG" {
+      group = fields[1].to_string();
+    }
+    if fields[0] == "DATAFILE" && fields[2] == IC_IT_TABLESPACE {
+      have_space = true;
+    }
+  }
+  if group.is_empty() {
+    group = IC_IT_LOGFILE_GROUP.to_string();
+    mysql(&format!(
+      "CREATE LOGFILE GROUP {} ADD UNDOFILE 'ic_it_undo.log' \
+       INITIAL_SIZE 32M UNDO_BUFFER_SIZE 4M ENGINE NDB",
+      group
+    ))?;
+  }
+  if !have_space {
+    mysql(&format!(
+      "CREATE TABLESPACE {} ADD DATAFILE 'ic_it_data.dat' \
+       USE LOGFILE GROUP {} INITIAL_SIZE 64M ENGINE NDB",
+      IC_IT_TABLESPACE, group
+    ))?;
+  }
+  Some(())
+}
+
+/// The `CREATE TABLE` of a table shaped as `big_mem`, named `name`: the
+/// last fixed-size column `tail` bytes, the VARBINARY `var`.
+fn big_mem_sql(name: &str, tail: usize, var: usize) -> String {
+  let mut fixed = String::new();
+  for i in 0..63 {
+    fixed.push_str(&format!("f{} BINARY(255), ", i));
+  }
+  format!(
+    "CREATE TABLE {db}.{name} (
+       id INT NOT NULL PRIMARY KEY,
+       code INT NOT NULL,
+       {fixed}
+       fr BINARY({tail}),
+       v VARBINARY({var}),
+       UNIQUE KEY {name}_code (code)
+     ) ENGINE=NDB",
+    db = IC_IT_DB,
+    name = name,
+    fixed = fixed,
+    tail = tail,
+    var = var
+  )
+}
+
+/// The `CREATE TABLE` of a table shaped as `big_disk`, named `name`:
+/// the VARBINARY in memory `var` bytes, the one on disk `disk_var`.
+fn big_disk_sql(name: &str, var: usize, disk_var: usize) -> String {
+  format!(
+    "CREATE TABLE {db}.{name} (
+       id INT NOT NULL PRIMARY KEY,
+       code INT NOT NULL,
+       m0 BINARY(255) STORAGE MEMORY,
+       v VARBINARY({var}) STORAGE MEMORY,
+       dn INT STORAGE DISK,
+       d0 BINARY(255) STORAGE DISK,
+       d1 BINARY(255) STORAGE DISK,
+       d VARBINARY({disk_var}) STORAGE DISK,
+       UNIQUE KEY {name}_code (code)
+     ) TABLESPACE {space} STORAGE DISK ENGINE=NDB",
+    db = IC_IT_DB,
+    name = name,
+    var = var,
+    disk_var = disk_var,
+    space = IC_IT_TABLESPACE
+  )
+}
+
+/// The `big_mem` and `big_disk` tables, made afresh, each part of their
+/// rows at its limit, and the tablespace. `None` without a MySQL
+/// client.
+fn setup_big_tables() -> Option<()> {
+  setup_tablespace()?;
+  let sql = format!(
+    "CREATE DATABASE IF NOT EXISTS {db};
+     DROP TABLE IF EXISTS {db}.big_mem;
+     {mem};
+     DROP TABLE IF EXISTS {db}.big_disk;
+     {disk};",
+    db = IC_IT_DB,
+    mem = big_mem_sql("big_mem", IC_IT_BIG_FIXED_TAIL, IC_IT_BIG_VAR),
+    disk = big_disk_sql("big_disk", IC_IT_BIG_VAR, IC_IT_BIG_DISK_VAR)
+  );
+  mysql(&sql)?;
+  Some(())
+}
+
+/// Run SQL through the MySQL client, going on past a statement that
+/// fails, and give back whether every statement went and what the
+/// client printed, warnings and errors included; `None` without a
+/// client.
+fn mysql_try(sql: &str) -> Option<(bool, String)> {
+  let command = match std::env::var("IC_TEST_MYSQL") {
+    Ok(command) => command,
+    Err(_) => {
+      eprintln!("skipped: IC_TEST_MYSQL is not set");
+      return None;
+    }
+  };
+  let command =
+    format!("{} --batch --skip-column-names --raw --force", command);
+  let mut child = Command::new("sh")
+    .arg("-c")
+    .arg(&command)
+    .stdin(Stdio::piped())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .spawn()
+    .expect("sh");
+  child
+    .stdin
+    .take()
+    .expect("stdin")
+    .write_all(sql.as_bytes())
+    .expect("write to the command");
+  let out = child.wait_with_output().expect("wait for the command");
+  let said = format!(
+    "{}{}",
+    String::from_utf8_lossy(&out.stdout),
+    String::from_utf8_lossy(&out.stderr)
+  );
+  let went = out.status.success() && !said.contains("ERROR");
+  Some((went, said))
+}
+
+/// The binary columns of a `big_rows` table, in the table's order:
+/// every column but the key, the unique column and the INT on disk.
+fn big_columns(t: &Table) -> Vec<String> {
+  let mut names: Vec<String> = Vec::new();
+  let mut id: u32 = 0;
+  while id < t.def.num_fields() {
+    let attr = t.def.field(id).expect("the column");
+    if attr.name != "id" && attr.name != "code" && attr.name != "dn" {
+      names.push(attr.name.clone());
+    }
+    id += 1;
+  }
+  names
+}
+
+/// True if the table has column `name` and `rec` holds it.
+fn holds(t: &Table, rec: &Record, name: &str) -> bool {
+  match t.def.field_id(name) {
+    Ok(id) => rec.position_of(id).is_some(),
+    Err(_) => false,
+  }
+}
+
+/// Bytes for one column of a row: different from row to row, `seed`,
+/// and from column to column, and running through every byte value.
+fn big_bytes(seed: u32, column: u32, len: usize) -> Vec<u8> {
+  let mut bytes: Vec<u8> = Vec::with_capacity(len);
+  let mut x = seed.wrapping_mul(2_654_435_761) ^ column.wrapping_mul(40_503);
+  let mut i: usize = 0;
+  while i < len {
+    x = x.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+    bytes.push((x >> 16) as u8);
+    i += 1;
+  }
+  bytes
+}
+
+/// A row of a `big_rows` table laid out by `rec`: the key and the
+/// unique column if `rec` holds them, the INT on disk set to `seed`,
+/// and every binary column filled from `seed`, a VARBINARY `var_len`
+/// bytes long or as long as it goes. Gives back the row and the bytes
+/// of each binary column, in the order of [`big_columns`].
+fn big_row(
+  t: &Table,
+  rec: &Record,
+  id: i64,
+  seed: u32,
+  var_len: usize,
+) -> (Vec<u8>, Vec<Vec<u8>>) {
+  let mut row = vec![0; rec.row_size() as usize];
+  if holds(t, rec, "id") {
+    put_into(t, rec, &mut row, "id", &id.to_string());
+  }
+  if holds(t, rec, "code") {
+    put_into(t, rec, &mut row, "code", &(100 * id).to_string());
+  }
+  if holds(t, rec, "dn") {
+    put_into(t, rec, &mut row, "dn", &seed.to_string());
+  }
+  let mut values: Vec<Vec<u8>> = Vec::new();
+  for name in big_columns(t) {
+    let field_id = t.def.field_id(&name).expect("the column");
+    let attr = t.def.field(field_id).expect("the column");
+    let position = rec.position_of(field_id).expect("in the record");
+    let size = rec.field(position).expect("the field").size() as usize;
+    let len = match attr.array_kind {
+      ic_signals::table_props::IC_ARRAY_KIND_LONG_VARSIZE => {
+        var_len.min(size - 2)
+      }
+      ic_signals::table_props::IC_ARRAY_KIND_SHORT_VARSIZE => {
+        var_len.min(size - 1)
+      }
+      _ => size,
+    };
+    let bytes = big_bytes(seed, field_id, len);
+    put_raw(rec, &name, &bytes, &[0], &mut row);
+    values.push(bytes);
+  }
+  (row, values)
+}
+
+fn hex(bytes: &[u8]) -> String {
+  let mut text = String::with_capacity(2 * bytes.len());
+  for byte in bytes {
+    text.push_str(&format!("{:02x}", byte));
+  }
+  text
+}
+
+/// Where two long texts first differ, for a failure that does not
+/// print them.
+fn first_difference(a: &str, b: &str) -> usize {
+  let (a, b) = (a.as_bytes(), b.as_bytes());
+  let mut i: usize = 0;
+  while i < a.len() && i < b.len() && a[i] == b[i] {
+    i += 1;
+  }
+  i
+}
+
+/// Check a row read back in the table's own layout against what
+/// [`big_row`] wrote from `seed`.
+fn check_big_row(t: &Table, row: &[u8], values: &[Vec<u8>], seed: u32) {
+  let names = big_columns(t);
+  assert_eq!(names.len(), values.len());
+  let mut i: usize = 0;
+  while i < names.len() {
+    let got = t.get(row, &names[i]);
+    let want = format!("0x{}", hex(&values[i]));
+    assert!(
+      got == want,
+      "{}: {} characters read, {} written, the first difference at {}",
+      names[i],
+      got.len(),
+      want.len(),
+      first_difference(&got, &want)
+    );
+    i += 1;
+  }
+  if t.def.field_id("dn").is_ok() {
+    assert_eq!(t.get(row, "dn"), seed.to_string());
+  }
+}
+
+/// Check that MySQL sees row `id` of `table` as [`big_row`] wrote it:
+/// the INT on disk, if any, and every binary column end to end.
+fn check_big_row_in_mysql(
+  t: &Table,
+  table: &str,
+  id: i64,
+  values: &[Vec<u8>],
+  seed: u32,
+) {
+  let mut dn = String::from("0");
+  if t.def.field_id("dn").is_ok() {
+    dn = String::from("dn");
+  }
+  let seen = mysql(&format!(
+    "SELECT {}, LOWER(HEX(CONCAT({}))) FROM {}.{} WHERE id = {}",
+    dn,
+    big_columns(t).join(", "),
+    IC_IT_DB,
+    table,
+    id
+  ))
+  .expect("MySQL");
+  let mut all: Vec<u8> = Vec::new();
+  for value in values {
+    all.extend_from_slice(value);
+  }
+  let mut want_dn: u32 = 0;
+  if t.def.field_id("dn").is_ok() {
+    want_dn = seed;
+  }
+  let want = format!("{}\t{}", want_dn, hex(&all));
+  assert!(
+    seen == want,
+    "MySQL shows {} characters, {} written, the first difference at {}",
+    seen.len(),
+    want.len(),
+    first_difference(&seen, &want)
+  );
+}
+
+/// Define an insert of `row`, laid out by the table's record, as query
+/// `qid` of transaction `tid`.
+fn define_insert(
+  conn: &mut ApidConnection,
+  qid: QueryId,
+  tid: TransId,
+  row: &[u8],
+) {
+  let query = conn.query_mut(qid).expect("the query");
+  query.key_row_mut().copy_from_slice(row);
+  query.attr_row_mut().copy_from_slice(row);
+  let insert = WriteKeyArgs {
+    kind: WriteKind::Insert,
+    ..WriteKeyArgs::default()
+  };
+  conn
+    .write_key(qid, tid, &insert)
+    .expect("define the insert");
+}
+
+/// The rows of a table, by key, as MySQL lists them.
+fn ids_in_mysql(table: &str) -> String {
+  mysql(&format!(
+    "SELECT id FROM {}.{} ORDER BY id",
+    IC_IT_DB, table
+  ))
+  .expect("MySQL")
+}
+
+/// Write a row as large as `table` holds by primary key and read it
+/// back that way; update it through its unique index and read it back
+/// that way; write it over with short VARBINARY columns, and grow them
+/// back to full with an update by primary key. MySQL checks each.
+fn check_big_table(conn: &mut ApidConnection, t: &Table, table: &str) {
+  let index = bind_unique_index(conn, &format!("{}_code", table), table);
+
+  let (row, values) = big_row(t, &t.rec, 1, 1, usize::MAX);
+  key_op::write_key(conn, key_ops::IC_OP_INSERT, &t.rec, &row, &t.rec, &row)
+    .expect("insert");
+  let back = read_by_id(conn, t, 1).expect("the row is there");
+  check_big_row(t, &back, &values, 1);
+  check_big_row_in_mysql(t, table, 1, &values, 1);
+
+  // Every column but the key and the indexed one, through the index.
+  let key_rec = record_over(t, &["code"]);
+  let mut key = vec![0; key_rec.row_size() as usize];
+  put_into(t, &key_rec, &mut key, "code", "100");
+  let mut columns = big_columns(t);
+  if t.def.field_id("dn").is_ok() {
+    columns.push(String::from("dn"));
+  }
+  let mut names: Vec<&str> = Vec::new();
+  for column in &columns {
+    names.push(column.as_str());
+  }
+  let val_rec = record_over(t, &names);
+  let (vals, values) = big_row(t, &val_rec, 1, 2, usize::MAX);
+  let qid = conn
+    .create_unique_query(&index, &key_rec, &val_rec)
+    .expect("a unique query");
+  let tid = conn
+    .start_transaction(TransactionHint::Any, Some(&t.def))
+    .expect("a transaction");
+  let query = conn.query_mut(qid).expect("the query");
+  query.key_row_mut().copy_from_slice(&key);
+  query.attr_row_mut().copy_from_slice(&vals);
+  let update = WriteKeyArgs {
+    kind: WriteKind::Update,
+    ..WriteKeyArgs::default()
+  };
+  conn
+    .write_key(qid, tid, &update)
+    .expect("define the update");
+  conn.commit_transaction(tid).expect("ask to commit");
+  assert_eq!(finish(conn, tid), CommitState::Committed);
+  conn.close_transaction(tid).expect("close");
+  let mut out = t.row();
+  let found = key_op::read_unique_committed(
+    conn, &index, &key_rec, &key, &t.rec, &mut out,
+  )
+  .expect("read through the index");
+  assert!(found, "the row is found through the index");
+  check_big_row(t, &out, &values, 2);
+  check_big_row_in_mysql(t, table, 1, &values, 2);
+
+  let (row, values) = big_row(t, &t.rec, 1, 3, 10);
+  key_op::write_key(conn, key_ops::IC_OP_WRITE, &t.rec, &row, &t.rec, &row)
+    .expect("write over");
+  let back = read_by_id(conn, t, 1).expect("still there");
+  check_big_row(t, &back, &values, 3);
+  check_big_row_in_mysql(t, table, 1, &values, 3);
+
+  // The variable parts grown from a few bytes to full in one update.
+  let (row, values) = big_row(t, &t.rec, 1, 4, usize::MAX);
+  key_op::write_key(conn, key_ops::IC_OP_UPDATE, &t.rec, &row, &t.rec, &row)
+    .expect("update to full");
+  let found = key_op::read_unique_committed(
+    conn, &index, &key_rec, &key, &t.rec, &mut out,
+  )
+  .expect("read through the index");
+  assert!(found, "the row is still found through the index");
+  check_big_row(t, &out, &values, 4);
+  check_big_row_in_mysql(t, table, 1, &values, 4);
+}
+
+#[test]
+fn big_rows_the_largest_in_memory_row_by_primary_and_unique_key() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_big_tables().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let t = bind(&mut conn, "big_mem");
+  check_big_table(&mut conn, &t, "big_mem");
+}
+
+#[test]
+fn big_rows_a_row_with_disk_columns_by_primary_and_unique_key() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_big_tables().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let t = bind(&mut conn, "big_disk");
+  for column in ["dn", "d0", "d1", "d"] {
+    let id = t.def.field_id(column).expect("the column");
+    let attr = t.def.field(id).expect("the column");
+    assert_eq!(
+      attr.storage_kind,
+      ic_signals::table_props::IC_STORAGE_DISK,
+      "{} is on disk",
+      column
+    );
+  }
+  check_big_table(&mut conn, &t, "big_disk");
+}
+
+#[test]
+fn big_rows_the_tables_fill_each_part_to_its_limit() {
+  let _cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  // The tables were made with each part at its limit; a byte more in
+  // any part is refused, and by the data nodes, not by the MySQL
+  // server's own limit on a row.
+  if setup_big_tables().is_none() {
+    return;
+  }
+  let over: [(&str, String); 3] = [
+    (
+      "the fixed part",
+      big_mem_sql("big_probe", IC_IT_BIG_FIXED_TAIL + 1, IC_IT_BIG_VAR),
+    ),
+    (
+      "the variable part",
+      big_mem_sql("big_probe", IC_IT_BIG_FIXED_TAIL, IC_IT_BIG_VAR + 1),
+    ),
+    (
+      "the disk part",
+      big_disk_sql("big_probe", IC_IT_BIG_VAR, IC_IT_BIG_DISK_VAR + 1),
+    ),
+  ];
+  for (part, create) in &over {
+    let (went, said) = mysql_try(&format!(
+      "DROP TABLE IF EXISTS {db}.big_probe;
+       {create};
+       SHOW WARNINGS;
+       DROP TABLE IF EXISTS {db}.big_probe;",
+      db = IC_IT_DB,
+      create = create
+    ))
+    .expect("MySQL");
+    assert!(!went, "a byte more in {} was taken", part);
+    assert!(
+      said.contains("from NDB"),
+      "a byte more in {} was refused, but not by the data nodes: {}",
+      part,
+      said
+    );
+  }
+}
+
+#[test]
+fn big_rows_rows_mysql_wrote_are_read_whole() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_big_tables().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  for table in ["big_mem", "big_disk"] {
+    let t = bind(&mut conn, table);
+    let (_, values) = big_row(&t, &t.rec, 7, 7, usize::MAX);
+    let mut columns = String::from("id, code");
+    let mut given = String::from("7, 700");
+    if t.def.field_id("dn").is_ok() {
+      columns.push_str(", dn");
+      given.push_str(", 7");
+    }
+    let names = big_columns(&t);
+    let mut i: usize = 0;
+    while i < names.len() {
+      columns.push_str(&format!(", {}", names[i]));
+      given.push_str(&format!(", UNHEX('{}')", hex(&values[i])));
+      i += 1;
+    }
+    mysql(&format!(
+      "INSERT INTO {}.{} ({}) VALUES ({})",
+      IC_IT_DB, table, columns, given
+    ))
+    .expect("MySQL");
+    let back = read_by_id(&mut conn, &t, 7).expect("the row is there");
+    check_big_row(&t, &back, &values, 7);
+    let index = bind_unique_index(&mut conn, &format!("{}_code", table), table);
+    let key_rec = record_over(&t, &["code"]);
+    let mut key = vec![0; key_rec.row_size() as usize];
+    put_into(&t, &key_rec, &mut key, "code", "700");
+    let mut out = t.row();
+    let found = key_op::read_unique_committed(
+      &mut conn, &index, &key_rec, &key, &t.rec, &mut out,
+    )
+    .expect("read through the index");
+    assert!(found, "{}: the row is found through the index", table);
+    check_big_row(&t, &out, &values, 7);
+  }
+}
+
+#[test]
+fn big_rows_trains_and_whole_requests_share_a_batch() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_big_tables().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let t = bind(&mut conn, "big_mem");
+  let mut queries: Vec<QueryId> = Vec::new();
+  for _ in 0..3 {
+    queries.push(conn.create_query(&t.def, &t.rec, &t.rec).expect("a query"));
+  }
+  let mut written: Vec<(i64, Vec<Vec<u8>>)> = Vec::new();
+
+  // A train between two requests that go whole, in one transaction:
+  // without its VARBINARY a row of big_mem fits one message.
+  let tid = conn
+    .start_transaction(TransactionHint::Any, Some(&t.def))
+    .expect("a transaction");
+  let rows: [(i64, usize); 3] = [(10, 0), (11, usize::MAX), (12, 100)];
+  let mut i: usize = 0;
+  while i < rows.len() {
+    let (id, var_len) = rows[i];
+    let (row, values) = big_row(&t, &t.rec, id, id as u32, var_len);
+    define_insert(&mut conn, queries[i], tid, &row);
+    written.push((id, values));
+    i += 1;
+  }
+  conn.commit_transaction(tid).expect("ask to commit");
+  assert_eq!(finish(&mut conn, tid), CommitState::Committed);
+  conn.close_transaction(tid).expect("close");
+
+  // Three trains in one send: two in one transaction, one in another.
+  let first = conn
+    .start_transaction(TransactionHint::Any, Some(&t.def))
+    .expect("a transaction");
+  let second = conn
+    .start_transaction(TransactionHint::Any, Some(&t.def))
+    .expect("a transaction");
+  let ids: [i64; 3] = [20, 21, 22];
+  i = 0;
+  while i < ids.len() {
+    let (row, values) = big_row(&t, &t.rec, ids[i], ids[i] as u32, usize::MAX);
+    let tid = if i < 2 { first } else { second };
+    define_insert(&mut conn, queries[i], tid, &row);
+    written.push((ids[i], values));
+    i += 1;
+  }
+  conn.commit_transaction(first).expect("ask to commit");
+  conn.commit_transaction(second).expect("ask to commit");
+  assert_eq!(finish(&mut conn, first), CommitState::Committed);
+  assert_eq!(finish(&mut conn, second), CommitState::Committed);
+  conn.close_transaction(first).expect("close");
+  conn.close_transaction(second).expect("close");
+
+  for (id, values) in &written {
+    let back = read_by_id(&mut conn, &t, *id).expect("the row is there");
+    check_big_row(&t, &back, values, *id as u32);
+    check_big_row_in_mysql(&t, "big_mem", *id, values, *id as u32);
+  }
+  assert_eq!(ids_in_mysql("big_mem"), "10\n11\n12\n20\n21\n22");
+}
+
+#[test]
+fn big_rows_a_train_rolled_back_before_the_send_sends_nothing() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_big_tables().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let t = bind(&mut conn, "big_mem");
+  let mut queries: Vec<QueryId> = Vec::new();
+  for _ in 0..3 {
+    queries.push(conn.create_query(&t.def, &t.rec, &t.rec).expect("a query"));
+  }
+
+  // A train packed and its transaction rolled back before the send;
+  // behind it a train and a whole request, committed in that send.
+  let dropped = conn
+    .start_transaction(TransactionHint::Any, Some(&t.def))
+    .expect("a transaction");
+  let (row, _) = big_row(&t, &t.rec, 30, 30, usize::MAX);
+  define_insert(&mut conn, queries[0], dropped, &row);
+  conn
+    .rollback_transaction(dropped)
+    .expect("ask to roll back");
+  let kept = conn
+    .start_transaction(TransactionHint::Any, Some(&t.def))
+    .expect("a transaction");
+  let (row, train) = big_row(&t, &t.rec, 31, 31, usize::MAX);
+  define_insert(&mut conn, queries[1], kept, &row);
+  let (row, whole) = big_row(&t, &t.rec, 32, 32, 0);
+  define_insert(&mut conn, queries[2], kept, &row);
+  conn.commit_transaction(kept).expect("ask to commit");
+
+  assert_eq!(finish(&mut conn, dropped), CommitState::RolledBack);
+  assert_eq!(finish(&mut conn, kept), CommitState::Committed);
+  conn.close_transaction(dropped).expect("close");
+  conn.close_transaction(kept).expect("close");
+  assert!(read_by_id(&mut conn, &t, 30).is_none(), "never sent");
+  let back = read_by_id(&mut conn, &t, 31).expect("the train went");
+  check_big_row(&t, &back, &train, 31);
+  let back = read_by_id(&mut conn, &t, 32).expect("the request went");
+  check_big_row(&t, &back, &whole, 32);
+  assert_eq!(ids_in_mysql("big_mem"), "31\n32");
 }
 
 // ---- collation ----

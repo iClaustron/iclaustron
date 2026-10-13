@@ -50,6 +50,13 @@ pub const IC_KEY_OP_REQ_LEN: usize = 8;
 pub const IC_KEY_OP_REQ_KEY_SECTION: usize = 0;
 /// Section of a `KEY_OP_REQ` holding the column data.
 pub const IC_KEY_OP_REQ_COLUMN_SECTION: usize = 1;
+/// The longest key a table can have, in words; a longer one in a
+/// request is taken for a malformed request. Verify: chapter 05 §16.1.
+pub const IC_MAX_KEY_WORDS: usize = 1023;
+/// The column data of one request is shorter than this, in words; the
+/// blocks that run the operation refuse it otherwise. Far more than the
+/// largest row, 18 000 words. Verify: chapter 05 §16.1.
+pub const IC_MAX_COLUMN_DATA_WORDS: usize = 32768;
 
 // Operation types.
 /// Read.

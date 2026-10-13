@@ -27,6 +27,10 @@
 //! differs rejects the message rather than swapping it. That is what
 //! makes reading a signal free: the bytes off the socket are already
 //! the words.
+//!
+//! A signal whose sections do not fit one message goes as a train of
+//! fragments, [`encode_train`]; the receiving side joins them in
+//! `ic_apid`'s `fragments`.
 
 use ic_port::err;
 use ic_port::IcError;
@@ -43,6 +47,16 @@ pub const IC_SIGNAL_HEADER_WORDS: usize = 3;
 pub const IC_MAX_MESSAGE_BYTES: usize = 32768;
 /// Largest message in words.
 pub const IC_MAX_MESSAGE_WORDS: usize = IC_MAX_MESSAGE_BYTES / 4;
+/// Most words of sections a message carries: a signal whose sections
+/// come to more goes as a train of fragments, each carrying up to this
+/// many. It is what a 32 KB message holds with room for its header.
+/// Verify: chapter 05 §16.1.
+pub const IC_FRAGMENT_SECTION_WORDS: usize = 8040;
+/// The unit a data node keeps a section in. Every piece of a section in
+/// a train but its last is a whole number of these, so a piece that
+/// begins part-way into a fragment is cut short to one. Any multiple of
+/// 60 satisfies RonDB 26.10. Verify: chapter 05 §16.1.
+pub const IC_SECTION_SEGMENT_WORDS: usize = 60;
 
 // Word 1.
 const WORD1_BYTEORDER_MASK: u32 = 0x8100_0081;
@@ -229,6 +243,11 @@ pub fn encode(
   if sections.len() > IC_MAX_SECTIONS {
     return Err(bad);
   }
+  // A data node drops a signal whose data and sections together come
+  // to more than 25. Verify: chapter 05 §16.1.
+  if data.len() + sections.len() > IC_MAX_SIGNAL_DATA_WORDS {
+    return Err(bad);
+  }
   let mut lens: [usize; IC_MAX_SECTIONS] = [0; IC_MAX_SECTIONS];
   let mut i: usize = 0;
   while i < sections.len() {
@@ -286,6 +305,156 @@ pub fn encode(
     out.push(sum);
   }
   Ok(out.len() - start)
+}
+
+/// Where a signal written by [`encode_train`] lies in `out`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Train {
+  /// Words written, every message of the train together.
+  pub len: usize,
+  /// How many messages: one for a signal that went whole.
+  pub messages: usize,
+  /// Where the last message begins, in words from the first's start.
+  pub last_at: usize,
+  /// Where the signal's own data begins, likewise. It is in the last
+  /// message, the only one that carries it.
+  pub data_at: usize,
+}
+
+/// Write a signal into `out`, whole when its sections come to at most
+/// [`IC_FRAGMENT_SECTION_WORDS`], else as a train of fragments that
+/// the receiver joins (chapter 05 §16.1):
+///
+/// ```text
+///   first, middle   data: the numbers of the sections it carries,
+///                         then the fragment id
+///   last            data: the signal's data, the numbers of the
+///                         sections it carries, then the fragment id
+/// ```
+///
+/// The sections go in order, each fragment carrying up to
+/// [`IC_FRAGMENT_SECTION_WORDS`] of them: the rest of one section, any
+/// sections that fit whole, and the start of the next. Every piece of a
+/// section but its last is a multiple of [`IC_SECTION_SEGMENT_WORDS`].
+/// `fragment_id` names the train to the receiver, together with the
+/// sender block; it is not used for a signal that goes whole.
+///
+/// On error nothing is left in `out`.
+pub fn encode_train(
+  header: &SignalHeader,
+  data: &[u32],
+  sections: &[&[u32]],
+  use_checksum: bool,
+  fragment_id: u32,
+  out: &mut Vec<u32>,
+) -> Result<Train, IcError> {
+  let start = out.len();
+  let written =
+    write_train(header, data, sections, use_checksum, fragment_id, out);
+  if written.is_err() {
+    out.truncate(start);
+  }
+  written
+}
+
+fn write_train(
+  header: &SignalHeader,
+  data: &[u32],
+  sections: &[&[u32]],
+  use_checksum: bool,
+  fragment_id: u32,
+  out: &mut Vec<u32>,
+) -> Result<Train, IcError> {
+  let bad = IcError::new(err::IC_ERROR_INCONSISTENT_DATA);
+  if data.len() > IC_MAX_SIGNAL_DATA_WORDS || sections.len() > IC_MAX_SECTIONS {
+    return Err(bad);
+  }
+  let mut data_at = IC_SIGNAL_HEADER_WORDS;
+  if header.signal_id.is_some() {
+    data_at += 1;
+  }
+  let mut total: usize = 0;
+  for section in sections {
+    total += section.len();
+  }
+  if total <= IC_FRAGMENT_SECTION_WORDS {
+    let len = encode(header, data, sections, use_checksum, out)?;
+    return Ok(Train {
+      len,
+      messages: 1,
+      last_at: 0,
+      data_at,
+    });
+  }
+
+  let start = out.len();
+  let mut fragment = *header;
+  // The section the next piece comes from, and how much of it has gone.
+  let mut section: usize = 0;
+  let mut taken: usize = 0;
+  let mut messages: usize = 0;
+  let mut last_at: usize = 0;
+  while section < sections.len() {
+    let mut numbers = [0u32; IC_MAX_SECTIONS];
+    let mut pieces: [&[u32]; IC_MAX_SECTIONS] = [&[]; IC_MAX_SECTIONS];
+    let mut count: usize = 0;
+    let mut room = IC_FRAGMENT_SECTION_WORDS;
+    while section < sections.len() {
+      let rest = sections[section].len() - taken;
+      // A section's last piece may be of any length; any other is cut
+      // to whole segments, and waits for the next fragment if not even
+      // one fits.
+      let mut take = rest;
+      if rest > room {
+        take = room / IC_SECTION_SEGMENT_WORDS * IC_SECTION_SEGMENT_WORDS;
+        if take == 0 {
+          break;
+        }
+      }
+      numbers[count] = section as u32;
+      pieces[count] = &sections[section][taken..taken + take];
+      count += 1;
+      room -= take;
+      taken += take;
+      if taken < sections[section].len() {
+        break;
+      }
+      section += 1;
+      taken = 0;
+    }
+    let is_last = section == sections.len();
+    let mut words = [0u32; IC_MAX_SIGNAL_DATA_WORDS + IC_MAX_SECTIONS + 1];
+    let mut n: usize = 0;
+    if is_last {
+      words[..data.len()].copy_from_slice(data);
+      n = data.len();
+    }
+    for number in &numbers[..count] {
+      words[n] = *number;
+      n += 1;
+    }
+    words[n] = fragment_id;
+    n += 1;
+    fragment.fragment_state = if messages == 0 {
+      FragmentState::First
+    } else if is_last {
+      FragmentState::Last
+    } else {
+      FragmentState::Middle
+    };
+    let at = out.len() - start;
+    encode(&fragment, &words[..n], &pieces[..count], use_checksum, out)?;
+    if is_last {
+      last_at = at;
+    }
+    messages += 1;
+  }
+  Ok(Train {
+    len: out.len() - start,
+    messages,
+    last_at,
+    data_at: last_at + data_at,
+  })
 }
 
 /// A message read from the wire, pointing into the buffer it arrived
@@ -576,6 +745,242 @@ mod tests {
     let mut out: Vec<u32> = Vec::new();
     let four: [&[u32]; 4] = [&[1], &[2], &[3], &[4]];
     assert!(encode(&header, &[], &four, false, &mut out).is_err());
+  }
+
+  #[test]
+  fn too_many_data_words_with_sections_are_refused() {
+    let header = sample_header();
+    let data = [0u32; IC_MAX_SIGNAL_DATA_WORDS - 1];
+    let mut out: Vec<u32> = Vec::new();
+    assert!(encode(&header, &data, &[&[1]], false, &mut out).is_ok());
+    let mut out: Vec<u32> = Vec::new();
+    assert!(encode(&header, &data, &[&[1], &[2]], false, &mut out).is_err());
+  }
+
+  /// What a receiver makes of a train: the joined signal, and for each
+  /// section the lengths of its pieces in the order they came.
+  struct Joined {
+    states: Vec<FragmentState>,
+    data: Vec<u32>,
+    sections: Vec<Vec<u32>>,
+    pieces: Vec<Vec<usize>>,
+    ids: Vec<u32>,
+    signal_ids: Vec<Option<u32>>,
+  }
+
+  fn join(words: &[u32]) -> Joined {
+    let mut joined = Joined {
+      states: Vec::new(),
+      data: Vec::new(),
+      sections: Vec::new(),
+      pieces: Vec::new(),
+      ids: Vec::new(),
+      signal_ids: Vec::new(),
+    };
+    let mut at: usize = 0;
+    while at < words.len() {
+      let message = decode(&words[at..]).expect("decode");
+      assert!(message.total_words <= IC_MAX_MESSAGE_WORDS);
+      let header = message.header;
+      let count = header.num_sections as usize;
+      assert!(header.data_len as usize + count <= IC_MAX_SIGNAL_DATA_WORDS);
+      joined.states.push(header.fragment_state);
+      joined.signal_ids.push(header.signal_id);
+      let mut data_len = message.data.len();
+      let mut numbers: Vec<usize> = (0..count).collect();
+      if header.fragment_state != FragmentState::Whole {
+        joined.ids.push(message.data[data_len - 1]);
+        data_len -= count + 1;
+        numbers = message.data[data_len..data_len + count]
+          .iter()
+          .map(|n| *n as usize)
+          .collect();
+      }
+      if header.fragment_state == FragmentState::Whole
+        || header.fragment_state == FragmentState::Last
+      {
+        joined.data = message.data[..data_len].to_vec();
+      } else {
+        assert_eq!(data_len, 0, "a fragment before the last has no data");
+      }
+      let mut i: usize = 0;
+      while i < count {
+        let number = numbers[i];
+        while joined.sections.len() <= number {
+          joined.sections.push(Vec::new());
+          joined.pieces.push(Vec::new());
+        }
+        let piece = message.section(i).expect("section");
+        joined.sections[number].extend_from_slice(piece);
+        joined.pieces[number].push(piece.len());
+        i += 1;
+      }
+      at += message.total_words;
+    }
+    assert_eq!(at, words.len());
+    joined
+  }
+
+  /// Sections of the given lengths, each word naming its section and
+  /// place, so that a piece out of place shows.
+  fn numbered_sections(lens: &[usize]) -> Vec<Vec<u32>> {
+    let mut sections: Vec<Vec<u32>> = Vec::new();
+    for (number, len) in lens.iter().enumerate() {
+      sections.push(
+        (0..*len as u32)
+          .map(|i| ((number as u32) << 24) | i)
+          .collect(),
+      );
+    }
+    sections
+  }
+
+  /// Send a signal with sections of these lengths, check that it comes
+  /// back whole and that every piece follows the rules, and return how
+  /// many messages it took.
+  fn round_trip(lens: &[usize], use_checksum: bool, signal_id: bool) -> usize {
+    let mut header = sample_header();
+    if signal_id {
+      header.signal_id = Some(0x5157);
+    }
+    let data = [11u32, 12, 13, 14, 15, 16, 17, 18];
+    let sections = numbered_sections(lens);
+    let slices: Vec<&[u32]> = sections.iter().map(|s| &s[..]).collect();
+    let mut out: Vec<u32> = vec![0xAAAA, 0xBBBB];
+    let train =
+      encode_train(&header, &data, &slices, use_checksum, 77, &mut out)
+        .expect("encode");
+    assert_eq!(out[..2], [0xAAAA, 0xBBBB], "what was there is kept");
+    let words = &out[2..];
+    assert_eq!(train.len, words.len());
+    let joined = join(words);
+    assert_eq!(joined.states.len(), train.messages);
+    assert_eq!(joined.data, data.to_vec());
+    assert_eq!(joined.sections, sections);
+    // The signal's data is where the train says, in the last message.
+    assert_eq!(words[train.data_at..train.data_at + data.len()], data);
+    assert_eq!(
+      peek_message_len(&words[train.last_at..]),
+      Some(words.len() - train.last_at)
+    );
+    let mut sum_of_sections: usize = 0;
+    for len in lens {
+      sum_of_sections += *len;
+    }
+    if sum_of_sections <= IC_FRAGMENT_SECTION_WORDS {
+      assert_eq!(joined.states, vec![FragmentState::Whole]);
+      return 1;
+    }
+    let n = joined.states.len();
+    assert_eq!(joined.states[0], FragmentState::First);
+    assert_eq!(joined.states[n - 1], FragmentState::Last);
+    for state in &joined.states[1..n - 1] {
+      assert_eq!(*state, FragmentState::Middle);
+    }
+    assert!(joined.ids.iter().all(|id| *id == 77));
+    let wanted = if signal_id { Some(0x5157) } else { None };
+    assert!(joined.signal_ids.iter().all(|id| *id == wanted));
+    // Every piece of a section but its last is whole segments.
+    for pieces in &joined.pieces {
+      for len in &pieces[..pieces.len() - 1] {
+        assert_eq!(len % IC_SECTION_SEGMENT_WORDS, 0, "{:?}", pieces);
+        assert!(*len >= IC_SECTION_SEGMENT_WORDS);
+      }
+    }
+    n
+  }
+
+  #[test]
+  fn a_signal_goes_whole_up_to_the_fragment_size() {
+    assert_eq!(
+      round_trip(&[1, IC_FRAGMENT_SECTION_WORDS - 1], false, false),
+      1
+    );
+    assert_eq!(round_trip(&[IC_FRAGMENT_SECTION_WORDS], true, false), 1);
+    assert_eq!(round_trip(&[1, IC_FRAGMENT_SECTION_WORDS], false, false), 2);
+  }
+
+  #[test]
+  fn fragments_fill_to_the_boundaries() {
+    // A one-word key leaves room for 7 980 words of the next section in
+    // the first fragment, and the second takes 8 040.
+    assert_eq!(round_trip(&[1, 16020], false, false), 2);
+    assert_eq!(round_trip(&[1, 16021], false, false), 3);
+    // A 1 023-word key leaves room for 6 960.
+    assert_eq!(round_trip(&[1023, 15000], false, false), 2);
+    assert_eq!(round_trip(&[1023, 15001], false, false), 3);
+    // The largest row there is with the largest key.
+    assert_eq!(round_trip(&[1023, 18000], false, false), 3);
+  }
+
+  #[test]
+  fn a_section_is_cut_on_segments_wherever_it_begins() {
+    // A head piece that is not whole segments, so the next section
+    // begins part-way into the first fragment.
+    let mut out: Vec<u32> = Vec::new();
+    let sections = numbered_sections(&[7, 9000]);
+    let slices: Vec<&[u32]> = sections.iter().map(|s| &s[..]).collect();
+    encode_train(&sample_header(), &[1], &slices, false, 3, &mut out)
+      .expect("encode");
+    let joined = join(&out);
+    assert_eq!(joined.pieces[0], vec![7]);
+    assert_eq!(joined.pieces[1], vec![7980, 1020]);
+    // Less than a segment of room left: the next section waits.
+    assert_eq!(round_trip(&[8000, 100], false, false), 2);
+    out.clear();
+    let sections = numbered_sections(&[8000, 100]);
+    let slices: Vec<&[u32]> = sections.iter().map(|s| &s[..]).collect();
+    encode_train(&sample_header(), &[1], &slices, false, 3, &mut out)
+      .expect("encode");
+    let joined = join(&out);
+    assert_eq!(joined.pieces[1], vec![100]);
+    // But a whole section that fits goes in what room there is.
+    out.clear();
+    let sections = numbered_sections(&[8000, 30, 100]);
+    let slices: Vec<&[u32]> = sections.iter().map(|s| &s[..]).collect();
+    encode_train(&sample_header(), &[1], &slices, false, 3, &mut out)
+      .expect("encode");
+    let joined = join(&out);
+    assert_eq!(joined.states.len(), 2);
+    assert_eq!(joined.pieces[1], vec![30]);
+    assert_eq!(joined.pieces[2], vec![100]);
+  }
+
+  #[test]
+  fn trains_of_every_shape_join_again() {
+    let shapes: [&[usize]; 9] = [
+      &[8041],
+      &[30000],
+      &[59, 8041],
+      &[61, 8040, 61],
+      &[8040, 8040, 8040],
+      &[1, 1, 20000],
+      &[4000, 4100, 0],
+      &[0, 16080],
+      &[7990, 49, 9000],
+    ];
+    for shape in &shapes {
+      for (checksum, signal_id) in [(false, false), (true, false), (true, true)]
+      {
+        round_trip(shape, checksum, signal_id);
+      }
+    }
+  }
+
+  #[test]
+  fn a_train_too_large_to_carry_leaves_nothing() {
+    let header = sample_header();
+    // The last fragment carries the data, the section numbers and the
+    // fragment id, with the sections counted against 25 as well: 24
+    // words of data and one section go whole, but not in a train.
+    let data = [0u32; 24];
+    let attr = vec![2u32; 9000];
+    let mut out: Vec<u32> = vec![5, 6];
+    let result = encode_train(&header, &data, &[&attr], false, 1, &mut out);
+    assert!(result.is_err());
+    assert_eq!(out, vec![5, 6], "the first fragment is taken back");
+    let attr = vec![2u32; 100];
+    assert!(encode_train(&header, &data, &[&attr], false, 1, &mut out).is_ok());
   }
 
   #[test]

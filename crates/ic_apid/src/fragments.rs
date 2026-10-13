@@ -21,13 +21,15 @@
 //! of the original that its number names. Fragments of different
 //! signals are told apart by their sender and fragment id.
 //!
-//! **The joined signal keeps the first fragment's data.** That is the
-//! original's when the kernel's fragmenting send split it, which copies
-//! the data into every piece. A block may also split an answer by hand
-//! and put values of each piece's own in the data: the dictionary's
-//! `LIST_OBJECTS_CONF` carries the count of objects in that piece. A
-//! handler for such a signal takes those values from the joined
-//! sections instead; `list_objects` counts objects by section length.
+//! **The joined signal keeps the last fragment's data**, as a data node
+//! does. A data node's fragmenting send copies the data into every
+//! piece, and our own (`header::encode_train`) puts it in the last
+//! piece only, with nothing but the section numbers and the fragment id
+//! before it. A block may also split an answer by hand and put values
+//! of each piece's own in the data: the dictionary's `LIST_OBJECTS_CONF`
+//! carries the count of objects in that piece. A handler for such a
+//! signal takes those values from the joined sections instead;
+//! `list_objects` counts objects by section length.
 //!
 //! The C does no reassembly on the receiving side at all: iClaustron
 //! only ever sent fragmented signals, for schema changes. This follows
@@ -161,7 +163,9 @@ impl FragmentAssembler {
     if signal.fragment_state != FragmentState::Last {
       return Ok(None);
     }
-    let done = self.in_progress.remove(index);
+    let mut done = self.in_progress.remove(index);
+    done.signal.data.clear();
+    done.signal.data.extend_from_slice(&signal.data[..data_len]);
     Ok(Some(done.signal))
   }
 
@@ -314,6 +318,64 @@ mod tests {
     assert_eq!(whole.sections[0], vec![10]);
     assert_eq!(whole.sections[1], vec![20]);
     assert_eq!(whole.sections[2], vec![30]);
+  }
+
+  #[test]
+  fn the_data_comes_from_the_last_fragment() {
+    // As our own sender lays a train out: nothing but the section
+    // numbers and the fragment id before the last fragment.
+    let mut assembler = FragmentAssembler::new();
+    let first = fragment(FragmentState::First, &[], &[(0, vec![1])], 4);
+    let middle = fragment(FragmentState::Middle, &[], &[(1, vec![2])], 4);
+    let last = fragment(FragmentState::Last, &[7, 8, 9], &[(1, vec![3])], 4);
+    assert!(assembler.add(first).expect("first").is_none());
+    assert!(assembler.add(middle).expect("middle").is_none());
+    let whole = assembler.add(last).expect("last").expect("done");
+    assert_eq!(whole.data, vec![7, 8, 9]);
+    assert_eq!(whole.sections, vec![vec![1], vec![2, 3]]);
+  }
+
+  #[test]
+  fn our_own_trains_join_again() {
+    use ic_signals::header;
+    let head = header::SignalHeader::new(SIG_NO, 0xFA, 0x8003);
+    let data = [21u32, 22, 23, 24, 25, 26, 27, 28];
+    let key = vec![5u32; 1023];
+    let attr: Vec<u32> = (0..18_000).collect();
+    let mut out: Vec<u32> = Vec::new();
+    let train =
+      header::encode_train(&head, &data, &[&key, &attr], true, 9, &mut out)
+        .expect("train");
+    assert_eq!(train.messages, 3);
+    let mut assembler = FragmentAssembler::new();
+    let mut at: usize = 0;
+    let mut whole: Option<ReceivedSignal> = None;
+    while at < out.len() {
+      let message = header::decode(&out[at..]).expect("decode");
+      at += message.total_words;
+      let mut sections: Vec<Vec<u32>> = Vec::new();
+      let mut i: usize = 0;
+      while i < message.header.num_sections as usize {
+        sections.push(message.sections[i].to_vec());
+        i += 1;
+      }
+      let signal = ReceivedSignal {
+        sig_no: message.header.sig_no(),
+        sender_node_id: 1,
+        sender_block: message.header.sender_block,
+        fragment_state: message.header.fragment_state,
+        data: message.data.to_vec(),
+        sections,
+        ..ReceivedSignal::default()
+      };
+      if let Some(joined) = assembler.add(signal).expect("add") {
+        whole = Some(joined);
+      }
+    }
+    let whole = whole.expect("joined");
+    assert_eq!(whole.data, data.to_vec());
+    assert_eq!(whole.sections, vec![key, attr]);
+    assert_eq!(assembler.in_progress(), 0);
   }
 
   #[test]

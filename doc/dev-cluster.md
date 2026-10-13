@@ -66,7 +66,12 @@ cargo xtask test-integration localhost:1186 pk_    # one group
 `$BIN/mysql -uroot -S /Users/mikael/mysql_trees/rondb_2604_main/debug_build/mysql-test/var/tmp/mysqld-13000.sock`.
 
 The tests make their tables through the MySQL server, in the database
-`ic_it`. Without `IC_TEST_MYSQL` only the `connect` group runs; without
+`ic_it`. The `big_rows` group also needs disk data: when the cluster
+has no log file group it makes `ic_it_lg` (an undo file of 32 MB) and
+the tablespace `ic_it_ts` (a data file of 64 MB), and keeps them; a
+cluster has at most one log file group, and one already there is used.
+The files are in each data node's file system directory, so a new MTR
+cluster starts without them. Without `IC_TEST_MYSQL` only the `connect` group runs; without
 `IC_TEST_NDB_MGM` the `failure` group returns without stopping
 anything. The `failure` group stops the second started data node and
 starts it again, which takes as long as the node takes to come back.
