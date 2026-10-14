@@ -294,7 +294,7 @@ Tables, indexes, records:
 `ic_index_def_free(def)`; `ic_table_def_name(def)`;
 `ic_table_def_num_fields(def)`; `ic_table_def_field_id(def, name, &id)`;
 `ic_table_def_field(def, id, &info, sizeof info)` into an
-`IC_FIELD_INFO`;
+`IC_FIELD_INFO`; `ic_field_type_name(type_code)`;
 `ic_index_def_table(def)`, the index's own table;
 `ic_record_create(def, specs, count, row_size, &rec)` with
 `IC_FIELD_SPEC`s; `ic_record_create_default(def, ids, count, &rec)`;

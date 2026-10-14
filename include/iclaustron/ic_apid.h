@@ -347,7 +347,7 @@ typedef struct {
    */
   uint32_t array_kind;
   /*
-   0 in memory, 1 on disk.
+   0 in memory, 1 on disk, 2 the table's default.
    */
   uint32_t storage;
   /*
@@ -523,6 +523,13 @@ bool ic_error_is_temporary(int32_t code);
  A non-null `buf` points to `len` writable bytes.
  */
 size_t ic_error_message(int32_t code, char *buf, size_t len);
+
+/*
+ What the data nodes call a type (`IC_FIELD_INFO.type_code`), for
+ printing: `"Unsigned"`, `"Varchar"` and so on. A static string, never
+ NULL.
+ */
+const char *ic_field_type_name(uint32_t type_code);
 
 /*
  Fill `options`, `size` bytes, with the defaults.

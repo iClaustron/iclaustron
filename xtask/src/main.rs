@@ -6,8 +6,9 @@
 //! Commands:
 //!
 //! - `check`: fmt --check, clippy -D warnings, test, style.
-//! - `style`: check the crates for lines wider than 80 columns and for
-//!   constructs forbidden by doc/rust/07-style-guide.md.
+//! - `style`: check the crates, tools and examples for lines wider than
+//!   80 columns and for constructs forbidden by
+//!   doc/rust/07-style-guide.md.
 //! - `test-integration`: run the ic_apid and ic_capi integration tests
 //!   against the cluster named by IC_TEST_CONNECTSTRING (or the first
 //!   argument); a second argument picks tests by name.
@@ -172,6 +173,7 @@ fn run_style() -> i32 {
   let mut files: Vec<String> = Vec::new();
   collect_rs_files(Path::new("crates"), &mut files);
   collect_rs_files(Path::new("tools"), &mut files);
+  collect_rs_files(Path::new("examples"), &mut files);
   collect_rs_files(Path::new("xtask"), &mut files);
   for file in &files {
     let text = match fs::read_to_string(file) {

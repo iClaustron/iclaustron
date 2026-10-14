@@ -1058,6 +1058,27 @@ finds):
    bad text refused. `cargo xtask test-integration` runs it with the
    `ic_apid` groups.
 
+As built, the examples (2026-10-14; both languages run as meant and
+print the same lines, the C ones compiled with `-Wall -Wextra` without
+a warning; the pipeline at 21 000 rows a second in Rust from a debug
+build, 26 600 in C on the release library): five
+programs in Rust and in C, `examples/README.md`, on a table
+`examples/setup.sql` makes (`ic_ex.t1`: an INT UNSIGNED key, a nullable
+INT, a latin1 VARCHAR and a unique INT). `describe` prints a table's
+fields and a default record's layout; `key_ops` inserts, reads, updates
+and deletes by primary key with the synchronous calls, a refused second
+insert included; `pipeline` writes rows with a number of transactions
+in flight, each query's callback closing its transaction and starting
+the next write; `unique` reads and updates through the unique index;
+`retry` holds a row with an exclusive read so that an update waits out
+the lock wait limit and ends with 266, then lets it go and tries the
+update again. Rust: the package `ic_examples` (`examples/rust`), its
+library the shared helpers, the programs cargo examples; C: one file
+each with `t1.h`, the row as a C struct, a Makefile building against
+the installed library or the tree's own build, and `compile_flags.txt`
+for an editor. `ic_field_type_name` added to the C API for `describe`;
+`cargo xtask style` now checks `examples/` too.
+
 ## Phase 8 — 0.2: the executor, scans and character sets (8–9 weeks)
 
 ### 8.1 The executor (2 weeks)

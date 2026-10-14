@@ -1,0 +1,42 @@
+[package]
+name = "ic_examples"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "The iClaustron examples in Rust (examples/README.md)"
+publish = false
+
+[lints]
+workspace = true
+
+# What the examples share.
+[lib]
+path = "lib.rs"
+
+[[example]]
+name = "describe"
+path = "describe.rs"
+
+[[example]]
+name = "key_ops"
+path = "key_ops.rs"
+
+[[example]]
+name = "pipeline"
+path = "pipeline.rs"
+
+[[example]]
+name = "unique"
+path = "unique.rs"
+
+[[example]]
+name = "retry"
+path = "retry.rs"
+
+[dependencies]
+ic_apid.workspace = true
+ic_port.workspace = true
+ic_signals.workspace = true

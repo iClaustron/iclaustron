@@ -30,6 +30,7 @@ use std::ffi::CString;
 use std::panic::catch_unwind;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 use ic_apid::apid_conn::ApidConnection;
 use ic_apid::apid_global::ApidGlobal;
@@ -54,6 +55,7 @@ use ic_apid::transaction::TransactionHint;
 use ic_port::err;
 use ic_port::IcError;
 use ic_signals::key_ops;
+use ic_signals::table_props;
 
 /// Major version of the C API.
 pub const IC_API_VERSION_MAJOR: u32 = 0;
@@ -260,7 +262,7 @@ pub struct IcFieldInfo {
   pub charset: u32,
   /// How its length is stored: 0 fixed, 1 one length byte, 2 two.
   pub array_kind: u32,
-  /// 0 in memory, 1 on disk.
+  /// 0 in memory, 1 on disk, 2 the table's default.
   pub storage: u32,
   /// May be NULL.
   pub nullable: bool,
@@ -686,6 +688,32 @@ pub unsafe extern "C" fn ic_error_message(
   let text = catch_unwind(|| IcError::new(code).message()).unwrap_or_default();
   // SAFETY: passed on from the caller.
   unsafe { copy_out(&text, buf, len) }
+}
+
+/// Type codes `ic_field_type_name` has a name for, 0 up to this.
+const IC_TYPE_CODES: u32 = 64;
+
+/// The type names as C strings, made on first use.
+static TYPE_NAMES: OnceLock<Vec<CString>> = OnceLock::new();
+
+/// What the data nodes call a type (`IC_FIELD_INFO.type_code`), for
+/// printing: `"Unsigned"`, `"Varchar"` and so on. A static string, never
+/// NULL.
+#[no_mangle]
+pub extern "C" fn ic_field_type_name(type_code: u32) -> *const c_char {
+  let names = TYPE_NAMES.get_or_init(|| {
+    let mut names: Vec<CString> = Vec::with_capacity(IC_TYPE_CODES as usize);
+    let mut code: u32 = 0;
+    while code < IC_TYPE_CODES {
+      names.push(c_string(table_props::type_name(code)));
+      code += 1;
+    }
+    names
+  });
+  match names.get(type_code as usize) {
+    Some(name) => name.as_ptr(),
+    None => c"Undefined".as_ptr(),
+  }
 }
 
 // ---- The global ----
@@ -2567,6 +2595,20 @@ mod tests {
     assert!(read.callback.is_none());
     assert_eq!(write.kind, IC_WRITE_KIND_UPDATE);
     assert_eq!(write.batch_hint, IC_BATCH_HINT_NONE);
+  }
+
+  #[test]
+  fn type_names_are_c_strings() {
+    let name = ic_field_type_name(table_props::IC_TYPE_VARCHAR);
+    // SAFETY: a static C string.
+    let text = unsafe { CStr::from_ptr(name) };
+    assert_eq!(
+      text.to_str().unwrap_or_default(),
+      table_props::type_name(table_props::IC_TYPE_VARCHAR)
+    );
+    // SAFETY: as above.
+    let unknown = unsafe { CStr::from_ptr(ic_field_type_name(1000)) };
+    assert_eq!(unknown.to_str().unwrap_or_default(), "Undefined");
   }
 
   #[test]
