@@ -1792,6 +1792,24 @@ declare. So the stop is a bug in RonDB, not a limit, mended with the
 limits above; the `big_rows` tests fill every part, and stop a data
 node that is not mended.
 
+**A full row in a checkpoint stops a restarting node: a RonDB bug.**
+Seen live (2026-10-14, release build, a full integration run): the
+`big_rows` group left rows of `big_mem` with both parts full, about
+12 230 words, in the table; the local checkpoint taken during the
+`failure` group's first restart of a data node wrote them; its second
+restart of that node stopped the node in start phase 5 with error 2341,
+a failed requirement in `src/kernel/blocks/restore.cpp:2238`. Restoring
+a checkpoint requires each record in the file to be shorter than a page
+of 8 192 words (`include/kernel/ndb_limits.h:302`), and joins a record
+that crosses into the next page by copying it to the start of the first
+(`restore.cpp:2287-2311`); only a table definition may be longer, and is
+copied to a buffer of its own (`:2312-2363`). So a row over 32 KB,
+which the limits above allow, is checkpointed but cannot be restored. A
+system restart restores checkpoints the same way, so it would stop too
+(not seen). A bug in RonDB, not a limit; until it is mended, the
+`failure` group's second restart stops the node whenever the `big_rows`
+group has run first.
+
 ## 14. Node ids, and why nothing is sized by them
 
 The highest node id a cluster allows has risen with every era of the
