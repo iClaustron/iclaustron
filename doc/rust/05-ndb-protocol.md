@@ -975,7 +975,11 @@ column, 0xFC01 write part of a column. Verify:
   `include/kernel/signaldata/TcRollbackRep.hpp:53-59`.
 - `ROW_DATA_REP` (signal 5): row data (column header + data words) for one
   operation, first word = our operation object id; long form in section 0.
-  May arrive **before or after** the matching `KEY_OP_CONF`.
+  May arrive **before or after** the matching `KEY_OP_CONF`. The long
+  form's data is four words: the operation, the transaction id's two
+  words, and the row's length in words, which is section 0's (seen live
+  2026-10-14, all 19 long rows of a `big_rows` capture, joined from up
+  to 136 fragments).
 
   Seen live (2026-09-21) with `ic_read` against RonDB 26.10: a
   committed read of a row by its key, of a row with a NULL column, and

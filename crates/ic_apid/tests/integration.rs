@@ -1088,8 +1088,8 @@ fn uk_keys_of_several_columns_null_and_characters() {
     .expect("row 2");
   assert_eq!(t.get(&row, "id"), "2");
 
-  // CHAR and VARCHAR keys are found, and placed in turn until the
-  // collations are known (chapter 06 §8.6).
+  // CHAR and VARCHAR keys are found, and placed where the data nodes
+  // put the index row (chapter 05 §6.3).
   let c = bind_unique_index(&mut conn, "uk2_c", "uk2");
   let row = read_through(&mut conn, &t, &c, &[("c", "three")])
     .expect("read through uk2_c")
@@ -1100,13 +1100,29 @@ fn uk_keys_of_several_columns_null_and_characters() {
     .expect("read through uk2_v")
     .expect("row 1");
   assert_eq!(t.get(&row, "id"), "1");
-  let key_rec = record_over(&t, &["v"]);
-  let mut key = vec![0; key_rec.row_size() as usize];
-  put_into(&t, &key_rec, &mut key, "v", "uno");
-  assert_eq!(
-    conn.hint_for_unique_key(&v, &key_rec, &key),
-    TransactionHint::Any
-  );
+  for (index, column, value) in [(&c, "c", "three"), (&v, "v", "uno")] {
+    let key_rec = record_over(&t, &[column]);
+    let mut key = vec![0; key_rec.row_size() as usize];
+    put_into(&t, &key_rec, &mut key, column, value);
+    let own = index.as_table();
+    let own_id = own.field_id(column).expect("in the index");
+    let own_rec =
+      Record::default_for(own, Some(&[own_id][..])).expect("a record");
+    let mut own_key = vec![0; own_rec.row_size() as usize];
+    let position = own_rec.position_of(own_id).expect("in the record");
+    text_row::put_value(&own_rec, position, value, &mut own_key)
+      .expect("put a value");
+    let theirs = key_op::read_partition(&mut conn, &own_rec, &own_key)
+      .expect("ask where the index row is")
+      .expect("the index row is there");
+    assert_eq!(
+      conn.hint_for_unique_key(index, &key_rec, &key),
+      TransactionHint::Partition(theirs),
+      "{} = {:?}",
+      column,
+      value
+    );
+  }
 }
 
 #[test]

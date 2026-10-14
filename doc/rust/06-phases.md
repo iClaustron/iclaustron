@@ -959,6 +959,23 @@ fourth number (`2 1 1 0` to `2 1 1 4` for the five links from node 2
 to node 1); both data nodes link to the management server (node 3)
 through port 1186 with `transporter connect`.
 
+Fragments put together (2026-10-14). On the first pass each fragment's
+pieces are appended to the section their number names, in a train kept
+per link direction by sender block and fragment id; at the last
+fragment the joined signal is made as a whole message, the last
+fragment's data and the joined sections, shown as a data source of its
+own and decoded as any whole signal, with the frames its fragments came
+in (`ndb.train.fragments`, `ndb.train.frame`). Earlier fragments link
+to the frame that joins them (`ndb.joined_in`); one whose train began
+before the capture is flagged (`ndb.fragment.unjoined`). Seen live on a
+capture of the `big_rows` group: all 30 trains joined, none left over:
+9 `KEY_OP_REQ` and 2 `UNIQUE_OP_REQ` of ours, of two and three
+fragments, the largest 16 394 words with every column decoded; and 19
+`ROW_DATA_REP` from a debug data node, in pieces of 120 words, up to
+136 fragments, each row what the request before it wrote. The long
+`ROW_DATA_REP`'s fourth data word, the row's length, is now shown as
+such (`ndb.row_len`) rather than read as a column.
+
 Exit for the phase: the groups `connect`, `dict`, `pk`, `uk`, `types`,
 `failure`, `blob_guard`, `timeout` and `big_rows` pass, `cargo xtask
 names` is clean, and the dissector decodes every signal phase 6 sends.
