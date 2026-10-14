@@ -30,13 +30,43 @@ use std::process::Stdio;
 
 mod names;
 
+/// A path the user gave, made absolute against the directory the
+/// command was started in, before it moves to the workspace's root.
+fn absolute(from: &Path, given: &str) -> String {
+  let path = Path::new(given);
+  if path.is_absolute() {
+    return given.to_string();
+  }
+  from.join(path).to_string_lossy().to_string()
+}
+
 fn main() {
-  let args: Vec<String> = std::env::args().collect();
-  let cmd: &str = if args.len() > 1 {
-    args[1].as_str()
+  let mut args: Vec<String> = std::env::args().collect();
+  let cmd: String = if args.len() > 1 {
+    args[1].clone()
   } else {
-    "help"
+    "help".to_string()
   };
+  // Every command works from the workspace's root, wherever cargo was
+  // started in it; a path argument is made absolute first.
+  if let Ok(started_in) = std::env::current_dir() {
+    let takes_path = cmd == "install" || cmd == "names";
+    if takes_path && args.len() > 2 && !args[2].starts_with('-') {
+      args[2] = absolute(&started_in, &args[2]);
+    }
+  }
+  let root = match Path::new(env!("CARGO_MANIFEST_DIR")).parent() {
+    Some(root) => root.to_path_buf(),
+    None => {
+      eprintln!("cannot find the workspace's root");
+      std::process::exit(1);
+    }
+  };
+  if let Err(e) = std::env::set_current_dir(&root) {
+    eprintln!("cannot go to {}: {}", root.display(), e);
+    std::process::exit(1);
+  }
+  let cmd: &str = cmd.as_str();
   let rest: &[String] = if args.len() > 2 { &args[2..] } else { &[] };
   let code: i32 = match cmd {
     "check" => run_check(),

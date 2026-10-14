@@ -509,8 +509,10 @@ uint32_t ic_error_severity(int32_t code);
 
 /*
  True if the same request may well succeed if tried again, as after
- a node failure or an overload. 4012 is not: the transaction may have
- committed.
+ a node failure or an overload. An unknown outcome, 4012 among them,
+ counts too, but the transaction may have committed: a write is tried
+ again only once it is known not to have, or when doing it twice does
+ no harm.
  */
 bool ic_error_is_temporary(int32_t code);
 

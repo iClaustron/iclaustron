@@ -194,8 +194,11 @@ operating system errors, others NDB codes as the data nodes report
 them. Every error has a category (`User`, `Internal`, `External`), a
 severity (`Warning`, `Temporary`, `Error`, `Stop`), and a text;
 `is_temporary()` says whether the same request may well succeed if
-tried again, as for a node failure or an overload. 4012 is not
-temporary: the transaction may have committed.
+tried again, as for a node failure or an overload. An unknown outcome,
+4012 among them, counts as temporary, as NDB classes it: the request
+may be tried again, but the transaction may also have committed, so a
+write is tried again only once the application knows it did not, or
+when doing it twice does no harm (user guide, "When to try again").
 
 ### The limits of 0.1
 

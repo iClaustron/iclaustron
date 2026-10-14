@@ -666,8 +666,10 @@ pub extern "C" fn ic_error_severity(code: i32) -> u32 {
 }
 
 /// True if the same request may well succeed if tried again, as after
-/// a node failure or an overload. 4012 is not: the transaction may have
-/// committed.
+/// a node failure or an overload. An unknown outcome, 4012 among them,
+/// counts too, but the transaction may have committed: a write is tried
+/// again only once it is known not to have, or when doing it twice does
+/// no harm.
 #[no_mangle]
 pub extern "C" fn ic_error_is_temporary(code: i32) -> bool {
   code != 0 && IcError::new(code).is_temporary()
@@ -690,17 +692,16 @@ pub unsafe extern "C" fn ic_error_message(
   unsafe { copy_out(&text, buf, len) }
 }
 
-/// Type codes `ic_field_type_name` has a name for, 0 up to this.
-const IC_TYPE_CODES: u32 = 64;
-
-/// The type names as C strings, made on first use.
-static TYPE_NAMES: OnceLock<Vec<CString>> = OnceLock::new();
-
 /// What the data nodes call a type (`IC_FIELD_INFO.type_code`), for
 /// printing: `"Unsigned"`, `"Varchar"` and so on. A static string, never
 /// NULL.
 #[no_mangle]
 pub extern "C" fn ic_field_type_name(type_code: u32) -> *const c_char {
+  // Kept in here, out of the header generator's sight.
+  /// Type codes with a name, 0 up to this.
+  const IC_TYPE_CODES: u32 = 64;
+  /// The type names as C strings, made on first use.
+  static TYPE_NAMES: OnceLock<Vec<CString>> = OnceLock::new();
   let names = TYPE_NAMES.get_or_init(|| {
     let mut names: Vec<CString> = Vec::with_capacity(IC_TYPE_CODES as usize);
     let mut code: u32 = 0;

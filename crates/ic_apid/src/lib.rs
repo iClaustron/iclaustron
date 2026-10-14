@@ -9,6 +9,48 @@
 //! The library proper: connecting to the data nodes of a RonDB cluster,
 //! keeping those connections alive, and running transactions over them.
 //!
+//! # Using it
+//!
+//! Start the library with
+//! [`ApidGlobal::connect`](apid_global::ApidGlobal::connect), make a
+//! connection per thread, bind a table, describe its rows with a
+//! [`Record`](record::Record), and read and write rows by key: one at a
+//! time with the synchronous calls of [`key_op`], or many at once with
+//! queries defined on transactions, sent together and completed by
+//! [`poll`](apid_conn::ApidConnection::poll), each through the executed
+//! list or a callback ([`transaction`], [`query`]).
+//!
+//! ```no_run
+//! use ic_apid::apid_global::ApidGlobal;
+//! use ic_apid::apid_global::GlobalOptions;
+//! use ic_apid::key_op;
+//! use ic_apid::record::Record;
+//! use ic_port::IcError;
+//!
+//! fn main() -> Result<(), IcError> {
+//!   let global = ApidGlobal::connect(
+//!     "localhost:1186",
+//!     Some("my_app"),
+//!     &GlobalOptions::default(),
+//!   )?;
+//!   global.wait_for_all_started(30_000);
+//!   let mut conn = global.create_connection()?;
+//!   let table = conn.table_bind("ic_ex", "t1")?;
+//!   let rec = Record::default_for(&table, None)?;
+//!   // The key goes into its field, at the offset the record gives.
+//!   let key = vec![0u8; rec.row_size() as usize];
+//!   let mut row = vec![0u8; rec.row_size() as usize];
+//!   let found =
+//!     key_op::read_committed(&mut conn, &rec, &key, &rec, &mut row)?;
+//!   println!("found: {}", found);
+//!   Ok(())
+//! }
+//! ```
+//!
+//! The user guide, `doc/user-guide.md`, explains records, queries,
+//! transactions, callbacks, errors and when to try again, and node
+//! failure; `examples/rust` has five whole programs.
+//!
 //! Threading model (doc/rust/02-architecture.md): receive threads only
 //! receive signals and route them to the user thread that owns the
 //! query; user threads execute them in `poll`. That is the deliberate

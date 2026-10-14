@@ -1079,6 +1079,20 @@ the installed library or the tree's own build, and `compile_flags.txt`
 for an editor. `ic_field_type_name` added to the C API for `describe`;
 `cargo xtask style` now checks `examples/` too.
 
+As built, the user guide (2026-10-14): `doc/user-guide.md` covers
+what a program needs, connecting, tables, indexes and records with how
+each type is kept in a row, queries and transactions, the synchronous
+and asynchronous styles, callbacks, errors with a table of those to
+know and when to try again, node failure, performance and the limits
+of 0.1, quoting the examples in both languages. `ic_apid`'s crate docs
+gained a "Using it" section with an example `cargo test` compiles; the
+README points to the guide. Found while writing it: 4012 and the other
+unknown outcomes are temporary, as NDB classes them; chapter 04 and the
+header said otherwise, and now say that a write is tried again only
+once it is known not to have committed. The documented header (every
+C function's ownership, lifetimes, threads and errors) is still to
+review.
+
 ## Phase 8 — 0.2: the executor, scans and character sets (8–9 weeks)
 
 ### 8.1 The executor (2 weeks)
