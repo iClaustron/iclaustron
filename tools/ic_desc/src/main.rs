@@ -44,6 +44,7 @@
 //! every contraction's, one a line, to compare with another source.
 
 use ic_apic::mgm_client;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use ic_apid::apid_conn::ApidConnection;
@@ -396,10 +397,13 @@ fn describe_all(
     }
   };
   let mut code = 0;
+  // Collation names by number, asked of the data nodes once each.
+  let mut names: BTreeMap<u32, String> = BTreeMap::new();
   for table in tables {
     match conn.table_bind(database, table) {
       Ok(def) => {
-        print_table(def.info(), def.hash_map());
+        name_collations(&mut conn, def.info(), &mut names);
+        print_table(def.info(), def.hash_map(), &names);
         print_indexes(&mut conn, database, table, def.info());
         print_own_lines(def.info(), def.hash_map());
         if record {
@@ -515,7 +519,32 @@ fn watch_tables(
   }
 }
 
-fn print_table(table: &TableProps, map: Option<&HashMapProps>) {
+/// Learn the name of every collation the table's columns use that is
+/// not known yet, from the data nodes; a number they do not describe
+/// stays a number.
+fn name_collations(
+  conn: &mut ApidConnection,
+  table: &TableProps,
+  names: &mut BTreeMap<u32, String>,
+) {
+  for attr in &table.attributes {
+    if attr.charset == 0 || names.contains_key(&attr.charset) {
+      continue;
+    }
+    let name =
+      match collation_client::describe_by_number(conn, attr.charset, false) {
+        Ok(found) => found.desc.collation_name.clone(),
+        Err(_) => format!("charset {}", attr.charset),
+      };
+    names.insert(attr.charset, name);
+  }
+}
+
+fn print_table(
+  table: &TableProps,
+  map: Option<&HashMapProps>,
+  names: &BTreeMap<u32, String>,
+) {
   // The lines follow the reference's own table description tool in
   // what they show and in which order, in our words, so that the two
   // can be compared by meaning. Ours alone come at the end.
@@ -573,7 +602,7 @@ fn print_table(table: &TableProps, map: Option<&HashMapProps>) {
   }
   println!("-- Attributes --");
   for attr in &table.attributes {
-    println!("{}", describe_attribute(attr));
+    println!("{}", describe_attribute(attr, table.table_id, names));
   }
 }
 
@@ -672,8 +701,12 @@ fn yes_no(on: bool) -> &'static str {
 
 /// One column as the reference's tool shows it: name, type with its
 /// sizes, then flags.
-fn describe_attribute(attr: &ColumnProps) -> String {
-  let mut line = format!("{} {}", attr.name, type_with_sizes(attr));
+fn describe_attribute(
+  attr: &ColumnProps,
+  table_id: u32,
+  names: &BTreeMap<u32, String>,
+) -> String {
+  let mut line = format!("{} {}", attr.name, type_with_sizes(attr, names));
   // A primary key column cannot be NULL, so the reference says only
   // that it is a key.
   if attr.primary_key {
@@ -699,6 +732,19 @@ fn describe_attribute(attr: &ColumnProps) -> String {
   }
   if attr.dynamic {
     line.push_str(" DYNAMIC");
+  }
+  if attr.is_blob() {
+    // Version 2 keeps the head in the variable part; the parts are rows
+    // of a table of their own, named by table and column.
+    let version = if attr.array_kind == table_props::IC_ARRAY_KIND_FIXED {
+      1
+    } else {
+      2
+    };
+    line.push_str(&format!(
+      " blob=v{} parts=NDB$BLOB_{}_{}",
+      version, table_id, attr.column_id
+    ));
   }
   if !attr.default_value.is_empty() {
     line.push_str(" DEFAULT ");
@@ -777,12 +823,47 @@ fn signed_of(bytes: &[u8]) -> i64 {
   ((raw << shift) as i64) >> shift
 }
 
-fn type_with_sizes(attr: &ColumnProps) -> String {
-  let name = table_props::type_name(attr.type_code);
-  if attr.is_char_type() {
-    return format!("{}({};charset {})", name, attr.length, attr.charset);
+/// The collation's name, or its number when the data nodes did not
+/// describe it.
+fn collation_text(charset: u32, names: &BTreeMap<u32, String>) -> String {
+  match names.get(&charset) {
+    Some(name) => name.clone(),
+    None => format!("charset {}", charset),
   }
+}
+
+fn type_with_sizes(
+  attr: &ColumnProps,
+  names: &BTreeMap<u32, String>,
+) -> String {
+  let name = table_props::type_name(attr.type_code);
   let t = attr.type_code;
+  // A blob's sizes: inline in the row, of each part, and the stripe,
+  // kept in precision, scale and length.
+  if t == table_props::IC_TYPE_BLOB {
+    return format!(
+      "{}({},{},{})",
+      name, attr.precision, attr.scale, attr.length
+    );
+  }
+  if t == table_props::IC_TYPE_TEXT {
+    return format!(
+      "{}({},{},{};{})",
+      name,
+      attr.precision,
+      attr.scale,
+      attr.length,
+      collation_text(attr.charset, names)
+    );
+  }
+  if attr.is_char_type() {
+    return format!(
+      "{}({};{})",
+      name,
+      attr.length,
+      collation_text(attr.charset, names)
+    );
+  }
   if t == table_props::IC_TYPE_DECIMAL
     || t == table_props::IC_TYPE_DECIMALUNSIGNED
     || t == table_props::IC_TYPE_OLDDECIMAL

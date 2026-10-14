@@ -14,8 +14,8 @@ design behind both is `doc/rust/04-api-design.md`.
 ## 1. What you need
 
 - **A RonDB 26.10 cluster** with a free API slot for each program that
-  connects: an `[api]` section in the cluster's configuration without a
-  `NodeId`, or one with the node id the program asks for.
+  connects: an `[api]` section in the cluster's configuration that
+  names no node id, or one that names the id the program asks for.
 - **Network access** from the program to a management server (port
   1186 by default) and to every data node's port, which the management
   server tells the library at run time.

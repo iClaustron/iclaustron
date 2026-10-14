@@ -1125,7 +1125,8 @@ release-built cluster into one log: `ic_hashbench` against
 bytes, whose checks must agree; `ic_bench` reads at 1 and 8 threads,
 8 with `--force` and with two receive threads, and updates; `ic_bench`
 built with `count-allocs`, allocations per operation; and
-`flexAsynch -t 8 -p 400 -c 1`, like for like with the 8-thread run.
+the reference's benchmark at eight threads, 400 one-read transactions
+in flight each, like for like with the 8-thread run.
 
 The first run (2026-10-14, the author's Mac, two release data nodes,
 100 000 keys, 10 s each):
@@ -1141,7 +1142,7 @@ The first run (2026-10-14, the author's Mac, two release data nodes,
   `--force`: 5 560 000, 686 ns, so the adaptive send pays its way. Eight
   with two receive threads: 5 958 000, 760 ns, so one is right with two
   data nodes here. Updates, one thread: 467 000 at 850 ns.
-- **The reference.** `flexAsynch`, eight threads, 400 in flight each:
+- **The reference.** Its benchmark, eight threads, 400 in flight each:
   2 565 000 reads a second, against our 6 098 000. Its rounds of 400 are
   sent and waited for whole where ours overlap two batches of 200, so
   the like-for-like number is ours at `--batch 400 --depth 1`, added to
@@ -1153,9 +1154,10 @@ The first run (2026-10-14, the author's Mac, two release data nodes,
 The second run (2026-10-14, the same machine and cluster), with the
 like-for-like run and the reference's CPU:
 - **Like for like.** Ours at eight threads in rounds of 400, sent and
-  waited for as `flexAsynch` does (`--batch 400 --depth 1`): 5 617 000
-  reads a second at 598 ns of client CPU each. `flexAsynch`: 2 639 000,
-  with 60.8 s of CPU over its 15 s of reads, about 1 500 ns each. Twice
+  waited for as the reference's benchmark does (`--batch 400 --depth
+  1`): 5 617 000 reads a second at 598 ns of client CPU each. The
+  reference's: 2 639 000, with 60.8 s of CPU over its 15 s of reads,
+  about 1 500 ns each. Twice
   the reads for about two fifths of the CPU per read; each side used
   some 3.8 cores. The 0.1 criterion, within 20% of the reference, is
   met with room to spare.
@@ -1171,6 +1173,20 @@ like-for-like run and the reference's CPU:
 - **The key hash.** As in the first run.
 
 Nothing the pass found called for a change to the library.
+
+The 0.1 criteria (chapter 01), where each stands (2026-10-14):
+
+| Criterion | Evidence | Stands |
+|---|---|---|
+| Connects, takes a node id, heartbeats, survives a data node restart | `connect` and `failure` groups | met |
+| ... and a management server restart | `failure_a_management_server_gone_for_a_while_is_found_again`, new: a data node restarts and the management server is gone meanwhile, paused, or restarted by `IC_TEST_MGM_RESTART`; work goes on, and our node links to the data node again only by finding the management server again. (First tried with the management client restarting the server: under MTR it exits and is not started again.) | met |
+| Describes any MySQL table as the reference's tool does | `tools/desc_compare.sh`: every column type, a unique and an ordered index, the reference's tool and `ic_desc` diffed with our labels mapped onto theirs. Every fact agreed but collation names, shown by number, and blob columns' sizes, version and parts table, not shown; `ic_desc` now asks the data nodes for collation names and prints the blob details (inline size, part size and stripe from precision, scale and length), and the two agree on every line | met |
+| Primary and unique key operations, commit and rollback, from Rust and C, checked through MySQL | `pk`, `uk`, `c_api` groups | met |
+| A node killed mid-transaction: a temporary error, retried elsewhere | `failure_a_stopped_coordinator_fails_the_transaction_and_a_retry_commits` | met |
+| Every row size; 4012; blob deletes refused; unique keys refuse NULL and are placed by the index | `big_rows`, `timeout`, `blob_guard`, `uk` groups | met |
+| `cargo xtask names` finds no RonDB name | the run of 2026-10-14, after naming the reference's programs in our own words | met |
+| Read throughput within 20% of the reference, 8 threads | the performance pass: twice the reference's | met |
+| Libraries, documented header, user guide, examples in Rust and C | `ic_capi`, the header review, `doc/user-guide.md`, `examples/` | met |
 
 ## Phase 8 — 0.2: the executor, scans and character sets (8–9 weeks)
 

@@ -73,8 +73,12 @@ cluster has at most one log file group, and one already there is used.
 The files are in each data node's file system directory, so a new MTR
 cluster starts without them. Without `IC_TEST_MYSQL` only the `connect` group runs; without
 `IC_TEST_NDB_MGM` the `failure` group returns without stopping
-anything. The `failure` group stops the second started data node and
-starts it again, which takes as long as the node takes to come back.
+anything. The `failure` group restarts the second started data node
+twice, the second time with the management server gone for a while,
+which takes as long as the nodes take to come back. Gone means paused
+with SIGSTOP (it needs `lsof`), unless `IC_TEST_MGM_RESTART` gives a
+command that restarts it: under MTR a management server told to
+restart itself exits, and nothing starts it again.
 
 The tools take the same connectstring:
 

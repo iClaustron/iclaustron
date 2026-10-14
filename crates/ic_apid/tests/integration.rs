@@ -17,9 +17,13 @@
 //!   makes, and they check what they wrote through it too.
 //! - `IC_TEST_NDB_MGM`: the command that runs the management client,
 //!   with its connect string (`-c localhost:1186`), for the `failure`
-//!   group, which stops a data node and starts it again. Set, it also
+//!   group, which restarts a data node twice, the second time with the
+//!   management server gone for a while. Set, it also
 //!   lets the `timeout` group stop a data node's process for a few
 //!   seconds with SIGSTOP, which needs `lsof` and the node's fixed port.
+//! - `IC_TEST_MGM_RESTART`: a command that restarts the management
+//!   server, for the `failure` group to use rather than pausing it with
+//!   SIGSTOP, which needs `lsof` and the server's port.
 //! - `IC_TEST_RECEIVE_THREADS`: how many receive threads to start, one
 //!   if not set, so that the suite can run with the nodes' links shared
 //!   out over several.
@@ -115,6 +119,12 @@ fn cluster() -> Option<Cluster> {
 /// As [`cluster`], with transactions that give up waiting for their
 /// replies after `reply_wait_ms`, or when the configuration says if 0.
 fn cluster_with_reply_wait(reply_wait_ms: u32) -> Option<Cluster> {
+  cluster_with(reply_wait_ms, 30_000)
+}
+
+/// As [`cluster_with_reply_wait`], with a management server given
+/// `mgm_timeout_ms` to answer once the global runs.
+fn cluster_with(reply_wait_ms: u32, mgm_timeout_ms: u32) -> Option<Cluster> {
   let text = match std::env::var("IC_TEST_CONNECTSTRING") {
     Ok(text) => text,
     Err(_) => {
@@ -149,7 +159,7 @@ fn cluster_with_reply_wait(reply_wait_ms: u32) -> Option<Cluster> {
       config,
       mgm,
       connect_string,
-      30_000,
+      mgm_timeout_ms,
       Some("ic_it"),
       &options,
     );
@@ -1877,6 +1887,94 @@ fn failure_a_stopped_coordinator_fails_the_transaction_and_a_retry_commits() {
 }
 
 /// A copy of `row` with `val` changed.
+/// The port of the management server the tests connect to.
+fn mgm_port() -> u16 {
+  let text = std::env::var("IC_TEST_CONNECTSTRING").unwrap_or_default();
+  let first = text.split(',').next().unwrap_or_default();
+  match first.rsplit_once(':') {
+    Some((_, port)) => port.parse().unwrap_or(1186),
+    None => 1186,
+  }
+}
+
+#[test]
+fn failure_a_management_server_gone_for_a_while_is_found_again() {
+  // A management server that answers late is given up on in 2 s rather
+  // than 30, so that the test does not wait out the default.
+  let cluster = match cluster_with(0, 2_000) {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_tables().is_none() {
+    return;
+  }
+  if std::env::var("IC_TEST_NDB_MGM").is_err() {
+    eprintln!("skipped: IC_TEST_NDB_MGM is not set");
+    return;
+  }
+  let started = cluster.global.started_nodes();
+  if started.len() < 2 {
+    eprintln!("skipped: the failure group needs two started data nodes");
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let t = bind(&mut conn, "pk");
+  write_pk(&mut conn, &t, key_ops::IC_OP_WRITE, 60, "1", "sixty")
+    .expect("a write before");
+
+  // A data node restarts. To link to it again our node has to ask the
+  // management server for its port, and the management server is gone
+  // for a while just then: restarted by the operator's command if
+  // IC_TEST_MGM_RESTART gives one, else paused with SIGSTOP and let go.
+  let victim = started[1];
+  eprintln!("restarting data node {}", victim);
+  mgm_client(&format!("{} RESTART", victim));
+  match std::env::var("IC_TEST_MGM_RESTART") {
+    Ok(command) => {
+      eprintln!("restarting the management server: {}", command);
+      run_shell(&command, "");
+    }
+    Err(_) => {
+      let pid = match listener_pid(mgm_port()) {
+        Some(pid) => pid,
+        None => panic!("nothing listens on port {}", mgm_port()),
+      };
+      eprintln!("pausing the management server, process {}", pid);
+      let paused = Stopped::stop(&pid);
+      // The links to the data nodes do not go through it: work goes on.
+      write_pk(&mut conn, &t, key_ops::IC_OP_WRITE, 61, "2", "sixty-one")
+        .expect("a write while it is gone");
+      let row = read_by_id(&mut conn, &t, 60).expect("a read while it is gone");
+      assert_eq!(t.get(&row, "val"), "1");
+      // Long enough for our node to give up on it more than once.
+      std::thread::sleep(std::time::Duration::from_secs(6));
+      drop(paused);
+      eprintln!("the management server runs again");
+    }
+  }
+  let start = time::gethrtime();
+  while cluster.global.started_nodes().len() < started.len() {
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let waited = time::millis_elapsed(start, time::gethrtime());
+    if waited >= IC_IT_RESTART_WAIT_MS {
+      let show = mgm_client("show").unwrap_or_default();
+      panic!("data node {} was not linked again:\n{}", victim, show);
+    }
+  }
+  eprintln!("data node {} is linked again", victim);
+  write_pk(&mut conn, &t, key_ops::IC_OP_WRITE, 61, "2", "sixty-one")
+    .expect("a write after");
+  write_pk(&mut conn, &t, key_ops::IC_OP_WRITE, 62, "3", "sixty-two")
+    .expect("a write after");
+  let row = read_by_id(&mut conn, &t, 61).expect("a read after");
+  assert_eq!(t.get(&row, "name"), "'sixty-one'");
+  let seen = mysql(&format!(
+    "SELECT id, val FROM {}.pk WHERE id BETWEEN 60 AND 62 ORDER BY id",
+    IC_IT_DB
+  ));
+  assert_eq!(seen, Some("60\t1\n61\t2\n62\t3".to_string()));
+}
+
 fn row_with_val(t: &Table, row: &[u8], val: &str) -> Vec<u8> {
   let mut copy = row.to_vec();
   t.put(&mut copy, "val", val);
