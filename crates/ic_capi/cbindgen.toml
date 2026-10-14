@@ -15,6 +15,71 @@ header = """/* iClaustron Data API — C header.
  * Copyright (c) 2026 Hopsworks and/or its affiliates.
  * Licensed under the MIT License. See LICENSE in the repository root. */"""
 
+after_includes = """
+
+/*
+ * How every function behaves
+ * --------------------------
+ *
+ * Results. A function that can fail returns 0, or an error code; what
+ * it makes it gives through an out pointer, written only when it
+ * returns 0. ic_error_message() gives a code's text, and
+ * ic_error_is_temporary() whether to try again (doc/user-guide.md,
+ * "When to try again"). Codes from 7000 up are iClaustron's (the
+ * IC_ERROR_* defines below name those a program checks), small positive
+ * codes the operating system's, the others NDB's (IC_NDB_ERROR_*).
+ * Each function's "Errors" names the codes particular to it. Any
+ * function that talks to the cluster may also fail as the cluster
+ * does: IC_ERROR_LINK_LOST, IC_ERROR_NO_STARTED_DATA_NODE,
+ * IC_ERROR_TIMEOUT, or one of NDB's temporary errors.
+ *
+ * Handles. IC_APID_GLOBAL, IC_APID_CONNECTION, IC_TABLE_DEF,
+ * IC_INDEX_DEF and IC_RECORD are made by one function and given back to
+ * their _free; the caller owns each until then. A connection is freed
+ * before its global; a table, index or record handle may outlive the
+ * connection that made it, and a query keeps what it needs of its
+ * records. A NULL handle or out pointer gives IC_ERROR_NULL_POINTER; a
+ * handle freed, or never made, is undefined behaviour.
+ *
+ * Ids. A query (IC_QUERY_ID) and a transaction (IC_TRANS_ID) are named
+ * by an id in their connection. An id that names nothing any more,
+ * freed or closed, is refused with an error, never followed.
+ *
+ * Rows. A query owns its rows: ic_apid_query_key_row() and
+ * ic_apid_query_attr_row() give pointers valid until the query is
+ * freed, aligned to a byte and no more, so copy a struct in and out
+ * with memcpy. The program fills the rows before it defines the query
+ * and reads the attribute row once it has completed; between the two
+ * they are the library's. The synchronous calls take the program's own
+ * rows, and copy.
+ *
+ * Strings. Strings in are NUL-terminated UTF-8, and copied. A string
+ * out, a table's or a field's name, lives as long as the handle it came
+ * from; an error's text is copied into the caller's buffer.
+ *
+ * Structs with a size. IC_GLOBAL_OPTIONS, IC_READ_KEY_ARGS and
+ * IC_WRITE_KEY_ARGS are filled by their _init(&s, sizeof s) before the
+ * program sets what it wants; IC_FIELD_INFO is given with its size. A
+ * later release adds fields at the end.
+ *
+ * Threads. The functions that take no handle (ic_api_version,
+ * ic_error_*, ic_field_type_name, the _init functions) may be called
+ * from any thread. So may those on a global, and on table, index and
+ * record handles, at the same time, except their _free. A connection,
+ * with its queries and transactions, is used by one thread at a time;
+ * it may change threads between calls. A callback runs on the thread
+ * that polls, inside the poll.
+ *
+ * Panics. A panic inside the library returns IC_ERROR_INTERNAL_PANIC;
+ * the connection it went through is unusable from then on, and every
+ * call on it but its _free returns the same.
+ *
+ * "Safety". Each function's Safety paragraph says what its pointers
+ * must be: the conditions on a C caller, as the Rust the library is
+ * written in names them.
+ */
+"""
+
 [export]
 prefix = ""
 # Named in the argument structs only by its shape; exported by name too.

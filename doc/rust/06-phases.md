@@ -1089,9 +1089,18 @@ gained a "Using it" section with an example `cargo test` compiles; the
 README points to the guide. Found while writing it: 4012 and the other
 unknown outcomes are temporary, as NDB classes them; chapter 04 and the
 header said otherwise, and now say that a write is tried again only
-once it is known not to have committed. The documented header (every
-C function's ownership, lifetimes, threads and errors) is still to
-review.
+once it is known not to have committed.
+
+The header reviewed (2026-10-14): an overview at its top gives the
+rules every function keeps (results and error codes, handles and who
+frees them, ids, rows owned by queries and their alignment, strings,
+structs with a size, threads, panics, what a "Safety" paragraph is);
+every function that can fail names the errors particular to it, with
+where it blocks, what it hands over and how long that lives; the
+error codes a program checks are defines of their own
+(`IC_ERROR_NO_SUCH_TABLE`, `IC_ERROR_TRANSACTION_ACTIVE`,
+`IC_NDB_ERROR_LOCK_TIMEOUT` and so on), each checked against the
+library's by a unit test.
 
 ## Phase 8 — 0.2: the executor, scans and character sets (8–9 weeks)
 

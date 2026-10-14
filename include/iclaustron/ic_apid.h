@@ -17,6 +17,69 @@
 #include <stdlib.h>
 
 /*
+ * How every function behaves
+ * --------------------------
+ *
+ * Results. A function that can fail returns 0, or an error code; what
+ * it makes it gives through an out pointer, written only when it
+ * returns 0. ic_error_message() gives a code's text, and
+ * ic_error_is_temporary() whether to try again (doc/user-guide.md,
+ * "When to try again"). Codes from 7000 up are iClaustron's (the
+ * IC_ERROR_* defines below name those a program checks), small positive
+ * codes the operating system's, the others NDB's (IC_NDB_ERROR_*).
+ * Each function's "Errors" names the codes particular to it. Any
+ * function that talks to the cluster may also fail as the cluster
+ * does: IC_ERROR_LINK_LOST, IC_ERROR_NO_STARTED_DATA_NODE,
+ * IC_ERROR_TIMEOUT, or one of NDB's temporary errors.
+ *
+ * Handles. IC_APID_GLOBAL, IC_APID_CONNECTION, IC_TABLE_DEF,
+ * IC_INDEX_DEF and IC_RECORD are made by one function and given back to
+ * their _free; the caller owns each until then. A connection is freed
+ * before its global; a table, index or record handle may outlive the
+ * connection that made it, and a query keeps what it needs of its
+ * records. A NULL handle or out pointer gives IC_ERROR_NULL_POINTER; a
+ * handle freed, or never made, is undefined behaviour.
+ *
+ * Ids. A query (IC_QUERY_ID) and a transaction (IC_TRANS_ID) are named
+ * by an id in their connection. An id that names nothing any more,
+ * freed or closed, is refused with an error, never followed.
+ *
+ * Rows. A query owns its rows: ic_apid_query_key_row() and
+ * ic_apid_query_attr_row() give pointers valid until the query is
+ * freed, aligned to a byte and no more, so copy a struct in and out
+ * with memcpy. The program fills the rows before it defines the query
+ * and reads the attribute row once it has completed; between the two
+ * they are the library's. The synchronous calls take the program's own
+ * rows, and copy.
+ *
+ * Strings. Strings in are NUL-terminated UTF-8, and copied. A string
+ * out, a table's or a field's name, lives as long as the handle it came
+ * from; an error's text is copied into the caller's buffer.
+ *
+ * Structs with a size. IC_GLOBAL_OPTIONS, IC_READ_KEY_ARGS and
+ * IC_WRITE_KEY_ARGS are filled by their _init(&s, sizeof s) before the
+ * program sets what it wants; IC_FIELD_INFO is given with its size. A
+ * later release adds fields at the end.
+ *
+ * Threads. The functions that take no handle (ic_api_version,
+ * ic_error_*, ic_field_type_name, the _init functions) may be called
+ * from any thread. So may those on a global, and on table, index and
+ * record handles, at the same time, except their _free. A connection,
+ * with its queries and transactions, is used by one thread at a time;
+ * it may change threads between calls. A callback runs on the thread
+ * that polls, inside the poll.
+ *
+ * Panics. A panic inside the library returns IC_ERROR_INTERNAL_PANIC;
+ * the connection it went through is unusable from then on, and every
+ * call on it but its _free returns the same.
+ *
+ * "Safety". Each function's Safety paragraph says what its pointers
+ * must be: the conditions on a C caller, as the Rust the library is
+ * written in names them.
+ */
+
+
+/*
  Major version of the C API.
  */
 #define IC_API_VERSION_MAJOR 0
@@ -258,6 +321,164 @@
 #define IC_NDB_ERROR_NO_REPLY 4012
 
 /*
+ A NULL in a key (an NDB error).
+ */
+#define IC_NDB_ERROR_NULL_KEY 4316
+
+/*
+ The row would break a unique index, which the error data names (an
+ NDB error).
+ */
+#define IC_NDB_ERROR_UNIQUE_DUPLICATE 893
+
+/*
+ A lock wait timed out, probably in a deadlock; temporary (an NDB
+ error).
+ */
+#define IC_NDB_ERROR_LOCK_TIMEOUT 266
+
+/*
+ A node failure aborted the transaction; temporary (an NDB error).
+ */
+#define IC_NDB_ERROR_NODE_FAILURE_ABORT 4010
+
+/*
+ A text that is not a connectstring.
+ */
+#define IC_ERROR_PARSE_CONNECTSTRING 7056
+
+/*
+ No management server answered in time.
+ */
+#define IC_ERROR_CONNECT_TIMEOUT 7040
+
+/*
+ The node id asked for is held by another node.
+ */
+#define IC_ERROR_NODEID_IN_USE 7137
+
+/*
+ The management server refused the request: no API slot free, or our
+ node id not allowed.
+ */
+#define IC_ERROR_MGM_SERVER_REFUSED 7132
+
+/*
+ The process has as many connections as it may, 256.
+ */
+#define IC_ERROR_TOO_MANY_USER_THREADS 7139
+
+/*
+ The link to a data node was lost; the node may be up. Temporary.
+ */
+#define IC_ERROR_LINK_LOST 7135
+
+/*
+ No data node is connected and started. Temporary.
+ */
+#define IC_ERROR_NO_STARTED_DATA_NODE 7142
+
+/*
+ A wait for the cluster ran out. Temporary.
+ */
+#define IC_ERROR_TIMEOUT 7128
+
+/*
+ No table by that name in that database.
+ */
+#define IC_ERROR_NO_SUCH_TABLE 7140
+
+/*
+ No unique index by that name on the table.
+ */
+#define IC_ERROR_NO_SUCH_INDEX 7145
+
+/*
+ The data node's dictionary refused the request.
+ */
+#define IC_ERROR_DICT_REFUSED 7141
+
+/*
+ The table changed every time its description was fetched.
+ */
+#define IC_ERROR_TABLE_KEEPS_CHANGING 7144
+
+/*
+ The index is still being built, being dropped, or broken.
+ */
+#define IC_ERROR_INDEX_NOT_ONLINE 7154
+
+/*
+ No field with that id or name, in the table or the record.
+ */
+#define IC_ERROR_NO_SUCH_FIELD 7131
+
+/*
+ More fields than the table has.
+ */
+#define IC_ERROR_TOO_MANY_FIELDS 7062
+
+/*
+ A field named twice.
+ */
+#define IC_ERROR_DUPLICATE_FIELD_IDS 7063
+
+/*
+ Fields overlap or lie outside the row, or a row is too short.
+ */
+#define IC_ERROR_RECORD_LAYOUT 7146
+
+/*
+ A nullable field was given no null bit, or NULL was set on a field
+ that cannot be NULL.
+ */
+#define IC_ERROR_NO_NULL_BIT 7147
+
+/*
+ The key record does not fit the query: a key field missing, or a
+ record over another table or another version of it.
+ */
+#define IC_ERROR_KEY_RECORD 7148
+
+/*
+ The query or the transaction is not in a state for that, or the id
+ names no transaction.
+ */
+#define IC_ERROR_TRANSACTION_ACTIVE 7150
+
+/*
+ Not done in this release, or a value no define in this header names.
+ */
+#define IC_ERROR_NOT_SUPPORTED 7127
+
+/*
+ Options or arguments not filled by their _init, or a struct smaller
+ than this header's.
+ */
+#define IC_ERROR_INCONSISTENT_DATA 7020
+
+/*
+ A delete on a table with a blob column, refused until blobs are read
+ and written.
+ */
+#define IC_ERROR_DELETE_WITH_BLOBS 7153
+
+/*
+ An update through a unique index that sets an indexed column.
+ */
+#define IC_ERROR_INDEXED_COLUMN_UPDATE 7155
+
+/*
+ A key longer than any table's key can be, 1 023 words.
+ */
+#define IC_ERROR_KEY_TOO_LONG 7156
+
+/*
+ More column data than a request may carry, 32 768 words.
+ */
+#define IC_ERROR_RECORD_SIZE_TOO_BIG 7077
+
+/*
  One thread's connection to the cluster (`IC_APID_CONNECTION`).
  Opaque.
  */
@@ -493,7 +714,7 @@ extern "C" {
 
  # Safety
 
- Non-null pointers must point to writable `u32` storage.
+ Non-null pointers must point to writable `uint32_t` storage.
  */
 void ic_api_version(uint32_t *major, uint32_t *minor, uint32_t *patch);
 
@@ -536,6 +757,9 @@ const char *ic_field_type_name(uint32_t type_code);
 /*
  Fill `options`, `size` bytes, with the defaults.
 
+ Leaves `options` as it is when `size` is smaller than this header's
+ `IC_GLOBAL_OPTIONS`.
+
  # Safety
 
  A non-null `options` points to `size` writable bytes.
@@ -548,6 +772,15 @@ void ic_global_options_init(IC_GLOBAL_OPTIONS *options, size_t size);
  in the cluster. Returns at once; the data nodes are connected in the
  background (see `ic_apid_global_wait_for_started`). `node_name` and
  `options` may be NULL.
+
+ Errors: `IC_ERROR_PARSE_CONNECTSTRING` for text that is not a connectstring;
+ `IC_ERROR_CONNECT_TIMEOUT` or an operating system error when no management
+ server answers; `IC_ERROR_NODEID_IN_USE` when the node id asked for is held;
+ `IC_ERROR_MGM_SERVER_REFUSED` when no API slot is free or the node id is not
+ allowed; `IC_ERROR_INCONSISTENT_DATA` for `options` not filled by
+ `ic_global_options_init`; `IC_ERROR_BAD_TEXT` for text that is not UTF-8.
+ The global is the caller's, freed with `ic_apid_global_free`. It waits for
+ the management server, up to `mgm_timeout_ms`.
 
  # Safety
 
@@ -563,6 +796,9 @@ int32_t ic_apid_global_connect(const char *connect_string,
 /*
  Wait up to `wait_ms` for the first data node to be started, or with
  `all` for every one, and give how many are started.
+
+ Returns 0 whether or not a node started; `started` says how many did. It
+ blocks the calling thread up to `wait_ms`.
 
  # Safety
 
@@ -587,6 +823,9 @@ uint32_t ic_apid_global_node_id(const IC_APID_GLOBAL *global);
  Stop every thread of the Data API, wait for each, and free the
  global. Its connections must be freed first.
 
+ No other thread may use the global meanwhile, and every connection of it
+ must be freed already.
+
  # Safety
 
  A non-null `global` is a global handle not yet freed, freed here;
@@ -596,6 +835,11 @@ void ic_apid_global_free(IC_APID_GLOBAL *global);
 
 /*
  A connection for the calling thread's use.
+
+ Errors: `IC_ERROR_TOO_MANY_USER_THREADS` when the process has 256
+ connections. Any thread may call it, at the same time as others. The
+ connection is the caller's, freed with `ic_apid_conn_free` before the
+ global; one thread uses it at a time.
 
  # Safety
 
@@ -608,6 +852,9 @@ int32_t ic_apid_global_create_connection(IC_APID_GLOBAL *global,
 /*
  Free a connection, its queries and transactions with it.
 
+ Its queries and transactions go with it, and every row pointer they gave; a
+ transaction left open does not commit.
+
  # Safety
 
  A non-null `conn` is a connection handle not yet freed, freed here,
@@ -617,6 +864,13 @@ void ic_apid_conn_free(IC_APID_CONNECTION *conn);
 
 /*
  Bind a table of database `db`, giving a handle to its description.
+
+ Errors: `IC_ERROR_NO_SUCH_TABLE` when the database has no such table;
+ `IC_ERROR_TABLE_KEEPS_CHANGING` when it changed every time it was fetched;
+ `IC_ERROR_DICT_REFUSED` when the data node's dictionary refused;
+ `IC_ERROR_BAD_TEXT`. It waits for the data node when the description is not
+ cached yet. The handle is the caller's, freed with `ic_table_def_free`; it
+ may outlive the connection and be used by any thread.
 
  # Safety
 
@@ -632,6 +886,12 @@ int32_t ic_apid_conn_table_bind(IC_APID_CONNECTION *conn,
 /*
  Bind a unique index of a table, by the index's name (a MySQL server
  names a unique index `name$unique`).
+
+ Errors: as `ic_apid_conn_table_bind`; `IC_ERROR_NO_SUCH_INDEX` when the
+ table has no such index; `IC_ERROR_INDEX_NOT_ONLINE` when it is being built,
+ being dropped, or broken. The handle is the caller's, freed with
+ `ic_index_def_free`; it may outlive the connection and be used by any
+ thread.
 
  # Safety
 
@@ -657,6 +917,8 @@ int32_t ic_apid_conn_table_unbind(IC_APID_CONNECTION *conn,
 
 /*
  Free a table handle.
+
+ The names it gave go with it.
 
  # Safety
 
@@ -686,6 +948,8 @@ uint32_t ic_table_def_num_fields(const IC_TABLE_DEF *def);
 /*
  The id of the field named `name`.
 
+ Errors: `IC_ERROR_NO_SUCH_FIELD`; `IC_ERROR_BAD_TEXT`.
+
  # Safety
 
  `def` is a table handle not yet freed, `name` a NUL-terminated
@@ -697,6 +961,10 @@ int32_t ic_table_def_field_id(const IC_TABLE_DEF *def,
 
 /*
  What the table says of field `field_id`, into `info`, `size` bytes.
+
+ Errors: `IC_ERROR_NO_SUCH_FIELD`; `IC_ERROR_INCONSISTENT_DATA` when `size`
+ is smaller than this header's `IC_FIELD_INFO`. The name in `info` lives as
+ long as the table handle.
 
  # Safety
 
@@ -710,6 +978,8 @@ int32_t ic_table_def_field(const IC_TABLE_DEF *def,
 
 /*
  Free an index handle.
+
+ The name it gave goes with it.
 
  # Safety
 
@@ -741,6 +1011,13 @@ int32_t ic_index_def_table(const IC_INDEX_DEF *def, IC_TABLE_DEF **table);
  A record as the application lays out its row: one `IC_FIELD_SPEC`
  per field, and the row's size.
 
+ Errors: `IC_ERROR_NO_SUCH_FIELD` for a field the table does not have;
+ `IC_ERROR_DUPLICATE_FIELD_IDS` for a field named twice;
+ `IC_ERROR_TOO_MANY_FIELDS`; `IC_ERROR_RECORD_LAYOUT` when values or null
+ bits overlap or lie outside the row; `IC_ERROR_NO_NULL_BIT` for a nullable
+ field given no null bit; `IC_ERROR_NOT_SUPPORTED` for a blob column. The
+ record is the caller's, freed with `ic_record_free`; any thread may use it.
+
  # Safety
 
  `def` is a table handle not yet freed; `specs` points to `count`
@@ -756,6 +1033,9 @@ int32_t ic_record_create(const IC_TABLE_DEF *def,
  A record laid out by the library over the fields named, or over
  every field but the blob columns when `field_ids` is NULL or `count`
  is 0; `ic_record_field` tells where each field went.
+
+ Errors: as `ic_record_create`. The record is the caller's, freed with
+ `ic_record_free`; any thread may use it.
 
  # Safety
 
@@ -781,6 +1061,8 @@ uint32_t ic_record_row_size(const IC_RECORD *rec);
  Where field `field_id` lies in the record's row: its offset and its
  size in bytes, length bytes included. Either pointer may be NULL.
 
+ Errors: `IC_ERROR_NO_SUCH_FIELD` when the record does not hold the field.
+
  # Safety
 
  `rec` is a record handle not yet freed; non-null `offset` and `size`
@@ -794,6 +1076,9 @@ int32_t ic_record_field(const IC_RECORD *rec,
 /*
  True if field `field_id` is NULL in the row, `len` bytes.
 
+ False too for a field the record does not hold, or a row too short to hold
+ its null bit.
+
  # Safety
 
  `rec` is a record handle not yet freed; a non-null `row` points to
@@ -806,6 +1091,9 @@ bool ic_record_is_null(const IC_RECORD *rec,
 
 /*
  Set or clear the null bit of field `field_id` in the row.
+
+ Errors: `IC_ERROR_NO_SUCH_FIELD`; `IC_ERROR_NO_NULL_BIT` for a field that
+ cannot be NULL; `IC_ERROR_RECORD_LAYOUT` for a row too short.
 
  # Safety
 
@@ -825,6 +1113,10 @@ int32_t ic_record_set_null(const IC_RECORD *rec,
  program puts their bytes into the row itself. For tools and
  examples: an application works in the row's own bytes.
 
+ Errors: `IC_ERROR_BAD_TEXT` for text that is not UTF-8 or does not fit the
+ field; `IC_ERROR_NO_SUCH_FIELD`; `IC_ERROR_RECORD_LAYOUT` when `len` is less
+ than the record's row size.
+
  # Safety
 
  `rec` is a record handle not yet freed; `text` a NUL-terminated
@@ -841,6 +1133,9 @@ int32_t ic_record_put_text(const IC_RECORD *rec,
  bytes, ended with a NUL: a number, a character string in single
  quotes, binary as `0x` and hexadecimal digits, or `NULL`. The text's
  whole length is returned, and a longer text is cut short.
+
+ 0, with nothing written, for a field the record does not hold or a row
+ shorter than the record's.
 
  # Safety
 
@@ -867,6 +1162,11 @@ void ic_record_free(IC_RECORD *rec);
  A query over a table, with a record for its key and one for the
  values it reads or writes. It owns its rows, sized by the records.
 
+ Errors: `IC_ERROR_KEY_RECORD` when the key record does not hold every
+ primary key field, or a record is over another table or another version of
+ it. The query lives in the connection until `ic_apid_query_free` or the
+ connection's free.
+
  # Safety
 
  `conn`, `def`, `key_rec` and `attr_rec` are handles not yet freed;
@@ -882,6 +1182,11 @@ int32_t ic_apid_query_create(IC_APID_CONNECTION *conn,
  A query through a unique index: the key record holds the indexed
  columns.
 
+ Errors: `IC_ERROR_KEY_RECORD` when a record is over another table than the
+ index's, or another version of it; `IC_ERROR_NOT_SUPPORTED` for an index
+ that is not unique. The query lives in the connection until
+ `ic_apid_query_free` or the connection's free.
+
  # Safety
 
  As `ic_apid_query_create`, with `index` an index handle.
@@ -894,6 +1199,10 @@ int32_t ic_apid_query_create_unique(IC_APID_CONNECTION *conn,
 
 /*
  Free a query that is idle or completed.
+
+ Errors: `IC_ERROR_TRANSACTION_ACTIVE` while the query is defined or sent;
+ `IC_ERROR_NO_SUCH_FIELD` for an id that names no query. Its row pointers are
+ invalid from here.
 
  # Safety
 
@@ -941,6 +1250,8 @@ uint32_t ic_apid_query_state(IC_APID_CONNECTION *conn, IC_QUERY_ID query);
 /*
  The completed query's error code, or 0 if it succeeded.
 
+ `IC_ERROR_NO_SUCH_FIELD` for an id that names no query.
+
  # Safety
 
  `conn` is a connection handle not yet freed.
@@ -970,6 +1281,9 @@ void *ic_apid_query_user_ref(IC_APID_CONNECTION *conn, IC_QUERY_ID query);
  Fill `args`, `size` bytes, with the defaults: a simple read, the
  default abort option, no callback.
 
+ Leaves `args` as it is when `size` is smaller than this header's
+ `IC_READ_KEY_ARGS`.
+
  # Safety
 
  A non-null `args` points to `size` writable bytes.
@@ -980,6 +1294,9 @@ void ic_read_key_args_init(IC_READ_KEY_ARGS *args, size_t size);
  Fill `args`, `size` bytes, with the defaults: an update, the default
  abort option, no batching hint, no callback.
 
+ Leaves `args` as it is when `size` is smaller than this header's
+ `IC_WRITE_KEY_ARGS`.
+
  # Safety
 
  A non-null `args` points to `size` writable bytes.
@@ -989,6 +1306,15 @@ void ic_write_key_args_init(IC_WRITE_KEY_ARGS *args, size_t size);
 /*
  Define a read by key on a transaction; the query's key row holds the
  key. It goes with the next send.
+
+ Errors: `IC_ERROR_TRANSACTION_ACTIVE` when the query is already defined or
+ sent, or the transaction is ending, ended, or named by no id;
+ `IC_ERROR_NO_SUCH_FIELD` for an id that names no query;
+ `IC_ERROR_NOT_SUPPORTED` for a kind or abort option no define names;
+ `IC_ERROR_INCONSISTENT_DATA` for arguments not filled by
+ `ic_read_key_args_init`; `IC_NDB_ERROR_NULL_KEY` for a NULL in the key;
+ `IC_ERROR_KEY_TOO_LONG`. From here until the query completes its rows are
+ the library's.
 
  # Safety
 
@@ -1003,6 +1329,13 @@ int32_t ic_apid_conn_read_key(IC_APID_CONNECTION *conn,
 /*
  Define a write by key on a transaction; the query's key row holds the
  key and its attribute row the values. It goes with the next send.
+
+ Errors: as `ic_apid_conn_read_key`; `IC_ERROR_NOT_SUPPORTED` too for an
+ insert or a write through a unique index; `IC_ERROR_INDEXED_COLUMN_UPDATE`
+ for an update through a unique index whose values hold an indexed column;
+ `IC_ERROR_DELETE_WITH_BLOBS` for a delete on a table with a blob column;
+ `IC_ERROR_RECORD_SIZE_TOO_BIG` for more column data than a request may
+ carry. From here until the query completes its rows are the library's.
 
  # Safety
 
@@ -1030,6 +1363,9 @@ bool ic_apid_conn_get_next_executed_query(IC_APID_CONNECTION *conn,
  A hint for a transaction that will mostly touch the row a key names:
  its partition, or any node when that cannot be worked out.
 
+ Never fails: a hint it cannot work out is `IC_HINT_ANY`, as for a key in a
+ collation whose keys cannot be placed.
+
  # Safety
 
  `conn`, `def` and `key_rec` are handles not yet freed; `key_row`
@@ -1045,6 +1381,8 @@ IC_TRANSACTION_HINT ic_apid_conn_hint_for_key(IC_APID_CONNECTION *conn,
  A hint for a transaction whose first query goes through a unique
  index, for `ic_apid_conn_start_transaction_on_index`.
 
+ Never fails: a hint it cannot work out is `IC_HINT_ANY`.
+
  # Safety
 
  As `ic_apid_conn_hint_for_key`, with `index` an index handle.
@@ -1058,6 +1396,12 @@ IC_TRANSACTION_HINT ic_apid_conn_hint_for_unique_key(IC_APID_CONNECTION *conn,
 /*
  Start a transaction at the node the hint chooses. A partition hint
  needs the table it is over; `def` may be NULL otherwise.
+
+ Errors: `IC_ERROR_NO_STARTED_DATA_NODE` when no data node is started;
+ `IC_ERROR_LINK_LOST`, `IC_ERROR_TIMEOUT` or the coordinator's refusal, an
+ NDB code such as 4006, when no coordinator record could be had. It waits for
+ a round trip to the data node when the connection has no coordinator record
+ free there, up to five seconds.
 
  # Safety
 
@@ -1073,6 +1417,8 @@ int32_t ic_apid_conn_start_transaction(IC_APID_CONNECTION *conn,
  Start a transaction whose first query goes through a unique index, at
  the node `ic_apid_conn_hint_for_unique_key` chose.
 
+ Errors: as `ic_apid_conn_start_transaction`.
+
  # Safety
 
  `conn` and `index` are handles not yet freed; `trans` points to a
@@ -1086,6 +1432,10 @@ int32_t ic_apid_conn_start_transaction_on_index(IC_APID_CONNECTION *conn,
 /*
  Ask for the transaction to commit, with the next send.
 
+ Errors: `IC_ERROR_TRANSACTION_ACTIVE` when the transaction is ending or
+ ended already, or the id names none. The commit goes with the next send; the
+ transaction says how it ended once it is done.
+
  # Safety
 
  `conn` is a connection handle not yet freed.
@@ -1097,6 +1447,9 @@ int32_t ic_apid_conn_commit_transaction(IC_APID_CONNECTION *conn,
  Ask for the transaction to roll back; queries not yet sent are
  dropped.
 
+ Errors: `IC_ERROR_TRANSACTION_ACTIVE` when the transaction is ending or
+ ended already, or the id names none.
+
  # Safety
 
  `conn` is a connection handle not yet freed.
@@ -1106,6 +1459,9 @@ int32_t ic_apid_conn_rollback_transaction(IC_APID_CONNECTION *conn,
 
 /*
  Let go of a transaction that is done.
+
+ Errors: `IC_ERROR_TRANSACTION_ACTIVE` while it is not done, or for an id
+ that names none.
 
  # Safety
 
@@ -1137,6 +1493,8 @@ bool ic_apid_transaction_is_done(IC_APID_CONNECTION *conn, IC_TRANS_ID trans);
 /*
  The error the transaction ended with, or 0.
 
+ `IC_ERROR_TRANSACTION_ACTIVE` for an id that names no transaction.
+
  # Safety
 
  `conn` is a connection handle not yet freed.
@@ -1166,6 +1524,10 @@ uint64_t ic_apid_transaction_gci(IC_APID_CONNECTION *conn, IC_TRANS_ID trans);
  Send everything defined, and every end asked for, one write per
  node. With `force` the writes happen now.
 
+ Errors: the first write that failed, such as `IC_ERROR_LINK_LOST`; what
+ could go to the other nodes went. A transaction whose send failed learns of
+ it on its queries.
+
  # Safety
 
  `conn` is a connection handle not yet freed.
@@ -1175,6 +1537,10 @@ int32_t ic_apid_conn_send(IC_APID_CONNECTION *conn, bool force);
 /*
  Wait up to `wait_ms` for replies and complete the queries they
  finish, calling their callbacks; give how many signals were taken.
+
+ Fails only for a connection that is null or unusable: errors come back on
+ the queries and transactions they belong to. It blocks the calling thread up
+ to `wait_ms` when nothing has arrived.
 
  # Safety
 
@@ -1187,6 +1553,8 @@ int32_t ic_apid_conn_poll(IC_APID_CONNECTION *conn,
 
 /*
  Send, then poll.
+
+ Errors: as `ic_apid_conn_send`.
 
  # Safety
 
@@ -1201,6 +1569,12 @@ int32_t ic_apid_conn_flush(IC_APID_CONNECTION *conn,
  Read the committed row a key names, as its own transaction, and wait
  for it: the row goes into `attr_row`, and `found` says whether there
  was one.
+
+ Errors: as `ic_apid_conn_start_transaction` and `ic_apid_conn_read_key`;
+ `IC_ERROR_RECORD_LAYOUT` when a row is shorter than its record's;
+ `IC_ERROR_KEY_RECORD` for records over different tables; `IC_ERROR_TIMEOUT`
+ when no answer came in 10 seconds. A row not there is no error: `found` is
+ false.
 
  # Safety
 
@@ -1220,6 +1594,8 @@ int32_t ic_apid_conn_read_committed(IC_APID_CONNECTION *conn,
 /*
  As `ic_apid_conn_read_committed`, through a unique index.
 
+ Errors: as `ic_apid_conn_read_committed`.
+
  # Safety
 
  As `ic_apid_conn_read_committed`, with `index` an index handle.
@@ -1237,6 +1613,14 @@ int32_t ic_apid_conn_read_unique_committed(IC_APID_CONNECTION *conn,
 /*
  Write by key, as its own transaction, and wait for it: `kind` one of
  the `IC_WRITE_KIND_*` values.
+
+ Errors: the operation's own, as the data node gives it:
+ `IC_NDB_ERROR_NO_SUCH_ROW` for an update or delete of no row,
+ `IC_NDB_ERROR_ROW_EXISTS` for an insert of one there,
+ `IC_NDB_ERROR_UNIQUE_DUPLICATE` when a unique index already holds the value;
+ and as `ic_apid_conn_write_key`, `ic_apid_conn_start_transaction` and
+ `ic_apid_conn_read_committed`. `IC_ERROR_NOT_SUPPORTED` for a kind no define
+ names.
 
  # Safety
 
