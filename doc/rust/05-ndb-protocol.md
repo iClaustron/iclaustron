@@ -1806,9 +1806,10 @@ that crosses into the next page by copying it to the start of the first
 copied to a buffer of its own (`:2312-2363`). So a row over 32 KB,
 which the limits above allow, is checkpointed but cannot be restored. A
 system restart restores checkpoints the same way, so it would stop too
-(not seen). A bug in RonDB, not a limit; until it is mended, the
-`failure` group's second restart stops the node whenever the `big_rows`
-group has run first.
+(not seen). A bug in RonDB, not a limit, mended by the author
+(2026-10-15): restore now reads records longer than a page. In the full
+run since, the `failure` group restarted the node twice after
+`big_rows`, and both restarts completed.
 
 ## 14. Node ids, and why nothing is sized by them
 

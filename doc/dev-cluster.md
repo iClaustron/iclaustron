@@ -80,6 +80,30 @@ with SIGSTOP (it needs `lsof`), unless `IC_TEST_MGM_RESTART` gives a
 command that restarts it: under MTR a management server told to
 restart itself exits, and nothing starts it again.
 
+A whole run needs about 30 MB of data memory on each data node, and
+nearly all of it is the tables themselves (measured 2026-10-15).
+- A table takes about 650 KB on a node however few its rows: each of
+  its 8 fragments there gets at least a page of each kind.
+- The run makes about 40 tables and indexes, beside the dictionary's
+  own.
+
+MTR's default of 30 MB is too little. The last group to make its
+tables, `uk`, then has its inserts refused: "The table 'uk' is full".
+Give every data node more in the test's `.cnf`, in the cluster's
+section; a node's own section gives it to that node alone:
+
+```ini
+[cluster_config.1]
+DataMemory=100M
+```
+
+Restart the cluster, and check both data nodes:
+
+```sh
+$BIN/mysql -uroot --protocol=tcp --host=127.0.0.1 --port 13000 \
+  -e "SELECT node_id, used, total FROM ndbinfo.memoryusage WHERE memory_type='Data memory'"
+```
+
 The tools take the same connectstring:
 
 ```sh

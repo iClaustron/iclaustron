@@ -1188,6 +1188,10 @@ The 0.1 criteria (chapter 01), where each stands (2026-10-14):
 | Read throughput within 20% of the reference, 8 threads | the performance pass: twice the reference's | met |
 | Libraries, documented header, user guide, examples in Rust and C | `ic_capi`, the header review, `doc/user-guide.md`, `examples/` | met |
 
+The full integration run (2026-10-15): every group passed. It ran on a
+release cluster with 100 MB of data memory on each data node, and with
+the restore of rows longer than a page mended (chapter 05 §13).
+
 ## Phase 8 — 0.2: the executor, scans and character sets (8–9 weeks)
 
 ### 8.1 The executor (2 weeks)
