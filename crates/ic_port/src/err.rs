@@ -18,7 +18,7 @@ use std::fmt;
 /// First iClaustron error code.
 pub const IC_FIRST_ERROR: i32 = 7000;
 /// Last iClaustron error code.
-pub const IC_LAST_ERROR: i32 = 7156;
+pub const IC_LAST_ERROR: i32 = 7158;
 
 /// Line was too long.
 pub const IC_ERROR_LINE_TOO_LONG: i32 = 7000;
@@ -360,6 +360,11 @@ pub const IC_ERROR_INDEXED_COLUMN_UPDATE: i32 = 7155;
 /// A key longer than any table's key can be, 1 023 words: a data node
 /// takes such a request for a malformed one.
 pub const IC_ERROR_KEY_TOO_LONG: i32 = 7156;
+/// A handle or an out pointer given to the C API was null.
+pub const IC_ERROR_NULL_POINTER: i32 = 7157;
+/// Text given to the C API that is not UTF-8, or a value given as text
+/// that does not fit its field.
+pub const IC_ERROR_BAD_TEXT: i32 = 7158;
 
 /// What kind of thing went wrong (`IC_ERROR_CATEGORY`), in the header's
 /// order.
@@ -842,6 +847,8 @@ pub fn message(code: i32) -> &'static str {
       "An update through an index cannot change the indexed columns"
     }
     IC_ERROR_KEY_TOO_LONG => "The key is longer than 1023 words",
+    IC_ERROR_NULL_POINTER => "A null pointer where a handle was needed",
+    IC_ERROR_BAD_TEXT => "Text that is not UTF-8 or does not fit its field",
     _ => "Unknown error code",
   }
 }

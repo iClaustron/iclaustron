@@ -43,11 +43,31 @@ impl QueryId {
   pub fn as_u32(&self) -> u32 {
     self.0.as_u32()
   }
+
+  /// A query id from its word, as a language binding hands it back.
+  /// Whether it still names a live query is for the connection to say.
+  pub fn from_u32(word: u32) -> QueryId {
+    QueryId(PtrId::from_u32(word))
+  }
 }
 
 /// A transaction's id in its connection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TransId(pub(crate) PtrId);
+
+impl TransId {
+  /// The id as a word, for a language binding.
+  pub fn as_u32(&self) -> u32 {
+    self.0.as_u32()
+  }
+
+  /// A transaction id from its word, as a language binding hands it
+  /// back. Whether it still names a live transaction is for the
+  /// connection to say.
+  pub fn from_u32(word: u32) -> TransId {
+    TransId(PtrId::from_u32(word))
+  }
+}
 
 /// What is called when a query completes (`IC_APID_CALLBACK_FUNC`):
 /// on the thread that polls, from inside the poll, with the connection,
@@ -133,6 +153,10 @@ pub struct ReadKeyArgs {
   pub user_ref: usize,
   /// Called when the query completes, in place of the executed list.
   pub callback: Option<QueryCallback>,
+  /// A word for a language binding's own use, read back with
+  /// [`ApidQuery::binding`]: the C API keeps the C callback there for
+  /// its trampoline. Rust callers leave it 0.
+  pub binding: usize,
 }
 
 /// What a write asks for (`IC_WRITE_KEY_ARGS`, less the rows).
@@ -148,6 +172,9 @@ pub struct WriteKeyArgs {
   pub user_ref: usize,
   /// Called when the query completes, in place of the executed list.
   pub callback: Option<QueryCallback>,
+  /// A word for a language binding's own use; see
+  /// [`ReadKeyArgs::binding`].
+  pub binding: usize,
 }
 
 /// Where a query is in its life.
@@ -215,6 +242,8 @@ pub struct ApidQuery {
   error_data: u32,
   user_ref: usize,
   callback: Option<QueryCallback>,
+  /// The binding's word the query was defined with.
+  binding: usize,
   /// Bytes of row data the last read brought.
   result_len: u32,
   pub(crate) execution: Execution,
@@ -263,6 +292,7 @@ impl ApidQuery {
       error_data: 0,
       user_ref: 0,
       callback: None,
+      binding: 0,
       result_len: 0,
       execution: Execution::default(),
     })
@@ -296,6 +326,7 @@ impl ApidQuery {
       error_data: 0,
       user_ref: 0,
       callback: None,
+      binding: 0,
       result_len: 0,
       execution: Execution::default(),
     })
@@ -375,6 +406,12 @@ impl ApidQuery {
     self.callback
   }
 
+  /// The binding's word the query was defined with
+  /// ([`ReadKeyArgs::binding`]).
+  pub fn binding(&self) -> usize {
+    self.binding
+  }
+
   /// Bytes of row data the last read brought; zero for a row that was
   /// not there.
   pub fn result_len(&self) -> u32 {
@@ -395,6 +432,7 @@ impl ApidQuery {
     mut execution: Execution,
     user_ref: usize,
     callback: Option<QueryCallback>,
+    binding: usize,
   ) {
     // The last execution's row buffer is kept for its allocation.
     let mut row = std::mem::take(&mut self.execution.row);
@@ -403,6 +441,7 @@ impl ApidQuery {
     self.execution = execution;
     self.user_ref = user_ref;
     self.callback = callback;
+    self.binding = binding;
     self.error = None;
     self.error_data = 0;
     self.result_len = 0;

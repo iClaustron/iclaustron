@@ -541,6 +541,7 @@ impl ApidConnection {
       true,
       args.user_ref,
       args.callback,
+      args.binding,
     )
   }
 
@@ -580,6 +581,7 @@ impl ApidConnection {
       false,
       args.user_ref,
       args.callback,
+      args.binding,
     )
   }
 
@@ -593,6 +595,7 @@ impl ApidConnection {
     is_read: bool,
     user_ref: usize,
     callback: Option<QueryCallback>,
+    binding: usize,
   ) -> Result<(), IcError> {
     let (id, coord) = match self.transactions.get(trans_id.0) {
       Some(trans) if trans.is_open() => (trans.trans_id, trans.coord),
@@ -703,6 +706,7 @@ impl ApidConnection {
         },
         user_ref,
         callback,
+        binding,
       );
     }
     if let Some(trans) = self.transactions.get_mut(trans_id.0) {

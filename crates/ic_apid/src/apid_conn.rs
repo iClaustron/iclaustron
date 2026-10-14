@@ -503,6 +503,9 @@ pub struct ApidConnection {
   next_fragment_id: u32,
   pub(crate) key_scratch: Vec<u32>,
   pub(crate) attr_scratch: Vec<u32>,
+  /// Set by a language binding when a panic went through the connection;
+  /// see [`set_unusable`](Self::set_unusable).
+  unusable: bool,
   /// Pages of signals taken from the inbox, read, and given back on the
   /// next poll.
   pages: Vec<signal_page::SignalPage>,
@@ -599,7 +602,23 @@ impl ApidConnection {
       next_fragment_id: 1,
       key_scratch: Vec::new(),
       attr_scratch: Vec::new(),
+      unusable: false,
     })
+  }
+
+  /// Mark the connection as no longer to be used. A language binding
+  /// that catches a panic coming out of a call on it does this, since
+  /// the panic may have left it half way through a change; the binding
+  /// then refuses every later call on it but freeing it. Rust code that
+  /// lets a panic unwind never sees the connection again and has no use
+  /// for this.
+  pub fn set_unusable(&mut self) {
+    self.unusable = true;
+  }
+
+  /// True once [`set_unusable`](Self::set_unusable) has been called.
+  pub fn is_unusable(&self) -> bool {
+    self.unusable
   }
 
   /// This thread's number among the user threads.

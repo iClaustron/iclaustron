@@ -13,6 +13,15 @@ workspace = true
 
 [dependencies]
 ic_apid.workspace = true
+ic_port.workspace = true
+ic_signals.workspace = true
 
 [lib]
+# libiclaustron.so / .dylib and libiclaustron.a.
+name = "iclaustron"
 crate-type = ["cdylib", "staticlib", "rlib"]
+
+[features]
+default = []
+# Integration tests need a live cluster; see doc/dev-cluster.md.
+integration = []

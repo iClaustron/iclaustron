@@ -8,10 +8,13 @@
 //! - `check`: fmt --check, clippy -D warnings, test, style.
 //! - `style`: check the crates for lines wider than 80 columns and for
 //!   constructs forbidden by doc/rust/07-style-guide.md.
-//! - `test-integration`: run the ic_apid integration tests against the
-//!   cluster named by IC_TEST_CONNECTSTRING (or the first argument).
+//! - `test-integration`: run the ic_apid and ic_capi integration tests
+//!   against the cluster named by IC_TEST_CONNECTSTRING (or the first
+//!   argument); a second argument picks tests by name.
 //! - `header`: regenerate the C header with cbindgen into target/ and
 //!   diff it against include/iclaustron/ic_apid.h.
+//! - `install`: build the C library in release mode and install it,
+//!   with its header and a pkg-config file, under a prefix.
 //! - `tags`: build a vim `tags` file over the Rust and C sources with
 //!   Universal Ctags (the successor of legacy-c/git_tags.sh);
 //!   `--no-legacy` leaves legacy-c/ out.
@@ -39,6 +42,7 @@ fn main() {
     "style" => run_style(),
     "test-integration" => run_test_integration(rest),
     "header" => run_header(),
+    "install" => run_install(rest),
     "tags" => run_tags(rest),
     "names" => names::run_names(rest),
     _ => {
@@ -55,6 +59,7 @@ fn print_help() {
   println!("  style             check for forbidden Rust constructs");
   println!("  test-integration  [connectstring] run tests against a cluster");
   println!("  header            regenerate and diff the C header");
+  println!("  install [prefix]  install libiclaustron (default /usr/local)");
   println!("  tags [--no-legacy] build a vim tags file with Universal Ctags");
   println!("  names [rondb-tree] no RonDB name in our code or docs");
 }
@@ -287,8 +292,10 @@ fn run_test_integration(rest: &[String]) -> i32 {
     "test",
     "-p",
     "ic_apid",
+    "-p",
+    "ic_capi",
     "--features",
-    "integration",
+    "ic_apid/integration,ic_capi/integration",
     "--",
     "--test-threads=1",
     "--nocapture",
@@ -297,6 +304,97 @@ fn run_test_integration(rest: &[String]) -> i32 {
     args.push(rest[1].as_str());
   }
   run("cargo", &args)
+}
+
+/// Copy a file, saying why not if it cannot be.
+fn copy_file(from: &str, to: &str) -> bool {
+  match fs::copy(from, to) {
+    Ok(_) => true,
+    Err(e) => {
+      eprintln!("cannot copy {} to {}: {}", from, to, e);
+      false
+    }
+  }
+}
+
+/// Build the C library in release mode and install it under the prefix
+/// given, `/usr/local` if none: the shared and static libraries in
+/// `lib/`, the header in `include/iclaustron/`, and `iclaustron.pc` in
+/// `lib/pkgconfig/`. On Linux the shared library is installed under its
+/// full version with the soname and the plain name linked to it; on
+/// macOS its install name is set to where it was installed.
+fn run_install(rest: &[String]) -> i32 {
+  let prefix: String = if !rest.is_empty() {
+    rest[0].clone()
+  } else {
+    "/usr/local".to_string()
+  };
+  let version = env!("CARGO_PKG_VERSION");
+  let code = run("cargo", &["build", "--release", "-p", "ic_capi"]);
+  if code != 0 {
+    return code;
+  }
+  let lib_dir = format!("{}/lib", prefix);
+  let include_dir = format!("{}/include/iclaustron", prefix);
+  let pc_dir = format!("{}/lib/pkgconfig", prefix);
+  for dir in [&lib_dir, &include_dir, &pc_dir] {
+    if let Err(e) = fs::create_dir_all(dir) {
+      eprintln!("cannot make {}: {}", dir, e);
+      return 1;
+    }
+  }
+  let header = format!("{}/ic_apid.h", include_dir);
+  if !copy_file("include/iclaustron/ic_apid.h", &header) {
+    return 1;
+  }
+  let archive = format!("{}/libiclaustron.a", lib_dir);
+  if !copy_file("target/release/libiclaustron.a", &archive) {
+    return 1;
+  }
+  let libs_private: &str = if cfg!(target_os = "macos") {
+    let installed = format!("{}/libiclaustron.dylib", lib_dir);
+    if !copy_file("target/release/libiclaustron.dylib", &installed) {
+      return 1;
+    }
+    let code = run("install_name_tool", &["-id", &installed, &installed]);
+    if code != 0 {
+      return code;
+    }
+    "-lSystem -lc -lm"
+  } else {
+    let real = format!("libiclaustron.so.{}", version);
+    let installed = format!("{}/{}", lib_dir, real);
+    if !copy_file("target/release/libiclaustron.so", &installed) {
+      return 1;
+    }
+    for link in ["libiclaustron.so.0", "libiclaustron.so"] {
+      let path = format!("{}/{}", lib_dir, link);
+      let _ = fs::remove_file(&path);
+      if let Err(e) = std::os::unix::fs::symlink(&real, &path) {
+        eprintln!("cannot link {} to {}: {}", path, real, e);
+        return 1;
+      }
+    }
+    "-lpthread -ldl -lm -lrt"
+  };
+  let template = match fs::read_to_string("crates/ic_capi/iclaustron.pc.in") {
+    Ok(text) => text,
+    Err(e) => {
+      eprintln!("cannot read the pkg-config template: {}", e);
+      return 1;
+    }
+  };
+  let pc = template
+    .replace("@PREFIX@", &prefix)
+    .replace("@VERSION@", version)
+    .replace("@LIBS_PRIVATE@", libs_private);
+  let pc_path = format!("{}/iclaustron.pc", pc_dir);
+  if let Err(e) = fs::write(&pc_path, pc) {
+    eprintln!("cannot write {}: {}", pc_path, e);
+    return 1;
+  }
+  println!("installed libiclaustron {} under {}", version, prefix);
+  0
 }
 
 fn run_header() -> i32 {

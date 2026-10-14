@@ -40,6 +40,8 @@ name = "ic_capi"
 version = "0.1.0"
 dependencies = [
  "ic_apid",
+ "ic_port",
+ "ic_signals",
 ]
 
 [[package]]

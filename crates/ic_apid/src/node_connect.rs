@@ -275,6 +275,18 @@ impl NodeConnection {
     node_id: u32,
     port: u16,
   ) -> Result<NodeConnection, IcError> {
+    NodeConnection::connect_to_port_from(config, node_id, port, None)
+  }
+
+  /// As [`connect_to_port`](Self::connect_to_port), binding the socket
+  /// to the local address `local` first when one is given
+  /// (`bind-address=` in the connectstring).
+  pub fn connect_to_port_from(
+    config: &ClusterConfig,
+    node_id: u32,
+    port: u16,
+    local: Option<&str>,
+  ) -> Result<NodeConnection, IcError> {
     let _dbg = ic_port::debug_entry!("NodeConnection::connect_to_port");
     let link = match config.link_to(node_id) {
       Some(link) => link.clone(),
@@ -298,6 +310,7 @@ impl NodeConnection {
       tcp_receive_buffer_size: link.socket_recv_buffer,
       tcp_send_buffer_size: link.socket_send_buffer,
       connect_timeout_ms: 10_000,
+      client_name: local.map(|address| address.to_string()),
       ..ConnectConfig::default()
     };
     let transporter =

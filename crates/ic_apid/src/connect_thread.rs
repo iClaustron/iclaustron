@@ -139,8 +139,12 @@ fn dial(shared: &ApidShared, node: &NodeShared) -> Result<(), IcError> {
   // back on a different one, and reports zero until it has started, so
   // an old port would connect to nothing or to someone else.
   let plan = shared.prepare_dial(node.node_id)?;
-  let mut connection =
-    NodeConnection::connect_to_port(&plan.config, node.node_id, plan.port)?;
+  let mut connection = NodeConnection::connect_to_port_from(
+    &plan.config,
+    node.node_id,
+    plan.port,
+    plan.bind_address.as_deref(),
+  )?;
   // Registration ends with the node describing itself, so a connection
   // without a state is one that did not register.
   let node_state = match connection.node_state {

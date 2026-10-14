@@ -82,6 +82,7 @@ use ic_signals::header;
 use ic_signals::header::SignalHeader;
 use ic_signals::membership::NodeState;
 use ic_signals::numbers;
+use ic_util::connectstring;
 use ic_util::connectstring::ConnectString;
 use ic_util::threadpool::ThreadPool;
 
@@ -731,13 +732,23 @@ pub struct GlobalOptions {
   /// Zero takes it from the configuration: at least two minutes, longer
   /// if the data nodes' timeouts call for it. Tests set a second.
   pub reply_wait_ms: u32,
+  /// How long to wait for a management server to answer, in
+  /// milliseconds, when starting and whenever it is asked again: for a
+  /// data node's port, or for our node id after every link was lost.
+  /// Used by [`ApidGlobal::connect`]; [`ApidGlobal::start`] takes it as
+  /// an argument.
+  pub mgm_timeout_ms: u32,
 }
+
+/// How long a management server has to answer, unless the options say.
+pub const IC_DEFAULT_MGM_TIMEOUT_MS: u32 = 30_000;
 
 impl Default for GlobalOptions {
   fn default() -> GlobalOptions {
     GlobalOptions {
       receive_threads: 1,
       reply_wait_ms: 0,
+      mgm_timeout_ms: IC_DEFAULT_MGM_TIMEOUT_MS,
     }
   }
 }
@@ -765,6 +776,8 @@ pub(crate) struct DialPlan {
   pub(crate) epoch: u32,
   pub(crate) config: Arc<ClusterConfig>,
   pub(crate) port: u16,
+  /// The local address to bind to, from `bind-address=`.
+  pub(crate) bind_address: Option<String>,
 }
 
 /// What the threads hold between them.
@@ -970,6 +983,7 @@ impl ApidShared {
       epoch: identity.epoch,
       config: Arc::clone(&identity.config),
       port,
+      bind_address: self.connect_string.bind_address.clone(),
     })
   }
 
@@ -1206,6 +1220,34 @@ impl ApidGlobal {
       mgm_timeout_ms,
       node_name,
       &GlobalOptions::default(),
+    )
+  }
+
+  /// Start the Data API from a connectstring alone: ask a management
+  /// server in it for a node id and the configuration, then start as
+  /// [`start_with_options`](Self::start_with_options) does. The
+  /// connectstring is `host[:port]` items separated by commas, with
+  /// `nodeid=N` to ask for that node id and `bind-address=host` for the
+  /// local address every socket binds to. `node_name` is what the
+  /// management server logs against our node id.
+  pub fn connect(
+    connect_string: &str,
+    node_name: Option<&str>,
+    options: &GlobalOptions,
+  ) -> Result<ApidGlobal, IcError> {
+    let parsed = connectstring::parse(connect_string)?;
+    let (config, mgm) = mgm_client::fetch_configuration(
+      &parsed,
+      options.mgm_timeout_ms,
+      node_name,
+    )?;
+    ApidGlobal::start_with_options(
+      config,
+      mgm,
+      parsed,
+      options.mgm_timeout_ms,
+      node_name,
+      options,
     )
   }
 

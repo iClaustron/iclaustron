@@ -1,0 +1,10 @@
+prefix=@PREFIX@
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: iclaustron
+Description: iClaustron, a Data API for RonDB
+Version: @VERSION@
+Libs: -L${libdir} -liclaustron
+Libs.private: @LIBS_PRIVATE@
+Cflags: -I${includedir}

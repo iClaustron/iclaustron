@@ -125,10 +125,27 @@ impl MgmClient {
     port: u16,
     timeout_ms: u32,
   ) -> Result<MgmClient, IcError> {
+    MgmClient::connect_from(host, port, timeout_ms, None)
+  }
+
+  /// As [`connect`](Self::connect), binding the socket to the local
+  /// address `local` first when one is given (`bind-address=` in the
+  /// connectstring).
+  pub fn connect_from(
+    host: &str,
+    port: u16,
+    timeout_ms: u32,
+    local: Option<&str>,
+  ) -> Result<MgmClient, IcError> {
     let _dbg = ic_port::debug_entry!("MgmClient::connect");
+    let mut client_name: Option<String> = None;
+    if let Some(local) = local {
+      client_name = Some(local.to_string());
+    }
     let config = ConnectConfig {
       server_name: host.to_string(),
       server_port: port,
+      client_name,
       connect_timeout_ms: timeout_ms,
       ..ConnectConfig::default()
     };
@@ -157,7 +174,12 @@ impl MgmClient {
   ) -> Result<MgmClient, IcError> {
     let mut last = IcError::new(err::IC_ERROR_NO_SERVER_NAME);
     for server in &connect_string.servers {
-      match MgmClient::connect(&server.host, server.port, timeout_ms) {
+      match MgmClient::connect_from(
+        &server.host,
+        server.port,
+        timeout_ms,
+        connect_string.bind_address.as_deref(),
+      ) {
         Ok(client) => return Ok(client),
         Err(e) => {
           ic_port::debug_print!(

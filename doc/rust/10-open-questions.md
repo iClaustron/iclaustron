@@ -53,6 +53,16 @@
 |---|---|
 | The hash of a key in a no-pad collation (was Q16) | Described by the author and seen live: 64-bit FNV-1a over the collation's 16-bit weights, level by level with a zero weight between levels and zero weights within a level skipped, the first three levels always and a fourth only where the string has a weight there; utf8mb4_0900_bin folds its bytes. The result's eight bytes are the column's part of the hashed key (chapter 05 §6.3). Every collation in the `charset` group places keys as the data nodes do; the neighbour-weighted ones are placed in turn. |
 
+## Decided (2026-10-14), applied as recommended at the start of phase 7
+
+| Topic | Decision |
+|---|---|
+| Multi-cluster (was Q3) | one cluster per `ApidGlobal`; several globals for several clusters; no `cluster_id` parameter in the C ABI (chapter 04) |
+| Joinable transactions (was Q4) | dropped; a transaction belongs to the connection that started it |
+| Platforms for 0.1 (was Q7) | Linux on x86_64 and aarch64, macOS on aarch64 |
+| `nodeid=` and `bind-address=` (was Q9) | both in the connectstring: the node id asked of the management server, the local address every socket binds to before it connects |
+| Rows in the C API (was Q10) | the query owns its rows; C gets pointers to them, valid until the query is freed (`ic_apid_query_key_row`, `ic_apid_query_attr_row`); no copy, nothing pointing into the caller's memory |
+
 ## Still open
 
 The recommendation is the default and the plan proceeds on it unless
@@ -61,13 +71,8 @@ you object.
 | # | Question | Recommendation / how to resolve |
 |---|---|---|
 | Q2 | Does a 26.10 data node accept the legacy `ndbd`/`ndbd passwd` socket auth, or only the `ndbd TLS ...` line? | Test on day one of Phase 3; implement the TLS-capable line first. |
-| Q3 | Multi-cluster: the C header carries `cluster_id` on every call (the "grid"). Keep it, or one cluster per `ApidGlobal`? | **Recommendation:** one cluster per `ApidGlobal`; applications needing several clusters create several globals. Removes a parameter from every call and every table in the C ABI. |
-| Q4 | Joinable transactions (several user threads on one transaction): drop for good, or keep as a later item? | **Recommendation:** drop from the header; revisit only with a concrete user. |
 | Q5 | Which version does the API announce in `get nodeid` and `HEARTBEAT_REQ`: RonDB 26.10.0 exactly, or the running management server's version? | **Recommendation:** announce 26.10.0 (`0x1A0A00`) and our own MySQL version field as the same; confirm the compatibility check on a live node. |
 | Q6 | Which non-C/C++ languages get a smoke-test binding (phase 10 since 2026-10-08, was phase 7)? | Suggest Python (`ctypes`) and Java (Panama) as the two that matter to RonDB users; Go and Node if cheap. |
-| Q7 | Platforms for 0.1: Linux x86_64 and aarch64, macOS aarch64? | **Recommendation:** all three; RonDB ships on ARM. |
-| Q9 | Should `ApidGlobal::connect` also support an explicit node id from the connectstring (`nodeid=N`) and the `bind-address` option, as the reference API's connection object does? | **Recommendation:** yes, both are cheap and operators expect them. |
-| Q10 | Rows in the C API: the Rust query owns its rows; chapter 04 said C rows are the caller's memory. | **Recommendation:** C gets pointers to the query's own rows (`ic_apid_query_key_row`, `ic_apid_query_attr_row`), valid until the query is freed: no copy, nothing pointing into the caller's memory. Decide at the start of phase 7. |
 | Q11 | The names of signals and blocks. | The first draft is in chapter 06 §6.1; the author reviews it before the rename. |
 | Q12 | Writes through a unique index. | **Recommendation:** refuse an update through an index whose attribute record holds an indexed column, and keep refusing a write through an index (chapter 06 §6.5, item 8). |
 | Q13 | AUTO_INCREMENT prefetch: how many values the client reserves at a time. | **Recommendation:** 512 by default, as MySQL servers use, settable per table binding; decide in phase 9. |
