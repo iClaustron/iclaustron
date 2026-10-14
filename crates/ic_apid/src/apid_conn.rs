@@ -377,6 +377,22 @@ impl CoordRecord {
 /// The next release id from `seed`, which it moves on: a 64-bit mix of
 /// a counter, its high half, never zero, which the coordinator takes as
 /// a free without one.
+/// A transaction id, as the reference makes one: the low 12 bits of the
+/// thread's block index in bits 52 to 63 and of the node id in bits 40
+/// to 51, bit 12 of the node id in bit 39 and of the block index in bit
+/// 38, and the count in the low 32 bits. The thirteenth bits keep the
+/// ids of thread 4 096 and up, and of node 4 096 and up, apart from
+/// those of thread and node 0 up. Verify: chapter 05 §17.12.
+fn transaction_id(block_index: u32, node_id: u32, count: u32) -> u64 {
+  let index = block_index as u64;
+  let node = node_id as u64;
+  ((index & 0xFFF) << 52)
+    | ((node & 0xFFF) << 40)
+    | (((node >> 12) & 1) << 39)
+    | (((index >> 12) & 1) << 38)
+    | count as u64
+}
+
 /// The fragment id after `id`, skipping 0, which a data node's own
 /// counter never uses.
 fn fragment_id_after(id: u32) -> u32 {
@@ -1166,11 +1182,10 @@ impl ApidConnection {
   /// number left it, so an id is not used twice.
   /// Verify: chapter 05 §17.12.
   pub fn next_transaction_id(&mut self) -> u64 {
-    let low = self.trans_counter;
+    let count = self.trans_counter;
     self.trans_counter = self.trans_counter.wrapping_add(1);
-    let block = self.block_number() as u64 & 0xFFF;
-    let node = self.shared.own_node_id() as u64 & 0xFFF;
-    (block << 52) | (node << 40) | low as u64
+    let index = self.block_number() - blocks::IC_FIRST_USER_THREAD_BLOCK;
+    transaction_id(index as u32, self.shared.own_node_id(), count)
   }
 
   /// A release id for a transaction record about to be allocated: a
@@ -1629,6 +1644,25 @@ mod tests {
     let later = start + 10 * IC_REPLY_WAIT_CHECK_NANOS;
     assert!(reply_check_due(&mut next, later));
     assert!(!reply_check_due(&mut next, later + 1));
+  }
+
+  #[test]
+  fn transaction_ids_keep_every_thread_and_node_apart() {
+    // As the reference lays them out, bit by bit.
+    assert_eq!(transaction_id(0, 0, 0), 0);
+    assert_eq!(transaction_id(1, 0, 0), 1 << 52);
+    assert_eq!(transaction_id(0, 1, 0), 1 << 40);
+    assert_eq!(transaction_id(0x1000, 0, 0), 1 << 38);
+    assert_eq!(transaction_id(0, 0x1000, 0), 1 << 39);
+    assert_eq!(transaction_id(0, 0, 0xFFFF_FFFF), 0xFFFF_FFFF);
+    // Thread i and thread i + 4 096 made the same ids with 12 bits.
+    let mut seen = std::collections::HashSet::new();
+    let mut index: u32 = 0;
+    while index < ic_port::consts::IC_MAX_THREAD_CONNECTIONS {
+      assert!(seen.insert(transaction_id(index, 1600, 7)), "{}", index);
+      index += 1;
+    }
+    assert_ne!(transaction_id(5, 3, 1), transaction_id(5, 3 + 4096, 1));
   }
 
   #[test]

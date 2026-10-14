@@ -167,10 +167,14 @@ const _: () = assert!(IC_MAX_DATA_NODE_ID < IC_MAX_NODE_ID);
 /// Highest number of data nodes in a RonDB cluster.
 /// Verify: chapter 05 §17.1.
 pub const IC_MAX_NDB_DATA_NODES: u32 = 144;
-/// Highest number of user threads (connection objects) per process.
-pub const IC_MAX_THREAD_CONNECTIONS: u32 = 256;
+/// Highest number of user threads (connection objects) per process: as
+/// many as RonDB lets one API node have, each with a block number of its
+/// own (`ic_signals::blocks::IC_MAX_API_THREADS`). Past 4 096 a
+/// transaction id needs a thirteenth bit of the thread's block index.
+/// Verify: chapter 05 §17.12.
+pub const IC_MAX_THREAD_CONNECTIONS: u32 = 4711;
 /// Same limit under its Data API name.
-pub const IC_MAX_APID_NUM_THREADS: u32 = 256;
+pub const IC_MAX_APID_NUM_THREADS: u32 = IC_MAX_THREAD_CONNECTIONS;
 /// Longest file name handled.
 pub const IC_MAX_FILE_NAME_SIZE: usize = 255;
 /// Longest printed integer.

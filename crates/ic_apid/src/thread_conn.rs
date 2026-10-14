@@ -101,6 +101,10 @@ const _: () = assert!(
   IC_MAX_THREAD_CONNECTIONS
     <= (0x10000 - blocks::IC_FIRST_USER_THREAD_BLOCK as u32)
 );
+// And no more than RonDB lets one API node have, nor more than a
+// transaction id has room for: thirteen bits of the block index.
+const _: () = assert!(IC_MAX_THREAD_CONNECTIONS <= blocks::IC_MAX_API_THREADS);
+const _: () = assert!(IC_MAX_THREAD_CONNECTIONS <= 1 << 13);
 
 /// Emptied pages an inbox keeps for its receive threads to fill; one
 /// given back beyond this is let go.

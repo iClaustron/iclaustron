@@ -24,9 +24,6 @@ use ic_port::consts::IC_DEF_CLUSTER_SERVER_PORT;
 use ic_port::err;
 use ic_port::IcError;
 
-/// Largest number of management servers accepted in one connectstring.
-pub const IC_MAX_CLUSTER_SERVERS: usize = 4;
-
 /// One management server to try.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MgmServer {
@@ -163,9 +160,6 @@ pub fn parse(connect_string: &str) -> Result<ConnectString, IcError> {
       result.bind_address = Some(value.to_string());
       continue;
     }
-    if result.servers.len() == IC_MAX_CLUSTER_SERVERS {
-      return Err(IcError::new(err::IC_ERROR_TOO_MANY_CS_HOSTS));
-    }
     result.servers.push(parse_host_and_port(item)?);
   }
   if result.servers.is_empty() {
@@ -206,6 +200,23 @@ mod tests {
     assert_eq!(c.servers, vec![server("10.0.0.1", 2200)]);
     let c = parse("").expect("parse");
     assert_eq!(c.servers, vec![server("localhost", 1186)]);
+  }
+
+  #[test]
+  fn as_many_servers_as_are_given() {
+    // No limit of four, as the C had: a cluster may run more.
+    let mut text = String::new();
+    let mut i: u32 = 0;
+    while i < 12 {
+      if i > 0 {
+        text.push(',');
+      }
+      text.push_str(&format!("mgm{}:{}", i, 1186 + i));
+      i += 1;
+    }
+    let c = parse(&text).expect("parse");
+    assert_eq!(c.servers.len(), 12);
+    assert_eq!(c.servers[11], server("mgm11", 1197));
   }
 
   #[test]
@@ -259,7 +270,6 @@ mod tests {
     assert!(parse("nodeid=8191,host").is_ok());
     assert!(parse("nodeid=x,host").is_err());
     assert!(parse("[::1").is_err());
-    assert!(parse("h1,h2,h3,h4,h5").is_err());
   }
 
   /* The C unit test, test type 7. */

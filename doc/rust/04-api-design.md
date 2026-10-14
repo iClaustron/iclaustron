@@ -204,7 +204,8 @@ when doing it twice does no harm (user guide, "When to try again").
 
 No scans, no interpreted conditions, no blob columns (bound tables may
 have them; records leave them out, deletes are refused), no DDL, no TLS,
-at most 256 user threads per process (phase 7 raises it), no events.
+at most 4 711 user threads per process (RonDB's limit for an API
+node), no events.
 
 ## The C ABI
 

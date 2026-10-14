@@ -364,7 +364,7 @@
 #define IC_ERROR_MGM_SERVER_REFUSED 7132
 
 /*
- The process has as many connections as it may, 256.
+ The process has as many connections as it may, 4 711.
  */
 #define IC_ERROR_TOO_MANY_USER_THREADS 7139
 
@@ -836,7 +836,7 @@ void ic_apid_global_free(IC_APID_GLOBAL *global);
 /*
  A connection for the calling thread's use.
 
- Errors: `IC_ERROR_TOO_MANY_USER_THREADS` when the process has 256
+ Errors: `IC_ERROR_TOO_MANY_USER_THREADS` when the process has 4 711
  connections. Any thread may call it, at the same time as others. The
  connection is the caller's, freed with `ic_apid_conn_free` before the
  global; one thread uses it at a time.

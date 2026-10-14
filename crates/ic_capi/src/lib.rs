@@ -187,7 +187,7 @@ pub const IC_ERROR_NODEID_IN_USE: i32 = 7137;
 /// The management server refused the request: no API slot free, or our
 /// node id not allowed.
 pub const IC_ERROR_MGM_SERVER_REFUSED: i32 = 7132;
-/// The process has as many connections as it may, 256.
+/// The process has as many connections as it may, 4 711.
 pub const IC_ERROR_TOO_MANY_USER_THREADS: i32 = 7139;
 /// The link to a data node was lost; the node may be up. Temporary.
 pub const IC_ERROR_LINK_LOST: i32 = 7135;
@@ -957,7 +957,7 @@ pub unsafe extern "C" fn ic_apid_global_free(global: *mut IcApidGlobal) {
 
 /// A connection for the calling thread's use.
 ///
-/// Errors: `IC_ERROR_TOO_MANY_USER_THREADS` when the process has 256
+/// Errors: `IC_ERROR_TOO_MANY_USER_THREADS` when the process has 4 711
 /// connections. Any thread may call it, at the same time as others. The
 /// connection is the caller's, freed with `ic_apid_conn_free` before the
 /// global; one thread uses it at a time.

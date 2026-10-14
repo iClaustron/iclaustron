@@ -99,8 +99,9 @@ starts a global for each. Stopping the global (dropping it, or
 **One connection per thread.** A connection is one thread's view of the
 cluster: its queries, its transactions, its replies. A thread makes its
 own with `create_connection`; it may be handed to another thread, but
-only one uses it at a time. A process has at most 256 connections at
-once (`IC_ERROR_TOO_MANY_USER_THREADS`, 7139); 0.1 does not raise this.
+only one uses it at a time. A process has at most 4 711 connections at
+once, as many as RonDB lets an API node have
+(`IC_ERROR_TOO_MANY_USER_THREADS`, 7139).
 
 ## 3. Tables, indexes and records
 
@@ -453,7 +454,8 @@ transaction that goes to a cluster with no started node fails with
 - No schema changes: tables and indexes are made through a MySQL
   server.
 - No TLS between the API node and the cluster.
-- At most 256 connections per process.
+- At most 4 711 connections per process, RonDB's limit for an API
+  node.
 - Keys in three collations whose keys cannot be placed from their
   weights, `latin2_czech_cs`, `cp1250_czech_cs` and `tis620_thai_ci`,
   are not hinted: such a transaction goes to the next node in turn,

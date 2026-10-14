@@ -793,6 +793,61 @@ fn pk_a_rollback_before_the_send_sends_nothing() {
 }
 
 #[test]
+fn pk_every_user_thread_and_the_last_ones_work() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_tables().is_none() {
+    return;
+  }
+  // As many connections as an API node may have, and not one more.
+  let limit = ic_port::consts::IC_MAX_THREAD_CONNECTIONS as usize;
+  let mut conns: Vec<ApidConnection> = Vec::with_capacity(limit);
+  while conns.len() < limit {
+    conns.push(cluster.global.create_connection().expect("a connection"));
+  }
+  let e = cluster
+    .global
+    .create_connection()
+    .expect_err("every user thread is taken");
+  assert_eq!(e.code, err::IC_ERROR_TOO_MANY_USER_THREADS);
+
+  // Two threads whose block indexes differ by 4 096: their transaction
+  // ids differ in bit 38 alone, and each write's replies must come back
+  // to the thread that sent it.
+  let low: usize = 5;
+  let high: usize = low + 4096;
+  assert_eq!(conns[high].thread_id(), high as u32);
+  {
+    let conn = &mut conns[low];
+    let t = bind(conn, "pk");
+    write_pk(conn, &t, key_ops::IC_OP_WRITE, 41, "1", "low")
+      .expect("a write from the low thread");
+  }
+  {
+    let conn = &mut conns[high];
+    let t = bind(conn, "pk");
+    write_pk(conn, &t, key_ops::IC_OP_WRITE, 42, "2", "high")
+      .expect("a write from the high thread");
+    let row = read_by_id(conn, &t, 41).expect("the low thread's row");
+    assert_eq!(t.get(&row, "name"), "'low'");
+  }
+  let last = limit - 1;
+  {
+    let conn = &mut conns[last];
+    let t = bind(conn, "pk");
+    let row = read_by_id(conn, &t, 42).expect("the high thread's row");
+    assert_eq!(t.get(&row, "name"), "'high'");
+  }
+  let seen = mysql(&format!(
+    "SELECT id, name FROM {}.pk WHERE id IN (41, 42) ORDER BY id",
+    IC_IT_DB
+  ));
+  assert_eq!(seen, Some("41\tlow\n42\thigh".to_string()));
+}
+
+#[test]
 fn pk_binary_keys_are_placed_where_the_data_nodes_put_them() {
   let cluster = match cluster() {
     Some(cluster) => cluster,

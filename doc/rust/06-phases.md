@@ -1102,6 +1102,18 @@ error codes a program checks are defines of their own
 `IC_NDB_ERROR_LOCK_TIMEOUT` and so on), each checked against the
 library's by a unit test.
 
+As built, the user-thread limit (2026-10-14; `cargo xtask check` and
+the `pk` group pass): a process may have 4 711 connections, as many as RonDB lets an
+API node have (`IC_MAX_THREAD_CONNECTIONS`, checked at compile time
+against the block numbers and the transaction id's room). A
+transaction id now carries bit 12 of the block index in bit 38 and of
+the node id in bit 39, as the reference does, so threads 4 096 apart,
+and nodes 4 096 apart, make different ids; a unit test checks every
+thread index up to the limit, and the `pk` group gains a test that
+takes every user thread, is refused one more with 7139, and writes and
+reads from threads 4 096 apart and from the last. The connectstring
+takes any number of management servers, not four.
+
 ## Phase 8 — 0.2: the executor, scans and character sets (8–9 weeks)
 
 ### 8.1 The executor (2 weeks)
