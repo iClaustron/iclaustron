@@ -1,0 +1,16 @@
+[package]
+name = "ic_hashbench"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "How long a key's hash takes, against the C the data nodes run"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+ic_util.workspace = true

@@ -1114,6 +1114,64 @@ takes every user thread, is refused one more with 7139, and writes and
 reads from threads 4 096 apart and from the last. The connectstring
 takes any number of management servers, not four.
 
+The performance pass, the method (2026-10-14). The September baseline
+cannot be run against today's data nodes, which want a release id in
+`COORD_ALLOC_REQ` that it does not send, so the yardstick is the
+reference API on the same cluster, as the 0.1 criterion puts it: read
+throughput within 20% of the reference's, asynchronous, a connection
+per thread, 8 threads. `tools/perf_pass.sh` runs it all against one
+release-built cluster into one log: `ic_hashbench` against
+`xxh3_bench.c`, the data nodes' own xxHash, at keys of 4 to 1 024
+bytes, whose checks must agree; `ic_bench` reads at 1 and 8 threads,
+8 with `--force` and with two receive threads, and updates; `ic_bench`
+built with `count-allocs`, allocations per operation; and
+`flexAsynch -t 8 -p 400 -c 1`, like for like with the 8-thread run.
+
+The first run (2026-10-14, the author's Mac, two release data nodes,
+100 000 keys, 10 s each):
+- **The key hash.** XXH3 agrees with the data nodes' xxHash at every
+  size, 20 million keys each; up to 240 bytes it is level with it,
+  2.4 to 10 ns either way (16 and 32 bytes half a nanosecond slower,
+  4 and 8 faster); at 1 024 bytes 59 ns against 20, the C's vector
+  path against our scalar one, as foreseen. Distribution keys are
+  short; the vector path is not needed for 0.1. MD5, for older tables,
+  130 ns per 64-byte block.
+- **Throughput and CPU.** One thread: 2 011 000 reads a second at 497
+  ns of client CPU each. Eight: 6 098 000, 631 ns. Eight with
+  `--force`: 5 560 000, 686 ns, so the adaptive send pays its way. Eight
+  with two receive threads: 5 958 000, 760 ns, so one is right with two
+  data nodes here. Updates, one thread: 467 000 at 850 ns.
+- **The reference.** `flexAsynch`, eight threads, 400 in flight each:
+  2 565 000 reads a second, against our 6 098 000. Its rounds of 400 are
+  sent and waited for whole where ours overlap two batches of 200, so
+  the like-for-like number is ours at `--batch 400 --depth 1`, added to
+  the script with the reference's CPU.
+- **Allocations.** 5 per 1 000 reads and 6 per 1 000 updates, one per
+  batch: the benchmark's own list of a batch's transactions, now kept
+  per slot. The library's path allocates nothing per operation.
+
+The second run (2026-10-14, the same machine and cluster), with the
+like-for-like run and the reference's CPU:
+- **Like for like.** Ours at eight threads in rounds of 400, sent and
+  waited for as `flexAsynch` does (`--batch 400 --depth 1`): 5 617 000
+  reads a second at 598 ns of client CPU each. `flexAsynch`: 2 639 000,
+  with 60.8 s of CPU over its 15 s of reads, about 1 500 ns each. Twice
+  the reads for about two fifths of the CPU per read; each side used
+  some 3.8 cores. The 0.1 criterion, within 20% of the reference, is
+  met with room to spare.
+- **Adaptive send.** `--force` at eight threads was 5% faster this time
+  and 9% slower the first: within what two runs on one machine resolve.
+  The adaptive send stays the default, for the same CPU and 4 socket
+  writes per 1 000 reads against 7.
+- **Receive threads.** Two at eight user threads: 5 277 000 at 807 ns,
+  worse in both runs, by 5 to 12% in rate and 20 to 28% in CPU. One
+  receive thread is right with two data nodes.
+- **Allocations.** 6 391 over a run of 20 million reads, 5 969 over 4.8
+  million updates: setup alone, none per operation.
+- **The key hash.** As in the first run.
+
+Nothing the pass found called for a change to the library.
+
 ## Phase 8 — 0.2: the executor, scans and character sets (8–9 weeks)
 
 ### 8.1 The executor (2 weeks)

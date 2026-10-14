@@ -17,3 +17,8 @@ ic_util.workspace = true
 ic_apic.workspace = true
 ic_apid.workspace = true
 ic_signals.workspace = true
+
+[features]
+default = []
+# Count every allocation, and print how many a run made per operation.
+count-allocs = []

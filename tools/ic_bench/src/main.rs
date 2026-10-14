@@ -67,6 +67,8 @@
 //! follow bring that much back; mind the data memory, which is keys
 //! times bytes.
 
+mod alloc_count;
+
 use std::collections::HashMap;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
@@ -446,6 +448,7 @@ fn bench(global: &ApidGlobal, database: &str, table: &str, what: &Run) -> i32 {
   // the remainder.
   let per_thread = what.keys / what.threads as i64;
   let usage_before = ic_port::time::process_usage();
+  let allocs_before = alloc_count::counts();
   let reader_before = ic_apid::signal_reader::reader_stats();
   let send_before = ic_apid::apid_global::send_stats();
   let start = ic_port::time::gethrtime();
@@ -492,6 +495,7 @@ fn bench(global: &ApidGlobal, database: &str, table: &str, what: &Run) -> i32 {
   }
   tally.print(elapsed, what.threads);
   print_usage(usage_before, ic_port::time::process_usage(), tally.ops);
+  print_allocations(allocs_before, alloc_count::counts(), tally.ops);
   print_reader(reader_before, ic_apid::signal_reader::reader_stats());
   let (writes, bytes) = ic_apid::apid_global::send_stats();
   let writes = writes - send_before.0;
@@ -591,6 +595,9 @@ fn run_thread(
         idle += 1;
       }
       if running {
+        // The slot's list of transactions is filled again, keeping
+        // its allocation, so the benchmark allocates nothing per batch.
+        let mut sent = std::mem::take(&mut slots[i].sent);
         let defined = define_batch(
           &mut conn,
           def,
@@ -600,11 +607,12 @@ fn run_thread(
           range,
           next_key,
           first_slot + i,
+          &mut sent,
         );
-        slots[i].sent = match defined {
-          Ok(sent) => sent,
-          Err(e) => return Err(describe("Could not define a batch", &e)),
-        };
+        slots[i].sent = sent;
+        if let Err(e) = defined {
+          return Err(describe("Could not define a batch", &e));
+        }
         slots[i].started = ic_port::time::gethrtime();
         idle -= 1;
         next_key += what.batch as i64;
@@ -987,8 +995,9 @@ fn define_batch(
   range: KeyRange,
   first_key: i64,
   slot: usize,
-) -> Result<Vec<TransId>, IcError> {
-  let mut sent: Vec<TransId> = Vec::with_capacity(queries.len());
+  sent: &mut Vec<TransId>,
+) -> Result<(), IcError> {
+  sent.clear();
   let mut callback: Option<ic_apid::query::QueryCallback> = None;
   if what.callbacks {
     callback = Some(note_done);
@@ -1022,7 +1031,7 @@ fn define_batch(
     key += 1;
   }
   conn.send_queries(what.force)?;
-  Ok(sent)
+  Ok(())
 }
 
 /// True once every transaction of the batch is done.
@@ -1098,6 +1107,31 @@ fn print_usage(
     voluntary * 1000 / ops,
     faults,
     faults * 1000 / ops
+  );
+}
+
+/// The allocations over the run, per operation, when counted (built
+/// with `--features count-allocs`).
+fn print_allocations(
+  before: Option<(u64, u64)>,
+  after: Option<(u64, u64)>,
+  ops: u64,
+) {
+  let (before, after) = match (before, after) {
+    (Some(before), Some(after)) => (before, after),
+    _ => return,
+  };
+  if ops == 0 {
+    return;
+  }
+  let allocations = after.0 - before.0;
+  let bytes = after.1 - before.1;
+  println!(
+    "Allocations: {} over the run, {} per 1000 operations, {} bytes per \
+     operation",
+    allocations,
+    allocations * 1000 / ops,
+    bytes / ops
   );
 }
 

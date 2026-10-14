@@ -83,6 +83,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ic_hashbench"
+version = "0.1.0"
+dependencies = [
+ "ic_util",
+]
+
+[[package]]
 name = "ic_model"
 version = "0.1.0"
 

@@ -17,6 +17,7 @@ members = [
     "tools/ic_trans",
     "tools/ic_bench",
     "tools/ic_model",
+    "tools/ic_hashbench",
     "examples/rust",
     "xtask",
 ]
