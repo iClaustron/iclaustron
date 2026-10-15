@@ -50,6 +50,10 @@ pub const IC_MUTEX_LEVEL_NODE_CONN: u32 = 6;
 /// The send thread pool's queue of nodes to write for. Taken after a
 /// node's send chain has been let go of, never under it.
 pub const IC_MUTEX_LEVEL_SEND_POOL: u32 = 8;
+/// A completion slot, where an executor leaves a request's result for
+/// the application thread waiting on it. Taken last: nothing is
+/// locked under it.
+pub const IC_MUTEX_LEVEL_COMPLETION: u32 = 9;
 
 thread_local! {
     static HELD_LEVELS: RefCell<Vec<u32>> = const { RefCell::new(Vec::new()) };

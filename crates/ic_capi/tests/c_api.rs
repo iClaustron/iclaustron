@@ -569,3 +569,187 @@ fn c_api_stale_ids_are_refused() {
     ic_apid_global_free(global);
   }
 }
+
+#[test]
+fn c_api_an_executor_runs_requests_for_threads_without_connections() {
+  let global = match connect() {
+    Some(global) => global,
+    None => return,
+  };
+  if setup_capi_table().is_none() {
+    // SAFETY: the handle connect made.
+    unsafe { ic_apid_global_free(global) };
+    return;
+  }
+  let db = cs(IC_IT_DB);
+  let table_name = cs("capi");
+  let index_name = cs("capi_code$unique");
+  // SAFETY: every handle below is used while alive and freed once;
+  // every pointer is to a local or a row the library gave.
+  unsafe {
+    let mut options = std::mem::MaybeUninit::<IcExecutorOptions>::uninit();
+    ic_executor_options_init(
+      options.as_mut_ptr(),
+      std::mem::size_of::<IcExecutorOptions>(),
+    );
+    let mut options = options.assume_init();
+    options.in_flight = 32;
+    let mut executor: *mut IcApidExecutor = std::ptr::null_mut();
+    let ret = ic_apid_executor_start(global, &options, &mut executor);
+    assert_eq!(ret, 0, "start: {}", message(ret));
+    let mut submitter: *mut IcApidSubmitter = std::ptr::null_mut();
+    assert_eq!(ic_apid_executor_submitter(executor, &mut submitter), 0);
+    let mut table: *mut IcTableDef = std::ptr::null_mut();
+    let ret = ic_apid_submitter_table_bind(
+      submitter,
+      db.as_ptr(),
+      table_name.as_ptr(),
+      &mut table,
+    );
+    assert_eq!(ret, 0, "bind: {}", message(ret));
+    let id = field(table, "id");
+    let val = field(table, "val");
+    let name = field(table, "name");
+    let code = field(table, "code");
+    let mut rec: *mut IcRecord = std::ptr::null_mut();
+    assert_eq!(
+      ic_record_create_default(table, std::ptr::null(), 0, &mut rec),
+      0
+    );
+    let mut shape: *mut IcOpShape = std::ptr::null_mut();
+    assert_eq!(ic_op_shape_create(table, rec, rec, &mut shape), 0);
+
+    // Two inserts in one request: one transaction.
+    let mut request: *mut IcRequest = std::ptr::null_mut();
+    assert_eq!(ic_request_create(&mut request), 0);
+    for (key, value, text, unique) in
+      [("1", "10", "one", "100"), ("2", "20", "two", "200")]
+    {
+      let mut op: u32 = 99;
+      assert_eq!(
+        ic_request_add_write(request, shape, IC_WRITE_KIND_INSERT, &mut op),
+        0
+      );
+      let mut key_len: usize = 0;
+      let mut attr_len: usize = 0;
+      let key_row = ic_request_key_row(request, op, &mut key_len);
+      let attr_row = ic_request_attr_row(request, op, &mut attr_len);
+      assert_eq!(key_len, ic_record_row_size(rec) as usize);
+      let values = [(id, key), (val, value), (name, text), (code, unique)];
+      put(rec, key_row, key_len, &values);
+      put(rec, attr_row, attr_len, &values);
+    }
+    assert_eq!(ic_request_num_ops(request), 2);
+    let ret = ic_apid_submitter_execute(submitter, request);
+    assert_eq!(ret, 0, "insert: {}", message(ret));
+    assert_eq!(ic_request_state(request), IC_COMMIT_STATE_COMMITTED);
+    assert!(ic_request_gci(request) > 0);
+    assert_eq!(
+      mysql(&format!(
+        "SELECT id, val FROM {}.capi ORDER BY id",
+        IC_IT_DB
+      )),
+      Some("1\t10\n2\t20".to_string())
+    );
+
+    // Run again: the same inserts now find their rows there.
+    let ret = ic_apid_submitter_execute(submitter, request);
+    assert_eq!(ret, IC_NDB_ERROR_ROW_EXISTS);
+    assert_eq!(ic_request_state(request), IC_COMMIT_STATE_ROLLED_BACK);
+
+    // A read by primary key, and one of a row not there, which leaves
+    // the transaction committed.
+    assert_eq!(ic_request_clear(request), 0);
+    let mut first: u32 = 0;
+    let mut missing: u32 = 0;
+    assert_eq!(
+      ic_request_add_read(request, shape, IC_READ_KIND_COMMITTED, &mut first),
+      0
+    );
+    assert_eq!(
+      ic_request_add_read(request, shape, IC_READ_KIND_COMMITTED, &mut missing),
+      0
+    );
+    let mut len: usize = 0;
+    let row = ic_request_key_row(request, first, &mut len);
+    put(rec, row, len, &[(id, "2")]);
+    let row = ic_request_key_row(request, missing, &mut len);
+    put(rec, row, len, &[(id, "3")]);
+    let ret = ic_apid_submitter_execute(submitter, request);
+    assert_eq!(ret, 0, "read: {}", message(ret));
+    assert_eq!(ic_request_op_error(request, first), 0);
+    assert!(ic_request_op_result_len(request, first) > 0);
+    let row = ic_request_attr_row(request, first, &mut len);
+    assert_eq!(get(rec, row, len, val), "20");
+    assert_eq!(get(rec, row, len, name), "'two'");
+    assert_eq!(
+      ic_request_op_error(request, missing),
+      IC_NDB_ERROR_NO_SUCH_ROW
+    );
+
+    // Through the unique index.
+    let mut index: *mut IcIndexDef = std::ptr::null_mut();
+    let ret = ic_apid_submitter_index_bind(
+      submitter,
+      db.as_ptr(),
+      index_name.as_ptr(),
+      table_name.as_ptr(),
+      &mut index,
+    );
+    assert_eq!(ret, 0, "index bind: {}", message(ret));
+    let mut key_rec: *mut IcRecord = std::ptr::null_mut();
+    assert_eq!(ic_record_create_default(table, &code, 1, &mut key_rec), 0);
+    let mut unique: *mut IcOpShape = std::ptr::null_mut();
+    assert_eq!(
+      ic_op_shape_create_unique(index, key_rec, rec, &mut unique),
+      0
+    );
+    assert_eq!(ic_request_clear(request), 0);
+    let mut through: u32 = 0;
+    assert_eq!(
+      ic_request_add_read(
+        request,
+        unique,
+        IC_READ_KIND_COMMITTED,
+        &mut through
+      ),
+      0
+    );
+    let row = ic_request_key_row(request, through, &mut len);
+    put(key_rec, row, len, &[(code, "100")]);
+    let ret = ic_apid_submitter_execute(submitter, request);
+    assert_eq!(ret, 0, "read through the index: {}", message(ret));
+    let row = ic_request_attr_row(request, through, &mut len);
+    assert_eq!(get(rec, row, len, id), "1");
+
+    let mut stats = std::mem::MaybeUninit::<IcExecutorStats>::uninit();
+    assert_eq!(
+      ic_apid_executor_stats(
+        executor,
+        stats.as_mut_ptr(),
+        std::mem::size_of::<IcExecutorStats>()
+      ),
+      0
+    );
+    let stats = stats.assume_init();
+    assert_eq!(stats.completed, 4);
+    assert_eq!(stats.refused, 0);
+
+    // Once the executor is freed, its submitter refuses, and the request
+    // is left as it was.
+    ic_apid_executor_free(executor);
+    let ret = ic_apid_submitter_execute(submitter, request);
+    assert_eq!(ret, IC_ERROR_EXECUTOR_STOPPED);
+    assert_eq!(ic_request_num_ops(request), 1);
+
+    ic_request_free(request);
+    ic_op_shape_free(unique);
+    ic_op_shape_free(shape);
+    ic_record_free(key_rec);
+    ic_record_free(rec);
+    ic_index_def_free(index);
+    ic_table_def_free(table);
+    ic_apid_submitter_free(submitter);
+    ic_apid_global_free(global);
+  }
+}

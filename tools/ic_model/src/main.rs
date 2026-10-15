@@ -28,6 +28,19 @@
 //! what they cost once, however much they carry: batching is the model's
 //! subject.
 //!
+//! **Executors.** With `executors` set, the user threads are executors
+//! (`ic_apid::executor`) instead, serving `clients` application threads
+//! that each make one blocking call at a time: a client spends
+//! `think_ns` and `submit_ns`, and wakes its executor if it sleeps; the
+//! executor admits every request waiting, up to `in_flight` out, as one
+//! batch of whatever size has gathered; and as each reply completes a
+//! request it spends `deliver_ns` and wakes the client sleeping on its
+//! slot. Each line then counts requests, and the latency is a call's,
+//! from submit to return. `submit_ns` is the whole of a caller's own
+//! cost of a call, its going to sleep and waking included: fitted
+//! 2026-10-15 to the same Mac, where it took about 5 µs a call
+//! (chapter 12, "Executors").
+//!
 //! Threads that share too few cores slow each other down. With `cores`
 //! set, the model runs again with every cost stretched by the factor by
 //! which the CPU it asks for exceeds the cores, until that settles: a
@@ -91,6 +104,12 @@ struct Params {
   warmup: f64,
   jitter: f64,
   seed: u64,
+  executors: usize,
+  clients: usize,
+  in_flight: usize,
+  submit_ns: f64,
+  deliver_ns: f64,
+  think_ns: f64,
 }
 
 impl Params {
@@ -136,6 +155,12 @@ impl Params {
       warmup: 0.02,
       jitter: 0.2,
       seed: 1,
+      executors: 0,
+      clients: 64,
+      in_flight: 400,
+      submit_ns: 5000.0,
+      deliver_ns: 250.0,
+      think_ns: 0.0,
     }
   }
 
@@ -183,6 +208,12 @@ impl Params {
       "warmup" => self.warmup = value,
       "jitter" => self.jitter = value,
       "seed" => self.seed = count as u64,
+      "executors" => self.executors = count,
+      "clients" => self.clients = count.max(1),
+      "in_flight" => self.in_flight = count.max(1),
+      "submit_ns" => self.submit_ns = value,
+      "deliver_ns" => self.deliver_ns = value,
+      "think_ns" => self.think_ns = value,
       _ => return false,
     }
     true
@@ -223,6 +254,10 @@ enum Event {
   Round(usize),
   /// A client receive thread's round is over, its posts delivered.
   RoundEnd(usize),
+  /// An application thread's request reaches its executor's inbox.
+  Submit(usize),
+  /// An application thread wakes with its request done.
+  ClientWake(usize),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -237,6 +272,9 @@ struct Slot {
   busy: bool,
   left: usize,
   sent: f64,
+  /// An executor's batch: the application threads whose requests it
+  /// carries, handed back as replies complete them.
+  clients: Vec<usize>,
 }
 
 struct User {
@@ -245,6 +283,10 @@ struct User {
   slots: Vec<Slot>,
   spin_id: u64,
   spin_start: f64,
+  /// An executor's requests waiting to be admitted, by client.
+  waiting: Vec<usize>,
+  /// An executor's requests out.
+  in_flight: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -312,6 +354,8 @@ struct Sim<'a> {
   users: Vec<User>,
   rxs: Vec<Rx>,
   nodes: Vec<Node>,
+  /// When each application thread called, for executors.
+  submitted: Vec<f64>,
   st: Stats,
   warm: f64,
   end: f64,
@@ -392,9 +436,159 @@ impl Sim<'_> {
     self.at(t, Event::UserIdle(u));
   }
 
+  /// An executor's pass: replies complete requests, each handed back
+  /// to its client with a wake-up; then everything waiting, up to the
+  /// in-flight limit, goes as one batch.
+  fn poll_executor(&mut self, u: usize, now: f64) {
+    let p = self.p;
+    let f = self.f;
+    self.users[u].state = UserState::Busy;
+    let mut user = 0.0;
+    let mut sys = 0.0;
+    let mut t = now;
+    let inbox = std::mem::take(&mut self.users[u].inbox);
+    for (slot, ops) in inbox {
+      let c = ops as f64 * (p.complete_ns + p.deliver_ns);
+      user += c;
+      t += c * f;
+      let n = ops.min(self.users[u].slots[slot].clients.len());
+      let mut i: usize = 0;
+      while i < n {
+        let client = match self.users[u].slots[slot].clients.pop() {
+          Some(client) => client,
+          None => break,
+        };
+        // The client sleeps on its slot; waking it is the executor's.
+        sys += p.wake_cpu_ns;
+        t += p.wake_cpu_ns * f;
+        if now >= self.warm {
+          self.st.wakes += 1;
+        }
+        self.at(t + p.wake_latency_ns * f, Event::ClientWake(client));
+        i += 1;
+      }
+      let s = &mut self.users[u].slots[slot];
+      s.left -= n.min(s.left);
+      if s.left == 0 {
+        s.busy = false;
+      }
+      self.users[u].in_flight -= n.min(self.users[u].in_flight);
+    }
+    let room = p.in_flight.saturating_sub(self.users[u].in_flight);
+    let k = room.min(self.users[u].waiting.len());
+    if k > 0 {
+      let c = k as f64 * p.define_ns + p.batch_ns;
+      user += c;
+      t += c * f;
+      let mut slot = self.users[u].slots.len();
+      let mut j: usize = 0;
+      while j < self.users[u].slots.len() {
+        if !self.users[u].slots[j].busy {
+          slot = j;
+          break;
+        }
+        j += 1;
+      }
+      if slot == self.users[u].slots.len() {
+        self.users[u].slots.push(Slot {
+          busy: false,
+          left: 0,
+          sent: 0.0,
+          clients: Vec::new(),
+        });
+      }
+      let rest = self.users[u].waiting.split_off(k);
+      let taken = std::mem::replace(&mut self.users[u].waiting, rest);
+      let s = &mut self.users[u].slots[slot];
+      s.busy = true;
+      s.left = k;
+      s.sent = t;
+      s.clients = taken;
+      self.users[u].in_flight += k;
+      let per = k / p.nodes;
+      let mut n: usize = 0;
+      while n < p.nodes {
+        let mut ops = per;
+        if n < k % p.nodes {
+          ops += 1;
+        }
+        if ops > 0 {
+          let c = p.write_ns + ops as f64 * p.request_bytes * p.write_byte_ns;
+          sys += c;
+          t += c * f;
+          if now >= self.warm {
+            self.st.writes += 1;
+          }
+          self.at(t + p.net_ns, Event::Request(n, u, slot, ops));
+        }
+        n += 1;
+      }
+    }
+    if now >= self.warm {
+      self.st.user_ns += user;
+      self.st.sys_ns += sys;
+    }
+    self.st.demand_ns += user + sys;
+    self.at(t, Event::UserIdle(u));
+  }
+
+  /// A request reaches its executor; a sleeping executor is woken by
+  /// the client that submits, which pays for the wake-up, unless it is
+  /// at its in-flight limit and sleeps for replies alone.
+  fn submit(&mut self, c: usize, now: f64) {
+    let u = c % self.users.len();
+    self.users[u].waiting.push(c);
+    if self.users[u].in_flight >= self.p.in_flight {
+      return;
+    }
+    match self.users[u].state {
+      UserState::Spinning => {
+        self.users[u].state = UserState::Busy;
+        self.at(now, Event::Poll(u));
+      }
+      UserState::Sleeping => {
+        self.users[u].state = UserState::Waking;
+        if now >= self.warm {
+          self.st.wakes += 1;
+          self.st.sys_ns += self.p.wake_cpu_ns;
+        }
+        self.st.demand_ns += self.p.wake_cpu_ns;
+        self.at(now + self.p.wake_latency_ns * self.f, Event::Poll(u));
+      }
+      _ => {}
+    }
+  }
+
+  /// A client's call returns; it thinks, and calls again.
+  fn client_wake(&mut self, c: usize, now: f64) {
+    let p = self.p;
+    if now >= self.warm && self.submitted[c] >= self.warm {
+      self.st.ops += 1;
+      self.st.latencies.push(now - self.submitted[c]);
+    }
+    if now >= self.end {
+      return;
+    }
+    let called = now + p.think_ns * self.f;
+    self.submitted[c] = called;
+    if now >= self.warm {
+      self.st.user_ns += p.think_ns + p.submit_ns;
+    }
+    self.st.demand_ns += p.think_ns + p.submit_ns;
+    self.at(called + p.submit_ns * self.f, Event::Submit(c));
+  }
+
   fn user_idle(&mut self, u: usize, now: f64) {
-    if !self.users[u].inbox.is_empty() {
-      self.poll(u, now);
+    let executor = self.p.executors > 0;
+    let idle = &self.users[u];
+    let admit =
+      executor && !idle.waiting.is_empty() && idle.in_flight < self.p.in_flight;
+    if !idle.inbox.is_empty() || admit {
+      if executor {
+        self.poll_executor(u, now);
+      } else {
+        self.poll(u, now);
+      }
       return;
     }
     let mut outstanding = false;
@@ -533,7 +727,7 @@ impl Sim<'_> {
     self.rxs[rx].state = RxState::Busy;
     let queue = std::mem::take(&mut self.rxs[rx].queue);
     let mut node_seen = vec![false; p.nodes];
-    let mut thread_seen = vec![false; p.threads];
+    let mut thread_seen = vec![false; self.users.len()];
     let mut ops: usize = 0;
     let mut reads: u64 = 0;
     let mut posts: u64 = 0;
@@ -599,14 +793,23 @@ struct Outcome {
 }
 
 fn run(p: &Params, f: f64) -> Outcome {
-  let mut users: Vec<User> = Vec::with_capacity(p.threads);
-  while users.len() < p.threads {
-    let mut slots: Vec<Slot> = Vec::with_capacity(p.depth);
-    while slots.len() < p.depth {
+  let executors = p.executors > 0;
+  let mut count = p.threads;
+  let mut depth = p.depth;
+  if executors {
+    // An executor's batches are made as requests come.
+    count = p.executors;
+    depth = 0;
+  }
+  let mut users: Vec<User> = Vec::with_capacity(count);
+  while users.len() < count {
+    let mut slots: Vec<Slot> = Vec::with_capacity(depth);
+    while slots.len() < depth {
       slots.push(Slot {
         busy: false,
         left: 0,
         sent: 0.0,
+        clients: Vec::new(),
       });
     }
     users.push(User {
@@ -615,7 +818,13 @@ fn run(p: &Params, f: f64) -> Outcome {
       slots,
       spin_id: 0,
       spin_start: 0.0,
+      waiting: Vec::new(),
+      in_flight: 0,
     });
+  }
+  let mut clients: usize = 0;
+  if executors {
+    clients = p.clients;
   }
   let mut rxs: Vec<Rx> = Vec::with_capacity(p.receive_threads);
   while rxs.len() < p.receive_threads {
@@ -645,14 +854,23 @@ fn run(p: &Params, f: f64) -> Outcome {
     users,
     rxs,
     nodes,
+    submitted: vec![0.0; clients],
     st: Stats::default(),
     warm,
     end,
   };
   let mut u: usize = 0;
-  while u < p.threads {
+  while u < count {
     sim.at(0.0, Event::Poll(u));
     u += 1;
+  }
+  // The clients start a little apart, as threads do.
+  let mut c: usize = 0;
+  while c < clients {
+    let at = c as f64 * p.submit_ns;
+    sim.submitted[c] = at;
+    sim.at(at + p.submit_ns, Event::Submit(c));
+    c += 1;
   }
   while let Some(Reverse((time, _, event))) = sim.heap.pop() {
     let now = time as f64;
@@ -660,7 +878,15 @@ fn run(p: &Params, f: f64) -> Outcome {
       break;
     }
     match event {
-      Event::Poll(u) => sim.poll(u, now),
+      Event::Poll(u) => {
+        if executors {
+          sim.poll_executor(u, now);
+        } else {
+          sim.poll(u, now);
+        }
+      }
+      Event::Submit(c) => sim.submit(c, now),
+      Event::ClientWake(c) => sim.client_wake(c, now),
       Event::UserIdle(u) => sim.user_idle(u, now),
       Event::SpinEnd(u, id) => sim.spin_end(u, id, now),
       Event::Request(n, u, slot, ops) => sim.request(n, u, slot, ops, now),
@@ -899,6 +1125,46 @@ mod tests {
     p.node_spin_ns = 1e9;
     let spinning = solve(&p);
     assert!(spinning.p50_us < asleep.p50_us);
+  }
+
+  #[test]
+  fn executors_batch_more_as_clients_are_added() {
+    let mut p = quick();
+    p.cores = 0.0;
+    p.executors = 1;
+    p.clients = 4;
+    let few = solve(&p);
+    p.clients = 256;
+    let many = solve(&p);
+    assert!(many.rate > few.rate * 4.0, "{} {}", many.rate, few.rate);
+    // The executor's costs are shared by more requests a batch.
+    assert!(many.writes < few.writes, "{} {}", many.writes, few.writes);
+  }
+
+  #[test]
+  fn a_call_through_an_executor_costs_two_hand_offs() {
+    // One client alone: its call waits for the executor to wake, the
+    // round trip, and its own wake-up, which a connection of its own
+    // would not pay.
+    let mut p = quick();
+    p.cores = 0.0;
+    p.node_wake_ns = 0.0;
+    p.executors = 1;
+    p.clients = 1;
+    let through = solve(&p);
+    let mut own = quick();
+    own.cores = 0.0;
+    own.node_wake_ns = 0.0;
+    own.threads = 1;
+    own.depth = 1;
+    own.batch = 1;
+    let alone = solve(&own);
+    assert!(
+      through.p50_us > alone.p50_us,
+      "{} {}",
+      through.p50_us,
+      alone.p50_us
+    );
   }
 
   #[test]

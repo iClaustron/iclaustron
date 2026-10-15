@@ -34,12 +34,14 @@ after_includes = """
  * IC_ERROR_TIMEOUT, or one of NDB's temporary errors.
  *
  * Handles. IC_APID_GLOBAL, IC_APID_CONNECTION, IC_TABLE_DEF,
- * IC_INDEX_DEF and IC_RECORD are made by one function and given back to
- * their _free; the caller owns each until then. A connection is freed
- * before its global; a table, index or record handle may outlive the
- * connection that made it, and a query keeps what it needs of its
- * records. A NULL handle or out pointer gives IC_ERROR_NULL_POINTER; a
- * handle freed, or never made, is undefined behaviour.
+ * IC_INDEX_DEF, IC_RECORD, IC_APID_EXECUTOR, IC_APID_SUBMITTER,
+ * IC_OP_SHAPE and IC_REQUEST are made by one function and given back to
+ * their _free; the caller owns each until then. A connection, and an
+ * executor, is freed before its global; a table, index or record handle
+ * may outlive the connection that made it, a query keeps what it needs
+ * of its records, and a request what it needs of its shapes. A NULL
+ * handle or out pointer gives IC_ERROR_NULL_POINTER; a handle freed, or
+ * never made, is undefined behaviour.
  *
  * Ids. A query (IC_QUERY_ID) and a transaction (IC_TRANS_ID) are named
  * by an id in their connection. An id that names nothing any more,
@@ -50,16 +52,19 @@ after_includes = """
  * freed, aligned to a byte and no more, so copy a struct in and out
  * with memcpy. The program fills the rows before it defines the query
  * and reads the attribute row once it has completed; between the two
- * they are the library's. The synchronous calls take the program's own
- * rows, and copy.
+ * they are the library's. A request's operations own their rows the
+ * same way (ic_request_key_row(), ic_request_attr_row()), valid until
+ * the request is freed or cleared, and the library's while it runs.
+ * The synchronous calls take the program's own rows, and copy.
  *
  * Strings. Strings in are NUL-terminated UTF-8, and copied. A string
  * out, a table's or a field's name, lives as long as the handle it came
  * from; an error's text is copied into the caller's buffer.
  *
- * Structs with a size. IC_GLOBAL_OPTIONS, IC_READ_KEY_ARGS and
- * IC_WRITE_KEY_ARGS are filled by their _init(&s, sizeof s) before the
- * program sets what it wants; IC_FIELD_INFO is given with its size. A
+ * Structs with a size. IC_GLOBAL_OPTIONS, IC_EXECUTOR_OPTIONS,
+ * IC_READ_KEY_ARGS and IC_WRITE_KEY_ARGS are filled by their
+ * _init(&s, sizeof s) before the program sets what it wants;
+ * IC_FIELD_INFO and IC_EXECUTOR_STATS are given with their size. A
  * later release adds fields at the end.
  *
  * Threads. The functions that take no handle (ic_api_version,
@@ -69,6 +74,17 @@ after_includes = """
  * with its queries and transactions, is used by one thread at a time;
  * it may change threads between calls. A callback runs on the thread
  * that polls, inside the poll.
+ *
+ * Executors. A thread with no connection of its own runs key
+ * operations through an executor: a thread of the library's, with a
+ * connection, that runs the requests of any number of threads and
+ * sends together whatever it admits at once. Each thread makes its own
+ * submitter (ic_apid_executor_submitter()), binds tables through it,
+ * describes its operations once as shapes (ic_op_shape_create()), and
+ * runs a request, a transaction of operations, with
+ * ic_apid_submitter_execute(), which blocks until the transaction has
+ * ended. An executor, its shapes and its stats may be used from any
+ * thread; a submitter and a request by one at a time.
  *
  * Panics. A panic inside the library returns IC_ERROR_INTERNAL_PANIC;
  * the connection it went through is unusable from then on, and every
@@ -101,6 +117,12 @@ include = ["IcApidCallback"]
 "IcReadKeyArgs" = "IC_READ_KEY_ARGS"
 "IcWriteKeyArgs" = "IC_WRITE_KEY_ARGS"
 "IcTransactionHint" = "IC_TRANSACTION_HINT"
+"IcApidExecutor" = "IC_APID_EXECUTOR"
+"IcApidSubmitter" = "IC_APID_SUBMITTER"
+"IcOpShape" = "IC_OP_SHAPE"
+"IcRequest" = "IC_REQUEST"
+"IcExecutorOptions" = "IC_EXECUTOR_OPTIONS"
+"IcExecutorStats" = "IC_EXECUTOR_STATS"
 
 [enum]
 prefix_with_name = false

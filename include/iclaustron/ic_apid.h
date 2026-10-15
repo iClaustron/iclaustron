@@ -33,12 +33,14 @@
  * IC_ERROR_TIMEOUT, or one of NDB's temporary errors.
  *
  * Handles. IC_APID_GLOBAL, IC_APID_CONNECTION, IC_TABLE_DEF,
- * IC_INDEX_DEF and IC_RECORD are made by one function and given back to
- * their _free; the caller owns each until then. A connection is freed
- * before its global; a table, index or record handle may outlive the
- * connection that made it, and a query keeps what it needs of its
- * records. A NULL handle or out pointer gives IC_ERROR_NULL_POINTER; a
- * handle freed, or never made, is undefined behaviour.
+ * IC_INDEX_DEF, IC_RECORD, IC_APID_EXECUTOR, IC_APID_SUBMITTER,
+ * IC_OP_SHAPE and IC_REQUEST are made by one function and given back to
+ * their _free; the caller owns each until then. A connection, and an
+ * executor, is freed before its global; a table, index or record handle
+ * may outlive the connection that made it, a query keeps what it needs
+ * of its records, and a request what it needs of its shapes. A NULL
+ * handle or out pointer gives IC_ERROR_NULL_POINTER; a handle freed, or
+ * never made, is undefined behaviour.
  *
  * Ids. A query (IC_QUERY_ID) and a transaction (IC_TRANS_ID) are named
  * by an id in their connection. An id that names nothing any more,
@@ -49,16 +51,19 @@
  * freed, aligned to a byte and no more, so copy a struct in and out
  * with memcpy. The program fills the rows before it defines the query
  * and reads the attribute row once it has completed; between the two
- * they are the library's. The synchronous calls take the program's own
- * rows, and copy.
+ * they are the library's. A request's operations own their rows the
+ * same way (ic_request_key_row(), ic_request_attr_row()), valid until
+ * the request is freed or cleared, and the library's while it runs.
+ * The synchronous calls take the program's own rows, and copy.
  *
  * Strings. Strings in are NUL-terminated UTF-8, and copied. A string
  * out, a table's or a field's name, lives as long as the handle it came
  * from; an error's text is copied into the caller's buffer.
  *
- * Structs with a size. IC_GLOBAL_OPTIONS, IC_READ_KEY_ARGS and
- * IC_WRITE_KEY_ARGS are filled by their _init(&s, sizeof s) before the
- * program sets what it wants; IC_FIELD_INFO is given with its size. A
+ * Structs with a size. IC_GLOBAL_OPTIONS, IC_EXECUTOR_OPTIONS,
+ * IC_READ_KEY_ARGS and IC_WRITE_KEY_ARGS are filled by their
+ * _init(&s, sizeof s) before the program sets what it wants;
+ * IC_FIELD_INFO and IC_EXECUTOR_STATS are given with their size. A
  * later release adds fields at the end.
  *
  * Threads. The functions that take no handle (ic_api_version,
@@ -68,6 +73,17 @@
  * with its queries and transactions, is used by one thread at a time;
  * it may change threads between calls. A callback runs on the thread
  * that polls, inside the poll.
+ *
+ * Executors. A thread with no connection of its own runs key
+ * operations through an executor: a thread of the library's, with a
+ * connection, that runs the requests of any number of threads and
+ * sends together whatever it admits at once. Each thread makes its own
+ * submitter (ic_apid_executor_submitter()), binds tables through it,
+ * describes its operations once as shapes (ic_op_shape_create()), and
+ * runs a request, a transaction of operations, with
+ * ic_apid_submitter_execute(), which blocks until the transaction has
+ * ended. An executor, its shapes and its stats may be used from any
+ * thread; a submitter and a request by one at a time.
  *
  * Panics. A panic inside the library returns IC_ERROR_INTERNAL_PANIC;
  * the connection it went through is unusable from then on, and every
@@ -479,10 +495,27 @@
 #define IC_ERROR_RECORD_SIZE_TOO_BIG 7077
 
 /*
+ An executor's list of requests is full. Temporary.
+ */
+#define IC_ERROR_EXECUTOR_BUSY 7159
+
+/*
+ The executor has stopped and takes no requests; the request was not
+ run.
+ */
+#define IC_ERROR_EXECUTOR_STOPPED 7160
+
+/*
  One thread's connection to the cluster (`IC_APID_CONNECTION`).
  Opaque.
  */
 typedef struct IC_APID_CONNECTION IC_APID_CONNECTION;
+
+/*
+ An executor: a thread of the library's that runs requests for any
+ number of the program's threads (`IC_APID_EXECUTOR`). Opaque.
+ */
+typedef struct IC_APID_EXECUTOR IC_APID_EXECUTOR;
 
 /*
  The Data API, started (`IC_APID_GLOBAL`). Opaque.
@@ -490,14 +523,31 @@ typedef struct IC_APID_CONNECTION IC_APID_CONNECTION;
 typedef struct IC_APID_GLOBAL IC_APID_GLOBAL;
 
 /*
+ A thread's handle on an executor (`IC_APID_SUBMITTER`). Opaque.
+ */
+typedef struct IC_APID_SUBMITTER IC_APID_SUBMITTER;
+
+/*
  A unique index's description (`IC_INDEX_DEF`). Opaque.
  */
 typedef struct IC_INDEX_DEF IC_INDEX_DEF;
 
 /*
+ The shape of a key operation: a table, or a unique index of it, and
+ the records of its rows (`IC_OP_SHAPE`). Opaque.
+ */
+typedef struct IC_OP_SHAPE IC_OP_SHAPE;
+
+/*
  How a row is laid out (`IC_RECORD`). Opaque.
  */
 typedef struct IC_RECORD IC_RECORD;
+
+/*
+ A transaction of key operations for an executor, with their rows
+ (`IC_REQUEST`). Opaque.
+ */
+typedef struct IC_REQUEST IC_REQUEST;
 
 /*
  A table's description (`IC_TABLE_DEF`). Opaque.
@@ -693,6 +743,64 @@ typedef struct {
    */
   uint32_t value;
 } IC_TRANSACTION_HINT;
+
+/*
+ Choices an executor is started with (`IC_EXECUTOR_OPTIONS`).
+ */
+typedef struct {
+  /*
+   The struct's size, as `ic_executor_options_init` was given it.
+   */
+  uint32_t size;
+  /*
+   Requests out at most, each a transaction holding a record at its
+   coordinator; 400 by default.
+   */
+  uint32_t in_flight;
+  /*
+   Requests waiting at most before a submit is refused or waits;
+   4 000 by default.
+   */
+  uint32_t queue;
+} IC_EXECUTOR_OPTIONS;
+
+/*
+ What an executor has done since it started (`IC_EXECUTOR_STATS`).
+ */
+typedef struct {
+  /*
+   The struct's size, as the caller gave it.
+   */
+  uint32_t size;
+  /*
+   Requests taken in.
+   */
+  uint64_t submitted;
+  /*
+   Requests refused: no room, or the executor stopping.
+   */
+  uint64_t refused;
+  /*
+   Requests admitted: their transactions defined and sent.
+   */
+  uint64_t admitted;
+  /*
+   Requests handed back, whatever their outcome.
+   */
+  uint64_t completed;
+  /*
+   Requests failed unsent because their deadline had passed.
+   */
+  uint64_t expired;
+  /*
+   Batches sent; admitted over sends is requests per batch.
+   */
+  uint64_t sends;
+  /*
+   Passes of the executor's loop.
+   */
+  uint64_t passes;
+} IC_EXECUTOR_STATS;
 
 /*
  What is called when a query completes (`IC_APID_CALLBACK`): on the
@@ -1636,6 +1744,424 @@ int32_t ic_apid_conn_write(IC_APID_CONNECTION *conn,
                            const IC_RECORD *attr_rec,
                            const uint8_t *attr_row,
                            size_t attr_len);
+
+/*
+ Fill `options`, `size` bytes, with the defaults.
+
+ Leaves `options` as it is when `size` is smaller than this header's
+ `IC_EXECUTOR_OPTIONS`.
+
+ # Safety
+
+ A non-null `options` points to `size` writable bytes.
+ */
+void ic_executor_options_init(IC_EXECUTOR_OPTIONS *options, size_t size);
+
+/*
+ Start an executor: a thread of the library's, with a connection of
+ its own, that runs requests for any number of the program's threads,
+ each through a submitter of its own (`ic_apid_executor_submitter`).
+ Everything it admits in one pass goes in one write per data node, so
+ under load the requests of many threads travel together. `options`
+ may be NULL for the defaults.
+
+ Errors: `IC_ERROR_TOO_MANY_USER_THREADS` when the process has 4 711
+ connections, the executor's own being one; `IC_ERROR_INCONSISTENT_DATA` for
+ `options` not filled by `ic_executor_options_init`; an operating system
+ error when its thread cannot be started. The executor is the caller's,
+ freed with `ic_apid_executor_free` before the global.
+
+ # Safety
+
+ `global` is a global handle not yet freed; a non-null `options` was
+ filled by `ic_executor_options_init`; `executor` points to writable
+ storage for a pointer.
+ */
+int32_t ic_apid_executor_start(IC_APID_GLOBAL *global,
+                               const IC_EXECUTOR_OPTIONS *options,
+                               IC_APID_EXECUTOR **executor);
+
+/*
+ Stop an executor and free it. Requests not yet admitted come back
+ with `IC_ERROR_EXECUTOR_STOPPED`; those out are finished first, so
+ this waits for their replies.
+
+ Its submitters stay valid and refuse every request from here on;
+ free them before or after. No thread may be inside a call on the
+ executor itself meanwhile.
+
+ # Safety
+
+ A non-null `executor` is an executor handle not yet freed, freed
+ here, and this is not called from inside an executor's own thread.
+ */
+void ic_apid_executor_free(IC_APID_EXECUTOR *executor);
+
+/*
+ What the executor has done since it started, into `stats`, `size`
+ bytes.
+
+ Errors: `IC_ERROR_INCONSISTENT_DATA` when `size` is smaller than this
+ header's `IC_EXECUTOR_STATS`. Any thread may call it.
+
+ # Safety
+
+ `executor` is an executor handle not yet freed; `stats` points to
+ `size` writable bytes.
+ */
+int32_t ic_apid_executor_stats(const IC_APID_EXECUTOR *executor,
+                               IC_EXECUTOR_STATS *stats,
+                               size_t size);
+
+/*
+ A submitter: one thread's handle on an executor, through which it
+ binds tables and runs requests. Make one per thread.
+
+ Any thread may call it. The submitter is the caller's, freed with
+ `ic_apid_submitter_free`; one thread uses it at a time.
+
+ # Safety
+
+ `executor` is an executor handle not yet freed; `submitter` points to
+ writable storage for a pointer.
+ */
+int32_t ic_apid_executor_submitter(const IC_APID_EXECUTOR *executor,
+                                   IC_APID_SUBMITTER **submitter);
+
+/*
+ Free a submitter.
+
+ # Safety
+
+ A non-null `submitter` is a submitter handle not yet freed, freed
+ here, with no call on it under way.
+ */
+void ic_apid_submitter_free(IC_APID_SUBMITTER *submitter);
+
+/*
+ Bind a table through the executor, for a thread that has no
+ connection of its own: as `ic_apid_conn_table_bind`.
+
+ Errors: as `ic_apid_conn_table_bind`; `IC_ERROR_EXECUTOR_STOPPED`. The
+ executor waits for the dictionary meanwhile, so bind once, not per
+ request. The handle is the caller's, freed with `ic_table_def_free`.
+
+ # Safety
+
+ `submitter` is a submitter handle not yet freed; `db` and `table` are
+ NUL-terminated strings; `def` points to writable storage for a
+ pointer.
+ */
+int32_t ic_apid_submitter_table_bind(IC_APID_SUBMITTER *submitter,
+                                     const char *db,
+                                     const char *table,
+                                     IC_TABLE_DEF **def);
+
+/*
+ Bind a unique index through the executor: as
+ `ic_apid_conn_index_bind`.
+
+ Errors: as `ic_apid_conn_index_bind`; `IC_ERROR_EXECUTOR_STOPPED`. The
+ handle is the caller's, freed with `ic_index_def_free`.
+
+ # Safety
+
+ As `ic_apid_submitter_table_bind`, with `index` a NUL-terminated
+ string.
+ */
+int32_t ic_apid_submitter_index_bind(IC_APID_SUBMITTER *submitter,
+                                     const char *db,
+                                     const char *index,
+                                     const char *table,
+                                     IC_INDEX_DEF **def);
+
+/*
+ The shape of key operations on a table by primary key: the records
+ their key rows and attribute rows are laid out by. Made once, and
+ shared by every request that uses it.
+
+ Errors: `IC_ERROR_KEY_RECORD` when the key record does not hold every
+ primary key field, or a record is over another table or another version of
+ it. The shape is the caller's, freed with `ic_op_shape_free`; any thread
+ may use it, and a request keeps what it needs of it.
+
+ # Safety
+
+ `def`, `key_rec` and `attr_rec` are handles not yet freed; `shape`
+ points to writable storage for a pointer.
+ */
+int32_t ic_op_shape_create(const IC_TABLE_DEF *def,
+                           const IC_RECORD *key_rec,
+                           const IC_RECORD *attr_rec,
+                           IC_OP_SHAPE **shape);
+
+/*
+ The shape of key operations through a unique index: the key record
+ holds the indexed columns, and both records are over the index's
+ table.
+
+ Errors: as `ic_op_shape_create`; `IC_ERROR_NOT_SUPPORTED` for an index
+ that is not unique.
+
+ # Safety
+
+ As `ic_op_shape_create`, with `index` an index handle.
+ */
+int32_t ic_op_shape_create_unique(const IC_INDEX_DEF *index,
+                                  const IC_RECORD *key_rec,
+                                  const IC_RECORD *attr_rec,
+                                  IC_OP_SHAPE **shape);
+
+/*
+ Free a shape handle. Requests that hold operations of it keep what
+ they need.
+
+ # Safety
+
+ A non-null `shape` is a shape handle not yet freed, freed here.
+ */
+void ic_op_shape_free(IC_OP_SHAPE *shape);
+
+/*
+ A request with no operations: a transaction for an executor to run.
+ A request is filled once and run again and again, its rows changed
+ between runs.
+
+ The request is the caller's, freed with `ic_request_free`; one thread
+ uses it at a time.
+
+ # Safety
+
+ `request` points to writable storage for a pointer.
+ */
+int32_t ic_request_create(IC_REQUEST **request);
+
+/*
+ Free a request, its rows with it.
+
+ # Safety
+
+ A non-null `request` is a request handle not yet freed, freed here,
+ and not being run.
+ */
+void ic_request_free(IC_REQUEST *request);
+
+/*
+ Drop every operation of a request, and the row pointers they gave.
+
+ # Safety
+
+ `request` is a request handle not yet freed, not being run.
+ */
+int32_t ic_request_clear(IC_REQUEST *request);
+
+/*
+ Add a read of `shape` to a request, `kind` one of the
+ `IC_READ_KIND_*` values, after the operations already there, and give
+ its number in `op` (which may be NULL). Its key row and attribute
+ row are zeroed, at the sizes the shape's records give.
+
+ Errors: `IC_ERROR_NOT_SUPPORTED` for a kind no define names.
+
+ # Safety
+
+ `request` is a request handle and `shape` a shape handle, neither yet
+ freed nor the request being run; a non-null `op` points to a
+ writable `uint32_t`.
+ */
+int32_t ic_request_add_read(IC_REQUEST *request,
+                            const IC_OP_SHAPE *shape,
+                            uint32_t kind,
+                            uint32_t *op);
+
+/*
+ Add a write of `shape` to a request, `kind` one of the
+ `IC_WRITE_KIND_*` values: as `ic_request_add_read`.
+
+ Errors: `IC_ERROR_NOT_SUPPORTED` for a kind no define names.
+
+ # Safety
+
+ As `ic_request_add_read`.
+ */
+int32_t ic_request_add_write(IC_REQUEST *request,
+                             const IC_OP_SHAPE *shape,
+                             uint32_t kind,
+                             uint32_t *op);
+
+/*
+ What a failure of operation `op` does to the transaction: one of
+ `IC_ABORT_DEFAULT`, `IC_ABORT_ON_ERROR`, `IC_IGNORE_ERROR`.
+
+ Errors: `IC_ERROR_NOT_SUPPORTED` for a value no define names;
+ `IC_ERROR_NO_SUCH_FIELD` for an `op` the request does not have.
+
+ # Safety
+
+ `request` is a request handle not yet freed, not being run.
+ */
+int32_t ic_request_set_abort_option(IC_REQUEST *request,
+                                    uint32_t op,
+                                    uint32_t abort_option);
+
+/*
+ Where the request's transaction starts: the hint's node or
+ partition, or with NULL, the default, by the first operation's key.
+ A partition is of the first operation's table, or of its index's own
+ table.
+
+ # Safety
+
+ `request` is a request handle not yet freed, not being run; a
+ non-null `hint` points to a readable `IC_TRANSACTION_HINT`.
+ */
+int32_t ic_request_set_hint(IC_REQUEST *request,
+                            const IC_TRANSACTION_HINT *hint);
+
+/*
+ Give up on the request if the executor has not admitted it within
+ `ms` milliseconds from now: it then fails with `IC_ERROR_TIMEOUT`,
+ unsent. 0 takes the deadline away. Set it before each run.
+
+ # Safety
+
+ `request` is a request handle not yet freed, not being run.
+ */
+int32_t ic_request_set_timeout_ms(IC_REQUEST *request, uint32_t ms);
+
+/*
+ How many operations the request has; 0 for a null handle.
+
+ # Safety
+
+ A non-null `request` is a request handle not yet freed.
+ */
+uint32_t ic_request_num_ops(const IC_REQUEST *request);
+
+/*
+ Operation `op`'s key row and its length, to fill before the request
+ is run. Valid until the request is freed or cleared, through every
+ run; NULL for an `op` the request does not have.
+
+ # Safety
+
+ `request` is a request handle not yet freed; a non-null `len` points
+ to a writable `size_t`. The row is not touched while the request runs.
+ */
+uint8_t *ic_request_key_row(IC_REQUEST *request, uint32_t op, size_t *len);
+
+/*
+ Operation `op`'s attribute row and its length: a write's values, to
+ fill before the request is run, or the row a read brought, once it
+ has. Valid as `ic_request_key_row`'s.
+
+ # Safety
+
+ As `ic_request_key_row`.
+ */
+uint8_t *ic_request_attr_row(IC_REQUEST *request, uint32_t op, size_t *len);
+
+/*
+ Why operation `op` failed in the last run, or 0: for a read,
+ `IC_NDB_ERROR_NO_SUCH_ROW` when the row is not there, which leaves
+ the transaction committed. `IC_ERROR_NO_SUCH_FIELD` for an `op` the
+ request does not have.
+
+ # Safety
+
+ A non-null `request` is a request handle not yet freed.
+ */
+int32_t ic_request_op_error(const IC_REQUEST *request, uint32_t op);
+
+/*
+ What the data node said of operation `op`'s failure beyond its code,
+ or 0: for `IC_NDB_ERROR_UNIQUE_DUPLICATE`, the index's id.
+
+ # Safety
+
+ A non-null `request` is a request handle not yet freed.
+ */
+uint32_t ic_request_op_error_data(const IC_REQUEST *request, uint32_t op);
+
+/*
+ Bytes of row data operation `op`, a read, brought in the last run;
+ 0 for a write, or a row that was not there.
+
+ # Safety
+
+ A non-null `request` is a request handle not yet freed.
+ */
+uint32_t ic_request_op_result_len(const IC_REQUEST *request, uint32_t op);
+
+/*
+ Where the last run's transaction ended: `IC_COMMIT_STATE_COMMITTED`
+ or `IC_COMMIT_STATE_ROLLED_BACK`; `IC_COMMIT_STATE_UNKNOWN` for a
+ null handle.
+
+ # Safety
+
+ A non-null `request` is a request handle not yet freed.
+ */
+uint32_t ic_request_state(const IC_REQUEST *request);
+
+/*
+ Why the last run's transaction did not commit, or why its reads were
+ lost when a takeover committed it; 0 if neither.
+
+ # Safety
+
+ A non-null `request` is a request handle not yet freed.
+ */
+int32_t ic_request_error(const IC_REQUEST *request);
+
+/*
+ What the coordinator said of the transaction's error beyond its
+ code, or 0.
+
+ # Safety
+
+ A non-null `request` is a request handle not yet freed.
+ */
+uint32_t ic_request_error_data(const IC_REQUEST *request);
+
+/*
+ The global checkpoint the last run's commit went into, or 0.
+
+ # Safety
+
+ A non-null `request` is a request handle not yet freed.
+ */
+uint64_t ic_request_gci(const IC_REQUEST *request);
+
+/*
+ Run a request through the executor and wait for its transaction to
+ end: every operation defined together, the commit on the last, and
+ sent with whatever else the executor admits meanwhile. The request
+ comes back with the rows read and each operation's outcome
+ (`ic_request_op_error`).
+
+ Errors: the transaction's own, as the data node gives it, when it
+ did not commit: for a write, `IC_NDB_ERROR_NO_SUCH_ROW`,
+ `IC_NDB_ERROR_ROW_EXISTS`, `IC_NDB_ERROR_UNIQUE_DUPLICATE`; a failed
+ read alone leaves it committed and says so in its operation. Before
+ anything is sent: an operation's own refusal, as `ic_apid_conn_read_key`
+ and `ic_apid_conn_write_key` give them; `IC_ERROR_TIMEOUT` when the
+ request's deadline passed before the executor admitted it;
+ `IC_ERROR_EXECUTOR_STOPPED` when the executor is stopped, the request
+ left as it was; `IC_ERROR_NOT_SUPPORTED` when called on the executor's
+ own thread. `IC_ERROR_INTERNAL_PANIC` when the executor's thread failed:
+ the request is then empty, and its row pointers invalid. It blocks the
+ calling thread until the transaction ends, a wait the cluster's reply
+ timeout bounds (`IC_NDB_ERROR_NO_REPLY`), and waits for room when the
+ executor's list is full.
+
+ # Safety
+
+ `submitter` and `request` are handles not yet freed, each used by
+ this thread alone meanwhile.
+ */
+int32_t ic_apid_submitter_execute(IC_APID_SUBMITTER *submitter,
+                                  IC_REQUEST *request);
 
 #ifdef __cplusplus
 }  // extern "C"

@@ -37,6 +37,12 @@ use ic_apid::apid_global::ApidGlobal;
 use ic_apid::apid_global::GlobalOptions;
 use ic_apid::dict_cache::IndexDef;
 use ic_apid::dict_cache::TableDef;
+use ic_apid::executor::Executor;
+use ic_apid::executor::ExecutorOptions;
+use ic_apid::executor::KeyOp;
+use ic_apid::executor::OpShape;
+use ic_apid::executor::Request;
+use ic_apid::executor::Submitter;
 use ic_apid::key_op;
 use ic_apid::query::AbortOption;
 use ic_apid::query::BatchHint;
@@ -236,6 +242,11 @@ pub const IC_ERROR_INDEXED_COLUMN_UPDATE: i32 = 7155;
 pub const IC_ERROR_KEY_TOO_LONG: i32 = 7156;
 /// More column data than a request may carry, 32 768 words.
 pub const IC_ERROR_RECORD_SIZE_TOO_BIG: i32 = 7077;
+/// An executor's list of requests is full. Temporary.
+pub const IC_ERROR_EXECUTOR_BUSY: i32 = 7159;
+/// The executor has stopped and takes no requests; the request was not
+/// run.
+pub const IC_ERROR_EXECUTOR_STOPPED: i32 = 7160;
 
 // ---- Types ----
 
@@ -262,6 +273,29 @@ pub struct IcIndexDef {
 
 /// How a row is laid out (`IC_RECORD`). Opaque.
 pub struct IcRecord {
+  _private: [u8; 0],
+}
+
+/// An executor: a thread of the library's that runs requests for any
+/// number of the program's threads (`IC_APID_EXECUTOR`). Opaque.
+pub struct IcApidExecutor {
+  _private: [u8; 0],
+}
+
+/// A thread's handle on an executor (`IC_APID_SUBMITTER`). Opaque.
+pub struct IcApidSubmitter {
+  _private: [u8; 0],
+}
+
+/// The shape of a key operation: a table, or a unique index of it, and
+/// the records of its rows (`IC_OP_SHAPE`). Opaque.
+pub struct IcOpShape {
+  _private: [u8; 0],
+}
+
+/// A transaction of key operations for an executor, with their rows
+/// (`IC_REQUEST`). Opaque.
+pub struct IcRequest {
   _private: [u8; 0],
 }
 
@@ -389,6 +423,42 @@ pub struct IcWriteKeyArgs {
   >,
   /// Given back with the completed query.
   pub user_ref: *mut c_void,
+}
+
+/// Choices an executor is started with (`IC_EXECUTOR_OPTIONS`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct IcExecutorOptions {
+  /// The struct's size, as `ic_executor_options_init` was given it.
+  pub size: u32,
+  /// Requests out at most, each a transaction holding a record at its
+  /// coordinator; 400 by default.
+  pub in_flight: u32,
+  /// Requests waiting at most before a submit is refused or waits;
+  /// 4 000 by default.
+  pub queue: u32,
+}
+
+/// What an executor has done since it started (`IC_EXECUTOR_STATS`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct IcExecutorStats {
+  /// The struct's size, as the caller gave it.
+  pub size: u32,
+  /// Requests taken in.
+  pub submitted: u64,
+  /// Requests refused: no room, or the executor stopping.
+  pub refused: u64,
+  /// Requests admitted: their transactions defined and sent.
+  pub admitted: u64,
+  /// Requests handed back, whatever their outcome.
+  pub completed: u64,
+  /// Requests failed unsent because their deadline had passed.
+  pub expired: u64,
+  /// Batches sent; admitted over sends is requests per batch.
+  pub sends: u64,
+  /// Passes of the executor's loop.
+  pub passes: u64,
 }
 
 /// Which node should coordinate a transaction
@@ -636,6 +706,27 @@ fn hint_from_c(hint: IcTransactionHint) -> TransactionHint {
     IC_HINT_NODE => TransactionHint::Node(hint.value),
     IC_HINT_PARTITION => TransactionHint::Partition(hint.value),
     _ => TransactionHint::Any,
+  }
+}
+
+fn read_kind_from_c(value: u32) -> Option<ReadKind> {
+  match value {
+    IC_READ_KIND_SIMPLE => Some(ReadKind::Simple),
+    IC_READ_KIND_LOCKED => Some(ReadKind::Locked),
+    IC_READ_KIND_EXCLUSIVE => Some(ReadKind::Exclusive),
+    IC_READ_KIND_COMMITTED => Some(ReadKind::Committed),
+    IC_READ_KIND_EXCLUSIVE_NO_WAIT => Some(ReadKind::ExclusiveNoWait),
+    _ => None,
+  }
+}
+
+fn write_kind_from_c(value: u32) -> Option<WriteKind> {
+  match value {
+    IC_WRITE_KIND_UPDATE => Some(WriteKind::Update),
+    IC_WRITE_KIND_WRITE => Some(WriteKind::Write),
+    IC_WRITE_KIND_INSERT => Some(WriteKind::Insert),
+    IC_WRITE_KIND_DELETE => Some(WriteKind::Delete),
+    _ => None,
   }
 }
 
@@ -2017,13 +2108,9 @@ pub unsafe extern "C" fn ic_apid_conn_read_key(
   if (given.size as usize) < std::mem::size_of::<IcReadKeyArgs>() {
     return err::IC_ERROR_INCONSISTENT_DATA;
   }
-  let kind = match given.kind {
-    IC_READ_KIND_SIMPLE => ReadKind::Simple,
-    IC_READ_KIND_LOCKED => ReadKind::Locked,
-    IC_READ_KIND_EXCLUSIVE => ReadKind::Exclusive,
-    IC_READ_KIND_COMMITTED => ReadKind::Committed,
-    IC_READ_KIND_EXCLUSIVE_NO_WAIT => ReadKind::ExclusiveNoWait,
-    _ => return err::IC_ERROR_NOT_SUPPORTED,
+  let kind = match read_kind_from_c(given.kind) {
+    Some(kind) => kind,
+    None => return err::IC_ERROR_NOT_SUPPORTED,
   };
   let abort_option = match abort_from_c(given.abort_option) {
     Some(option) => option,
@@ -2080,12 +2167,9 @@ pub unsafe extern "C" fn ic_apid_conn_write_key(
   if (given.size as usize) < std::mem::size_of::<IcWriteKeyArgs>() {
     return err::IC_ERROR_INCONSISTENT_DATA;
   }
-  let kind = match given.kind {
-    IC_WRITE_KIND_UPDATE => WriteKind::Update,
-    IC_WRITE_KIND_WRITE => WriteKind::Write,
-    IC_WRITE_KIND_INSERT => WriteKind::Insert,
-    IC_WRITE_KIND_DELETE => WriteKind::Delete,
-    _ => return err::IC_ERROR_NOT_SUPPORTED,
+  let kind = match write_kind_from_c(given.kind) {
+    Some(kind) => kind,
+    None => return err::IC_ERROR_NOT_SUPPORTED,
   };
   let abort_option = match abort_from_c(given.abort_option) {
     Some(option) => option,
@@ -2712,6 +2796,911 @@ pub unsafe extern "C" fn ic_apid_conn_write(
   }
 }
 
+// ---- Executors ----
+
+/// The executor behind a handle.
+///
+/// # Safety
+///
+/// A non-null `executor` is an executor handle not yet freed.
+unsafe fn executor_of<'a>(
+  executor: *const IcApidExecutor,
+) -> Option<&'a Executor> {
+  // SAFETY: the caller's promise.
+  unsafe { (executor as *const Executor).as_ref() }
+}
+
+/// The submitter behind a handle.
+///
+/// # Safety
+///
+/// A non-null `submitter` is a submitter handle not yet freed, used by
+/// one thread at a time.
+unsafe fn submitter_of<'a>(
+  submitter: *mut IcApidSubmitter,
+) -> Option<&'a mut Submitter> {
+  // SAFETY: the caller's promise.
+  unsafe { (submitter as *mut Submitter).as_mut() }
+}
+
+/// The shape behind a handle.
+///
+/// # Safety
+///
+/// A non-null `shape` is a shape handle not yet freed.
+unsafe fn shape_of<'a>(shape: *const IcOpShape) -> Option<&'a Arc<OpShape>> {
+  // SAFETY: the caller's promise.
+  unsafe { (shape as *const Arc<OpShape>).as_ref() }
+}
+
+/// The request behind a handle.
+///
+/// # Safety
+///
+/// A non-null `request` is a request handle not yet freed, used by one
+/// thread at a time.
+unsafe fn request_of<'a>(request: *mut IcRequest) -> Option<&'a mut Request> {
+  // SAFETY: the caller's promise.
+  unsafe { (request as *mut Request).as_mut() }
+}
+
+/// As [`request_of`], to read.
+///
+/// # Safety
+///
+/// As [`request_of`].
+unsafe fn request_ref<'a>(request: *const IcRequest) -> Option<&'a Request> {
+  // SAFETY: the caller's promise.
+  unsafe { (request as *const Request).as_ref() }
+}
+
+/// Operation `op` of a request, to read.
+///
+/// # Safety
+///
+/// As [`request_of`].
+unsafe fn op_ref<'a>(request: *const IcRequest, op: u32) -> Option<&'a KeyOp> {
+  // SAFETY: the caller's promise.
+  let found = unsafe { request_ref(request) }?;
+  found.ops().get(op as usize)
+}
+
+/// Fill `options`, `size` bytes, with the defaults.
+///
+/// Leaves `options` as it is when `size` is smaller than this header's
+/// `IC_EXECUTOR_OPTIONS`.
+///
+/// # Safety
+///
+/// A non-null `options` points to `size` writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn ic_executor_options_init(
+  options: *mut IcExecutorOptions,
+  size: usize,
+) {
+  if options.is_null() || size < std::mem::size_of::<IcExecutorOptions>() {
+    return;
+  }
+  let defaults = ExecutorOptions::default();
+  let value = IcExecutorOptions {
+    size: size as u32,
+    in_flight: defaults.in_flight,
+    queue: defaults.queue,
+  };
+  // SAFETY: the caller's promise; the struct fits.
+  unsafe { options.write(value) };
+}
+
+/// Start an executor: a thread of the library's, with a connection of
+/// its own, that runs requests for any number of the program's threads,
+/// each through a submitter of its own (`ic_apid_executor_submitter`).
+/// Everything it admits in one pass goes in one write per data node, so
+/// under load the requests of many threads travel together. `options`
+/// may be NULL for the defaults.
+///
+/// Errors: `IC_ERROR_TOO_MANY_USER_THREADS` when the process has 4 711
+/// connections, the executor's own being one; `IC_ERROR_INCONSISTENT_DATA` for
+/// `options` not filled by `ic_executor_options_init`; an operating system
+/// error when its thread cannot be started. The executor is the caller's,
+/// freed with `ic_apid_executor_free` before the global.
+///
+/// # Safety
+///
+/// `global` is a global handle not yet freed; a non-null `options` was
+/// filled by `ic_executor_options_init`; `executor` points to writable
+/// storage for a pointer.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_executor_start(
+  global: *mut IcApidGlobal,
+  options: *const IcExecutorOptions,
+  executor: *mut *mut IcApidExecutor,
+) -> i32 {
+  if executor.is_null() {
+    return err::IC_ERROR_NULL_POINTER;
+  }
+  // SAFETY: the caller's promise.
+  let g = match unsafe { global_of(global) } {
+    Some(g) => g,
+    None => return err::IC_ERROR_NULL_POINTER,
+  };
+  let mut opts = ExecutorOptions::default();
+  // SAFETY: the caller's promise.
+  if let Some(given) = unsafe { options.as_ref() } {
+    if (given.size as usize) < std::mem::size_of::<IcExecutorOptions>() {
+      return err::IC_ERROR_INCONSISTENT_DATA;
+    }
+    opts.in_flight = given.in_flight;
+    opts.queue = given.queue;
+  }
+  guarded(|| match Executor::start(g, &opts) {
+    Ok(started) => {
+      let handle = Box::into_raw(Box::new(started)) as *mut IcApidExecutor;
+      // SAFETY: checked non-null above; the caller's promise.
+      unsafe { executor.write(handle) };
+      0
+    }
+    Err(e) => e.code,
+  })
+}
+
+/// Stop an executor and free it. Requests not yet admitted come back
+/// with `IC_ERROR_EXECUTOR_STOPPED`; those out are finished first, so
+/// this waits for their replies.
+///
+/// Its submitters stay valid and refuse every request from here on;
+/// free them before or after. No thread may be inside a call on the
+/// executor itself meanwhile.
+///
+/// # Safety
+///
+/// A non-null `executor` is an executor handle not yet freed, freed
+/// here, and this is not called from inside an executor's own thread.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_executor_free(executor: *mut IcApidExecutor) {
+  if executor.is_null() {
+    return;
+  }
+  // SAFETY: the caller's promise; the handle is the box start made.
+  let owned = unsafe { Box::from_raw(executor as *mut Executor) };
+  // Dropping it stops it and waits for its thread.
+  let _ = guarded(move || {
+    drop(owned);
+    0
+  });
+}
+
+/// What the executor has done since it started, into `stats`, `size`
+/// bytes.
+///
+/// Errors: `IC_ERROR_INCONSISTENT_DATA` when `size` is smaller than this
+/// header's `IC_EXECUTOR_STATS`. Any thread may call it.
+///
+/// # Safety
+///
+/// `executor` is an executor handle not yet freed; `stats` points to
+/// `size` writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_executor_stats(
+  executor: *const IcApidExecutor,
+  stats: *mut IcExecutorStats,
+  size: usize,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let e = match unsafe { executor_of(executor) } {
+    Some(e) => e,
+    None => return err::IC_ERROR_NULL_POINTER,
+  };
+  if stats.is_null() {
+    return err::IC_ERROR_NULL_POINTER;
+  }
+  if size < std::mem::size_of::<IcExecutorStats>() {
+    return err::IC_ERROR_INCONSISTENT_DATA;
+  }
+  let now = e.stats();
+  let value = IcExecutorStats {
+    size: size as u32,
+    submitted: now.submitted,
+    refused: now.refused,
+    admitted: now.admitted,
+    completed: now.completed,
+    expired: now.expired,
+    sends: now.sends,
+    passes: now.passes,
+  };
+  // SAFETY: the caller's promise; the struct fits.
+  unsafe { stats.write(value) };
+  0
+}
+
+/// A submitter: one thread's handle on an executor, through which it
+/// binds tables and runs requests. Make one per thread.
+///
+/// Any thread may call it. The submitter is the caller's, freed with
+/// `ic_apid_submitter_free`; one thread uses it at a time.
+///
+/// # Safety
+///
+/// `executor` is an executor handle not yet freed; `submitter` points to
+/// writable storage for a pointer.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_executor_submitter(
+  executor: *const IcApidExecutor,
+  submitter: *mut *mut IcApidSubmitter,
+) -> i32 {
+  if submitter.is_null() {
+    return err::IC_ERROR_NULL_POINTER;
+  }
+  // SAFETY: the caller's promise.
+  let e = match unsafe { executor_of(executor) } {
+    Some(e) => e,
+    None => return err::IC_ERROR_NULL_POINTER,
+  };
+  guarded(|| {
+    let made = e.submitter();
+    let handle = Box::into_raw(Box::new(made)) as *mut IcApidSubmitter;
+    // SAFETY: checked non-null above; the caller's promise.
+    unsafe { submitter.write(handle) };
+    0
+  })
+}
+
+/// Free a submitter.
+///
+/// # Safety
+///
+/// A non-null `submitter` is a submitter handle not yet freed, freed
+/// here, with no call on it under way.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_submitter_free(
+  submitter: *mut IcApidSubmitter,
+) {
+  if submitter.is_null() {
+    return;
+  }
+  // SAFETY: the caller's promise; the handle is the box made for it.
+  let owned = unsafe { Box::from_raw(submitter as *mut Submitter) };
+  let _ = guarded(move || {
+    drop(owned);
+    0
+  });
+}
+
+/// Bind a table through the executor, for a thread that has no
+/// connection of its own: as `ic_apid_conn_table_bind`.
+///
+/// Errors: as `ic_apid_conn_table_bind`; `IC_ERROR_EXECUTOR_STOPPED`. The
+/// executor waits for the dictionary meanwhile, so bind once, not per
+/// request. The handle is the caller's, freed with `ic_table_def_free`.
+///
+/// # Safety
+///
+/// `submitter` is a submitter handle not yet freed; `db` and `table` are
+/// NUL-terminated strings; `def` points to writable storage for a
+/// pointer.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_submitter_table_bind(
+  submitter: *mut IcApidSubmitter,
+  db: *const c_char,
+  table: *const c_char,
+  def: *mut *mut IcTableDef,
+) -> i32 {
+  if def.is_null() {
+    return err::IC_ERROR_NULL_POINTER;
+  }
+  // SAFETY: the caller's promise.
+  let s = match unsafe { submitter_of(submitter) } {
+    Some(s) => s,
+    None => return err::IC_ERROR_NULL_POINTER,
+  };
+  // SAFETY: the caller's promise.
+  let (db, table) = match unsafe { (text_arg(db), text_arg(table)) } {
+    (Ok(db), Ok(table)) => (db, table),
+    (Err(code), _) | (_, Err(code)) => return code,
+  };
+  guarded(|| match s.table_bind(db, table) {
+    Ok(bound) => {
+      // SAFETY: checked non-null above; the caller's promise.
+      unsafe { def.write(table_handle(bound)) };
+      0
+    }
+    Err(e) => e.code,
+  })
+}
+
+/// Bind a unique index through the executor: as
+/// `ic_apid_conn_index_bind`.
+///
+/// Errors: as `ic_apid_conn_index_bind`; `IC_ERROR_EXECUTOR_STOPPED`. The
+/// handle is the caller's, freed with `ic_index_def_free`.
+///
+/// # Safety
+///
+/// As `ic_apid_submitter_table_bind`, with `index` a NUL-terminated
+/// string.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_submitter_index_bind(
+  submitter: *mut IcApidSubmitter,
+  db: *const c_char,
+  index: *const c_char,
+  table: *const c_char,
+  def: *mut *mut IcIndexDef,
+) -> i32 {
+  if def.is_null() {
+    return err::IC_ERROR_NULL_POINTER;
+  }
+  // SAFETY: the caller's promise.
+  let s = match unsafe { submitter_of(submitter) } {
+    Some(s) => s,
+    None => return err::IC_ERROR_NULL_POINTER,
+  };
+  // SAFETY: the caller's promise.
+  let texts = unsafe { (text_arg(db), text_arg(index), text_arg(table)) };
+  let (db, index, table) = match texts {
+    (Ok(db), Ok(index), Ok(table)) => (db, index, table),
+    (Err(code), _, _) | (_, Err(code), _) | (_, _, Err(code)) => return code,
+  };
+  guarded(|| match s.index_bind(db, index, table) {
+    Ok(bound) => {
+      let handle = Index {
+        name: c_string(bound.name()),
+        def: bound,
+      };
+      let raw = Box::into_raw(Box::new(handle)) as *mut IcIndexDef;
+      // SAFETY: checked non-null above; the caller's promise.
+      unsafe { def.write(raw) };
+      0
+    }
+    Err(e) => e.code,
+  })
+}
+
+/// The shape of key operations on a table by primary key: the records
+/// their key rows and attribute rows are laid out by. Made once, and
+/// shared by every request that uses it.
+///
+/// Errors: `IC_ERROR_KEY_RECORD` when the key record does not hold every
+/// primary key field, or a record is over another table or another version of
+/// it. The shape is the caller's, freed with `ic_op_shape_free`; any thread
+/// may use it, and a request keeps what it needs of it.
+///
+/// # Safety
+///
+/// `def`, `key_rec` and `attr_rec` are handles not yet freed; `shape`
+/// points to writable storage for a pointer.
+#[no_mangle]
+pub unsafe extern "C" fn ic_op_shape_create(
+  def: *const IcTableDef,
+  key_rec: *const IcRecord,
+  attr_rec: *const IcRecord,
+  shape: *mut *mut IcOpShape,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let (table, key, attr) =
+    match unsafe { (table_of(def), record_of(key_rec), record_of(attr_rec)) } {
+      (Some(table), Some(key), Some(attr)) => (table, key, attr),
+      _ => return err::IC_ERROR_NULL_POINTER,
+    };
+  if shape.is_null() {
+    return err::IC_ERROR_NULL_POINTER;
+  }
+  guarded(|| match OpShape::new(&table.def, key, attr) {
+    Ok(made) => {
+      let handle = Box::into_raw(Box::new(made)) as *mut IcOpShape;
+      // SAFETY: checked non-null above; the caller's promise.
+      unsafe { shape.write(handle) };
+      0
+    }
+    Err(e) => e.code,
+  })
+}
+
+/// The shape of key operations through a unique index: the key record
+/// holds the indexed columns, and both records are over the index's
+/// table.
+///
+/// Errors: as `ic_op_shape_create`; `IC_ERROR_NOT_SUPPORTED` for an index
+/// that is not unique.
+///
+/// # Safety
+///
+/// As `ic_op_shape_create`, with `index` an index handle.
+#[no_mangle]
+pub unsafe extern "C" fn ic_op_shape_create_unique(
+  index: *const IcIndexDef,
+  key_rec: *const IcRecord,
+  attr_rec: *const IcRecord,
+  shape: *mut *mut IcOpShape,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let handles =
+    unsafe { (index_of(index), record_of(key_rec), record_of(attr_rec)) };
+  let (index, key, attr) = match handles {
+    (Some(index), Some(key), Some(attr)) => (index, key, attr),
+    _ => return err::IC_ERROR_NULL_POINTER,
+  };
+  if shape.is_null() {
+    return err::IC_ERROR_NULL_POINTER;
+  }
+  guarded(|| match OpShape::new_unique(&index.def, key, attr) {
+    Ok(made) => {
+      let handle = Box::into_raw(Box::new(made)) as *mut IcOpShape;
+      // SAFETY: checked non-null above; the caller's promise.
+      unsafe { shape.write(handle) };
+      0
+    }
+    Err(e) => e.code,
+  })
+}
+
+/// Free a shape handle. Requests that hold operations of it keep what
+/// they need.
+///
+/// # Safety
+///
+/// A non-null `shape` is a shape handle not yet freed, freed here.
+#[no_mangle]
+pub unsafe extern "C" fn ic_op_shape_free(shape: *mut IcOpShape) {
+  if shape.is_null() {
+    return;
+  }
+  // SAFETY: the caller's promise; the handle is the box made for it.
+  let owned = unsafe { Box::from_raw(shape as *mut Arc<OpShape>) };
+  let _ = guarded(move || {
+    drop(owned);
+    0
+  });
+}
+
+/// A request with no operations: a transaction for an executor to run.
+/// A request is filled once and run again and again, its rows changed
+/// between runs.
+///
+/// The request is the caller's, freed with `ic_request_free`; one thread
+/// uses it at a time.
+///
+/// # Safety
+///
+/// `request` points to writable storage for a pointer.
+#[no_mangle]
+pub unsafe extern "C" fn ic_request_create(
+  request: *mut *mut IcRequest,
+) -> i32 {
+  if request.is_null() {
+    return err::IC_ERROR_NULL_POINTER;
+  }
+  guarded(|| {
+    let handle = Box::into_raw(Box::new(Request::new())) as *mut IcRequest;
+    // SAFETY: checked non-null above; the caller's promise.
+    unsafe { request.write(handle) };
+    0
+  })
+}
+
+/// Free a request, its rows with it.
+///
+/// # Safety
+///
+/// A non-null `request` is a request handle not yet freed, freed here,
+/// and not being run.
+#[no_mangle]
+pub unsafe extern "C" fn ic_request_free(request: *mut IcRequest) {
+  if request.is_null() {
+    return;
+  }
+  // SAFETY: the caller's promise; the handle is the box made for it.
+  let owned = unsafe { Box::from_raw(request as *mut Request) };
+  let _ = guarded(move || {
+    drop(owned);
+    0
+  });
+}
+
+/// Drop every operation of a request, and the row pointers they gave.
+///
+/// # Safety
+///
+/// `request` is a request handle not yet freed, not being run.
+#[no_mangle]
+pub unsafe extern "C" fn ic_request_clear(request: *mut IcRequest) -> i32 {
+  // SAFETY: the caller's promise.
+  match unsafe { request_of(request) } {
+    Some(r) => guarded(|| {
+      r.clear();
+      0
+    }),
+    None => err::IC_ERROR_NULL_POINTER,
+  }
+}
+
+/// Add a read of `shape` to a request, `kind` one of the
+/// `IC_READ_KIND_*` values, after the operations already there, and give
+/// its number in `op` (which may be NULL). Its key row and attribute
+/// row are zeroed, at the sizes the shape's records give.
+///
+/// Errors: `IC_ERROR_NOT_SUPPORTED` for a kind no define names.
+///
+/// # Safety
+///
+/// `request` is a request handle and `shape` a shape handle, neither yet
+/// freed nor the request being run; a non-null `op` points to a
+/// writable `uint32_t`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_request_add_read(
+  request: *mut IcRequest,
+  shape: *const IcOpShape,
+  kind: u32,
+  op: *mut u32,
+) -> i32 {
+  let read = match read_kind_from_c(kind) {
+    Some(read) => read,
+    None => return err::IC_ERROR_NOT_SUPPORTED,
+  };
+  // SAFETY: the caller's promise.
+  let (r, sh) = match unsafe { (request_of(request), shape_of(shape)) } {
+    (Some(r), Some(sh)) => (r, sh),
+    _ => return err::IC_ERROR_NULL_POINTER,
+  };
+  guarded(|| {
+    r.push(KeyOp::read(sh, read));
+    if !op.is_null() {
+      // SAFETY: the caller's promise.
+      unsafe { op.write(r.ops().len() as u32 - 1) };
+    }
+    0
+  })
+}
+
+/// Add a write of `shape` to a request, `kind` one of the
+/// `IC_WRITE_KIND_*` values: as `ic_request_add_read`.
+///
+/// Errors: `IC_ERROR_NOT_SUPPORTED` for a kind no define names.
+///
+/// # Safety
+///
+/// As `ic_request_add_read`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_request_add_write(
+  request: *mut IcRequest,
+  shape: *const IcOpShape,
+  kind: u32,
+  op: *mut u32,
+) -> i32 {
+  let write = match write_kind_from_c(kind) {
+    Some(write) => write,
+    None => return err::IC_ERROR_NOT_SUPPORTED,
+  };
+  // SAFETY: the caller's promise.
+  let (r, sh) = match unsafe { (request_of(request), shape_of(shape)) } {
+    (Some(r), Some(sh)) => (r, sh),
+    _ => return err::IC_ERROR_NULL_POINTER,
+  };
+  guarded(|| {
+    r.push(KeyOp::write(sh, write));
+    if !op.is_null() {
+      // SAFETY: the caller's promise.
+      unsafe { op.write(r.ops().len() as u32 - 1) };
+    }
+    0
+  })
+}
+
+/// What a failure of operation `op` does to the transaction: one of
+/// `IC_ABORT_DEFAULT`, `IC_ABORT_ON_ERROR`, `IC_IGNORE_ERROR`.
+///
+/// Errors: `IC_ERROR_NOT_SUPPORTED` for a value no define names;
+/// `IC_ERROR_NO_SUCH_FIELD` for an `op` the request does not have.
+///
+/// # Safety
+///
+/// `request` is a request handle not yet freed, not being run.
+#[no_mangle]
+pub unsafe extern "C" fn ic_request_set_abort_option(
+  request: *mut IcRequest,
+  op: u32,
+  abort_option: u32,
+) -> i32 {
+  let option = match abort_from_c(abort_option) {
+    Some(option) => option,
+    None => return err::IC_ERROR_NOT_SUPPORTED,
+  };
+  // SAFETY: the caller's promise.
+  let r = match unsafe { request_of(request) } {
+    Some(r) => r,
+    None => return err::IC_ERROR_NULL_POINTER,
+  };
+  match r.ops_mut().get_mut(op as usize) {
+    Some(found) => {
+      found.set_abort_option(option);
+      0
+    }
+    None => err::IC_ERROR_NO_SUCH_FIELD,
+  }
+}
+
+/// Where the request's transaction starts: the hint's node or
+/// partition, or with NULL, the default, by the first operation's key.
+/// A partition is of the first operation's table, or of its index's own
+/// table.
+///
+/// # Safety
+///
+/// `request` is a request handle not yet freed, not being run; a
+/// non-null `hint` points to a readable `IC_TRANSACTION_HINT`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_request_set_hint(
+  request: *mut IcRequest,
+  hint: *const IcTransactionHint,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let r = match unsafe { request_of(request) } {
+    Some(r) => r,
+    None => return err::IC_ERROR_NULL_POINTER,
+  };
+  // SAFETY: the caller's promise.
+  let given = unsafe { hint.as_ref() };
+  r.set_hint(given.map(|h| hint_from_c(*h)));
+  0
+}
+
+/// Give up on the request if the executor has not admitted it within
+/// `ms` milliseconds from now: it then fails with `IC_ERROR_TIMEOUT`,
+/// unsent. 0 takes the deadline away. Set it before each run.
+///
+/// # Safety
+///
+/// `request` is a request handle not yet freed, not being run.
+#[no_mangle]
+pub unsafe extern "C" fn ic_request_set_timeout_ms(
+  request: *mut IcRequest,
+  ms: u32,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  match unsafe { request_of(request) } {
+    Some(r) => {
+      r.set_timeout_ms(ms);
+      0
+    }
+    None => err::IC_ERROR_NULL_POINTER,
+  }
+}
+
+/// How many operations the request has; 0 for a null handle.
+///
+/// # Safety
+///
+/// A non-null `request` is a request handle not yet freed.
+#[no_mangle]
+pub unsafe extern "C" fn ic_request_num_ops(request: *const IcRequest) -> u32 {
+  // SAFETY: the caller's promise.
+  match unsafe { request_ref(request) } {
+    Some(r) => r.ops().len() as u32,
+    None => 0,
+  }
+}
+
+/// Operation `op`'s key row and its length, to fill before the request
+/// is run. Valid until the request is freed or cleared, through every
+/// run; NULL for an `op` the request does not have.
+///
+/// # Safety
+///
+/// `request` is a request handle not yet freed; a non-null `len` points
+/// to a writable `size_t`. The row is not touched while the request runs.
+#[no_mangle]
+pub unsafe extern "C" fn ic_request_key_row(
+  request: *mut IcRequest,
+  op: u32,
+  len: *mut usize,
+) -> *mut u8 {
+  let mut row: *mut u8 = std::ptr::null_mut();
+  let mut row_len: usize = 0;
+  // SAFETY: the caller's promise.
+  if let Some(r) = unsafe { request_of(request) } {
+    if let Some(found) = r.ops_mut().get_mut(op as usize) {
+      let bytes = found.key_row_mut();
+      row = bytes.as_mut_ptr();
+      row_len = bytes.len();
+    }
+  }
+  if !len.is_null() {
+    // SAFETY: the caller's promise.
+    unsafe { len.write(row_len) };
+  }
+  row
+}
+
+/// Operation `op`'s attribute row and its length: a write's values, to
+/// fill before the request is run, or the row a read brought, once it
+/// has. Valid as `ic_request_key_row`'s.
+///
+/// # Safety
+///
+/// As `ic_request_key_row`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_request_attr_row(
+  request: *mut IcRequest,
+  op: u32,
+  len: *mut usize,
+) -> *mut u8 {
+  let mut row: *mut u8 = std::ptr::null_mut();
+  let mut row_len: usize = 0;
+  // SAFETY: the caller's promise.
+  if let Some(r) = unsafe { request_of(request) } {
+    if let Some(found) = r.ops_mut().get_mut(op as usize) {
+      let bytes = found.attr_row_mut();
+      row = bytes.as_mut_ptr();
+      row_len = bytes.len();
+    }
+  }
+  if !len.is_null() {
+    // SAFETY: the caller's promise.
+    unsafe { len.write(row_len) };
+  }
+  row
+}
+
+/// Why operation `op` failed in the last run, or 0: for a read,
+/// `IC_NDB_ERROR_NO_SUCH_ROW` when the row is not there, which leaves
+/// the transaction committed. `IC_ERROR_NO_SUCH_FIELD` for an `op` the
+/// request does not have.
+///
+/// # Safety
+///
+/// A non-null `request` is a request handle not yet freed.
+#[no_mangle]
+pub unsafe extern "C" fn ic_request_op_error(
+  request: *const IcRequest,
+  op: u32,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  match unsafe { op_ref(request, op) } {
+    Some(found) => match found.error() {
+      Some(e) => e.code,
+      None => 0,
+    },
+    None => err::IC_ERROR_NO_SUCH_FIELD,
+  }
+}
+
+/// What the data node said of operation `op`'s failure beyond its code,
+/// or 0: for `IC_NDB_ERROR_UNIQUE_DUPLICATE`, the index's id.
+///
+/// # Safety
+///
+/// A non-null `request` is a request handle not yet freed.
+#[no_mangle]
+pub unsafe extern "C" fn ic_request_op_error_data(
+  request: *const IcRequest,
+  op: u32,
+) -> u32 {
+  // SAFETY: the caller's promise.
+  match unsafe { op_ref(request, op) } {
+    Some(found) => found.error_data(),
+    None => 0,
+  }
+}
+
+/// Bytes of row data operation `op`, a read, brought in the last run;
+/// 0 for a write, or a row that was not there.
+///
+/// # Safety
+///
+/// A non-null `request` is a request handle not yet freed.
+#[no_mangle]
+pub unsafe extern "C" fn ic_request_op_result_len(
+  request: *const IcRequest,
+  op: u32,
+) -> u32 {
+  // SAFETY: the caller's promise.
+  match unsafe { op_ref(request, op) } {
+    Some(found) => found.result_len(),
+    None => 0,
+  }
+}
+
+/// Where the last run's transaction ended: `IC_COMMIT_STATE_COMMITTED`
+/// or `IC_COMMIT_STATE_ROLLED_BACK`; `IC_COMMIT_STATE_UNKNOWN` for a
+/// null handle.
+///
+/// # Safety
+///
+/// A non-null `request` is a request handle not yet freed.
+#[no_mangle]
+pub unsafe extern "C" fn ic_request_state(request: *const IcRequest) -> u32 {
+  // SAFETY: the caller's promise.
+  match unsafe { request_ref(request) } {
+    Some(r) => commit_state_to_c(r.commit_state()),
+    None => IC_COMMIT_STATE_UNKNOWN,
+  }
+}
+
+/// Why the last run's transaction did not commit, or why its reads were
+/// lost when a takeover committed it; 0 if neither.
+///
+/// # Safety
+///
+/// A non-null `request` is a request handle not yet freed.
+#[no_mangle]
+pub unsafe extern "C" fn ic_request_error(request: *const IcRequest) -> i32 {
+  // SAFETY: the caller's promise.
+  match unsafe { request_ref(request) } {
+    Some(r) => match r.error() {
+      Some(e) => e.code,
+      None => 0,
+    },
+    None => err::IC_ERROR_NULL_POINTER,
+  }
+}
+
+/// What the coordinator said of the transaction's error beyond its
+/// code, or 0.
+///
+/// # Safety
+///
+/// A non-null `request` is a request handle not yet freed.
+#[no_mangle]
+pub unsafe extern "C" fn ic_request_error_data(
+  request: *const IcRequest,
+) -> u32 {
+  // SAFETY: the caller's promise.
+  match unsafe { request_ref(request) } {
+    Some(r) => r.error_data(),
+    None => 0,
+  }
+}
+
+/// The global checkpoint the last run's commit went into, or 0.
+///
+/// # Safety
+///
+/// A non-null `request` is a request handle not yet freed.
+#[no_mangle]
+pub unsafe extern "C" fn ic_request_gci(request: *const IcRequest) -> u64 {
+  // SAFETY: the caller's promise.
+  match unsafe { request_ref(request) } {
+    Some(r) => r.gci(),
+    None => 0,
+  }
+}
+
+/// Run a request through the executor and wait for its transaction to
+/// end: every operation defined together, the commit on the last, and
+/// sent with whatever else the executor admits meanwhile. The request
+/// comes back with the rows read and each operation's outcome
+/// (`ic_request_op_error`).
+///
+/// Errors: the transaction's own, as the data node gives it, when it
+/// did not commit: for a write, `IC_NDB_ERROR_NO_SUCH_ROW`,
+/// `IC_NDB_ERROR_ROW_EXISTS`, `IC_NDB_ERROR_UNIQUE_DUPLICATE`; a failed
+/// read alone leaves it committed and says so in its operation. Before
+/// anything is sent: an operation's own refusal, as `ic_apid_conn_read_key`
+/// and `ic_apid_conn_write_key` give them; `IC_ERROR_TIMEOUT` when the
+/// request's deadline passed before the executor admitted it;
+/// `IC_ERROR_EXECUTOR_STOPPED` when the executor is stopped, the request
+/// left as it was; `IC_ERROR_NOT_SUPPORTED` when called on the executor's
+/// own thread. `IC_ERROR_INTERNAL_PANIC` when the executor's thread failed:
+/// the request is then empty, and its row pointers invalid. It blocks the
+/// calling thread until the transaction ends, a wait the cluster's reply
+/// timeout bounds (`IC_NDB_ERROR_NO_REPLY`), and waits for room when the
+/// executor's list is full.
+///
+/// # Safety
+///
+/// `submitter` and `request` are handles not yet freed, each used by
+/// this thread alone meanwhile.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_submitter_execute(
+  submitter: *mut IcApidSubmitter,
+  request: *mut IcRequest,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let (s, r) = match unsafe { (submitter_of(submitter), request_of(request)) } {
+    (Some(s), Some(r)) => (s, r),
+    _ => return err::IC_ERROR_NULL_POINTER,
+  };
+  guarded(|| code_of(s.execute(r)))
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -2779,6 +3768,9 @@ mod tests {
       IC_ERROR_RECORD_SIZE_TOO_BIG,
       err::IC_ERROR_RECORD_SIZE_TOO_BIG
     );
+    assert_eq!(IC_ERROR_EXECUTOR_BUSY, err::IC_ERROR_EXECUTOR_BUSY);
+    assert_eq!(IC_ERROR_EXECUTOR_STOPPED, err::IC_ERROR_EXECUTOR_STOPPED);
+    assert!(IcError::new(IC_ERROR_EXECUTOR_BUSY).is_temporary());
     assert_eq!(
       IC_NDB_ERROR_NULL_KEY,
       ic_apid::row_codec::IC_NDB_ERROR_NULL_KEY
@@ -2849,7 +3841,75 @@ mod tests {
       assert!(ic_apid_transaction_is_done(std::ptr::null_mut(), 1));
       ic_apid_conn_free(std::ptr::null_mut());
       ic_apid_global_free(std::ptr::null_mut());
+      assert_eq!(
+        ic_apid_submitter_execute(std::ptr::null_mut(), std::ptr::null_mut()),
+        IC_ERROR_NULL_POINTER
+      );
+      assert_eq!(ic_request_num_ops(std::ptr::null()), 0);
+      assert_eq!(ic_request_state(std::ptr::null()), IC_COMMIT_STATE_UNKNOWN);
+      ic_apid_executor_free(std::ptr::null_mut());
+      ic_apid_submitter_free(std::ptr::null_mut());
+      ic_op_shape_free(std::ptr::null_mut());
+      ic_request_free(std::ptr::null_mut());
     }
+  }
+
+  #[test]
+  fn a_request_is_filled_and_read_through_its_handle() {
+    let mut request: *mut IcRequest = std::ptr::null_mut();
+    let mut len: usize = 9;
+    // SAFETY: every pointer is to a local, or the request made here.
+    unsafe {
+      assert_eq!(ic_request_create(&mut request), 0);
+      assert_eq!(ic_request_num_ops(request), 0);
+      assert!(ic_request_key_row(request, 0, &mut len).is_null());
+      assert_eq!(len, 0);
+      assert_eq!(ic_request_op_error(request, 0), IC_ERROR_NO_SUCH_FIELD);
+      assert_eq!(ic_request_state(request), IC_COMMIT_STATE_STARTED);
+      assert_eq!(ic_request_error(request), 0);
+      assert_eq!(ic_request_set_timeout_ms(request, 5), 0);
+      assert_eq!(ic_request_set_hint(request, std::ptr::null()), 0);
+      assert_eq!(
+        ic_request_set_abort_option(request, 0, IC_ABORT_ON_ERROR),
+        IC_ERROR_NO_SUCH_FIELD
+      );
+      assert_eq!(
+        ic_request_add_read(
+          request,
+          std::ptr::null(),
+          99,
+          std::ptr::null_mut()
+        ),
+        IC_ERROR_NOT_SUPPORTED
+      );
+      assert_eq!(
+        ic_request_add_read(
+          request,
+          std::ptr::null(),
+          IC_READ_KIND_COMMITTED,
+          std::ptr::null_mut()
+        ),
+        IC_ERROR_NULL_POINTER
+      );
+      assert_eq!(ic_request_clear(request), 0);
+      ic_request_free(request);
+    }
+  }
+
+  #[test]
+  fn executor_options_start_from_the_defaults() {
+    let mut opts = std::mem::MaybeUninit::<IcExecutorOptions>::uninit();
+    // SAFETY: the init writes the whole struct, of the size given.
+    let opts = unsafe {
+      ic_executor_options_init(
+        opts.as_mut_ptr(),
+        std::mem::size_of::<IcExecutorOptions>(),
+      );
+      opts.assume_init()
+    };
+    let defaults = ExecutorOptions::default();
+    assert_eq!(opts.in_flight, defaults.in_flight);
+    assert_eq!(opts.queue, defaults.queue);
   }
 
   #[test]

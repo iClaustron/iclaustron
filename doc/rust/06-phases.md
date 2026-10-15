@@ -1212,6 +1212,92 @@ be shown to fit it once it exists, so it comes first:
   connections of their own, and against `ic_model`'s prediction
   (chapter 12).
 
+**As built (2026-10-15).** Every item above; `cargo xtask check`, the
+`executor_` integration group and the C API's executor test pass.
+
+- `thread_conn.rs`: the inbox's request list, bounded (`queue`, 4 000
+  by default), taken whole in the same lock as the pages; a request
+  wakes the executor only if it sleeps willing to take one, so an
+  executor at its in-flight limit sleeps for replies alone; a full list
+  refuses with `IC_ERROR_EXECUTOR_BUSY` (7159) or waits for room on a
+  second condition; `close_requests` for stopping
+  (`IC_ERROR_EXECUTOR_STOPPED`, 7160).
+- `executor.rs`: `Executor` (a user thread with a connection of its
+  own), `Submitter`, `OpShape` (a table or unique index and the records
+  of an operation's rows, made once), `KeyOp`, `Request` (a transaction
+  of operations, committed on the last), `Done` (a `Slot`, or a
+  `RequestCallback` on the executor's thread, a `fn` and a `usize` as
+  every callback is), `ExecutorStats`. The loop takes replies and
+  requests in one lock, hands back what finished, admits up to
+  `in_flight` (400 by default), and sends once. Each operation runs as
+  a query of its shape, from a pool the executor keeps per shape and
+  lets go of once nobody holds the shape; rows are copied in and out,
+  so nothing is allocated per request. Deadlines are checked at
+  admission; a request that cannot be defined is rolled back before it
+  is sent; a stopping executor fails what waits and finishes what is
+  out; a request dropped undelivered, which only a panicking executor
+  does, tells its slot (`IC_ERROR_INTERNAL_PANIC`). Tables and indexes
+  are bound through the submitter, on the executor's connection.
+- `Submitter::execute`, the blocking form, waits on the submitter's own
+  slot: one submitter per thread.
+- The C ABI: `IC_APID_EXECUTOR`, `IC_APID_SUBMITTER`, `IC_OP_SHAPE`,
+  `IC_REQUEST`, and `ic_apid_submitter_execute` (chapter 04).
+- `ic_bench --executors E --clients N`: N application threads, each one
+  blocking call at a time through executor *i* mod E;
+  `tools/perf_pass.sh` section 5. `ic_model executors=E clients=N`.
+
+Measured (2026-10-15, the Mac, two release data nodes, `t9` by primary
+key, 100 000 keys, 10 s; `target/perf-20261015-115301.log`):
+
+| Run | Per second | Median call | 99th | Client CPU a call | Writes per 1000 | Requests a send |
+|---|---|---|---|---|---|---|
+| A: 64 threads, a connection each, one call at a time | 198 000 reads | 319 µs | 487 µs | 18.3 µs | 176 | 1 |
+| B: 64 callers, one executor | 268 000 reads | 231 µs | 475 µs | 9.8 µs | 86 | 21.0 |
+| B: 256 callers, two executors | 307 000 reads | 821 µs | 1 455 µs | 18.1 µs | 47 | 38.7 |
+| B: 64 callers, one executor | 68 500 updates | 918 µs | 1 392 µs | 29.6 µs | 416 | 4.0 |
+| Pipelined, one thread, batches of 200, for scale | 1.99 million reads | 158 µs a batch | 236 µs | 0.53 µs | 10 | 200 |
+
+- **Form B against form A**, 64 threads either way: 36 % more reads, a
+  median call 28 % shorter, half the client CPU. Twenty-one requests a
+  send halve the writes per read.
+- **Both are bound by latency.** Each caller has one call out, so the
+  rate is the callers over a call's time: 64 over 231 µs is 277 000.
+- **One executor is bound by its own thread.** It wakes every caller,
+  and every caller goes to sleep and wakes: about 10 µs of CPU a call
+  in all, against 0.5 µs pipelined, most of it the kernel's. At 268 000
+  calls a second one thread has 3.7 µs for each, waking its caller
+  among them; the model puts the limit there too (not measured on the
+  executor's thread itself). The
+  architecture page had predicted that batching would bring a call's
+  cost near the pipelined figure; the wake-up is per call, not per
+  batch, and it does not.
+- **More executors scale as far as the cores do.** Two with 256 callers
+  gave 15 % more, not twice: 256 runnable threads doubled each call's
+  kernel time (8.3 to 16.2 µs) and preempted 3.45 million times in 10 s.
+- **Updates** come back spread out, the commit taking each its own
+  time, so a send carries four.
+
+Against `ic_model`'s prediction, made before the measurement:
+
+| Run | Model, as predicted | Model, caller's cost fitted | Measured |
+|---|---|---|---|
+| A, 64 threads | 238 000, 259 µs, 16.4 µs | — | 198 000, 319 µs, 18.3 µs |
+| B, 64 callers, one executor | 193 000, 329 µs, 4.5 µs | 193 000, 328 µs, 9.2 µs | 268 000, 231 µs, 9.8 µs |
+| B, 256 callers, two executors | 451 000, 562 µs, 4.3 µs | 391 000, 647 µs, 9.0 µs | 307 000, 821 µs, 18.1 µs |
+
+The model put the limit where it is, on the executor's thread waking
+its callers, and the batching where it is (63 writes per 1000 against
+86). It counted half the CPU: what a caller spends going to sleep and
+waking, which it had no part for. Fitted to the measurement as
+`submit_ns`, 5 µs a call, now its default, the CPU matches. What it
+still misses is the scheduler's cost of hundreds of runnable threads,
+which a mean-field stretch does not see (chapter 12, "Executors").
+
+What this leaves for later, kept in chapter 04: the wake-ups moved off
+the executor's thread, to helpers or to a caller that spins briefly;
+asynchronous C callbacks and Rust futures over executors, which a
+service that wants the pipelined figures uses instead of blocking.
+
 ### 8.2 The protocol, seen and written down (1 week)
 
 Chapter 05 §7 rewritten from captures of the reference's scans read with

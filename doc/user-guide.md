@@ -4,7 +4,8 @@ iClaustron is a Data API for RonDB: a library an application links to
 read and write rows of a RonDB cluster directly, as an API node, by
 primary key and by unique key, in transactions. It is written in Rust
 and has a C API; this guide covers both. It is for release 0.1, against
-RonDB 26.10.
+RonDB 26.10; the executors of section 5 came after 0.1, on the way to
+0.2.
 
 The examples in `examples/` are the same five programs in Rust and in
 C, and the guide quotes them. The C API's reference is its header,
@@ -262,7 +263,7 @@ ended and every query in it has completed; it then says how it ended
 (`Committed` or `RolledBack`), with what error, and for a commit the
 global checkpoint it belongs to. `close_transaction` lets it go.
 
-## 5. Two ways to work
+## 5. Three ways to work
 
 ### Synchronously
 
@@ -303,6 +304,61 @@ in flight on one connection, and that is where the throughput is: the
 with other threads' signals on the same link, never longer than the
 adaptive send allows; a thread that goes on to poll loses nothing by
 leaving it off. With it, the send happens now.
+
+### Through an executor
+
+A program whose work arrives on threads of its own, such as a server
+with a thread per request, cannot give each its own connection: there
+are at most 4 711, and a thread that sends one call at a time pays a
+whole round's costs for each. An **executor** is a thread of the
+library's, with a connection, that runs the requests of any number of
+threads, and sends together whatever it admits at once.
+
+- Start one with `Executor::start(&global, &options)`
+  (`ic_apid_executor_start`), and give each thread its own submitter:
+  `executor.submitter()`, or a clone of one
+  (`ic_apid_executor_submitter`).
+- Bind tables through the submitter (`table_bind`,
+  `ic_apid_submitter_table_bind`), and describe each kind of operation
+  once as a shape: a table, or a unique index of it, and its records
+  (`OpShape::new`, `ic_op_shape_create`).
+- A request is a transaction of operations of those shapes, with their
+  rows (`Request`, `ic_request_create`, `ic_request_add_read`,
+  `ic_request_add_write`, and `ic_request_key_row` to fill a key).
+  `execute` (`ic_apid_submitter_execute`) runs it and blocks until it
+  has ended: the rows read are in its operations, each operation says
+  how it went, and the call returns 0 if the transaction committed.
+  Keep the request and run it again with new keys.
+
+```c
+IC_REQUEST *req;
+uint32_t op;
+size_t len;
+
+ic_request_create(&req);
+ic_request_add_read(req, shape, IC_READ_KIND_COMMITTED, &op);
+memcpy(ic_request_key_row(req, op, &len), &key, sizeof key);
+if ((ret = ic_apid_submitter_execute(sub, req)) != 0)
+  goto error;
+if (ic_request_op_error(req, op) == IC_NDB_ERROR_NO_SUCH_ROW)
+  /* no such row */;
+memcpy(&row, ic_request_attr_row(req, op, &len), sizeof row);
+```
+
+A full executor makes `execute` wait for room; a stopped one refuses
+with `IC_ERROR_EXECUTOR_STOPPED` and leaves the request as it was. A
+request may carry a deadline (`set_timeout_ms`,
+`ic_request_set_timeout_ms`): one that waited past it comes back with
+`IC_ERROR_TIMEOUT`, unsent. In Rust a request can also be handed to a
+function on the executor's thread when it ends, rather than waited for
+(`Submitter::submit` with `Done::Callback`).
+
+Measured on a Mac with two data nodes, 64 threads calling through one
+executor read 268 000 rows a second, 36 % more than 64 threads with a
+connection each, at half the CPU a call. Both are far from what one
+thread does asynchronously, two million a second: a blocking call
+costs a thread's sleep and wake-up, about 10 µs of CPU, however it
+reaches the cluster.
 
 ## 6. Callbacks
 
@@ -442,6 +498,11 @@ transaction that goes to a cluster with no started node fails with
 - **Use committed reads** where no lock is needed: they take none.
 - **Threads.** A connection per thread scales with cores; more receive
   threads help when many threads together read a lot.
+- **Many threads, blocking calls:** an executor gathers their calls
+  into shared sends. Its own thread wakes every caller, which is what
+  limits one executor; a second helps while there are cores for it. A
+  blocking call still costs a sleep and a wake-up; keep many calls in
+  flight on one thread where the work allows it.
 - **Measure release builds.** The library's checks in a debug build
   cost time a release build does not spend.
 

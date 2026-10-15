@@ -226,6 +226,42 @@ fn over_table(rec: &Record, table: &TableDef) -> bool {
     && rec.table().table_version() == table.table_version()
 }
 
+/// Refuse records that do not fit a key operation over `table`: both
+/// must be over this version of it, and the key record must hold every
+/// primary key column.
+pub(crate) fn check_records(
+  table: &TableDef,
+  key_rec: &Record,
+  attr_rec: &Record,
+) -> Result<(), IcError> {
+  let fits = over_table(key_rec, table)
+    && over_table(attr_rec, table)
+    && key_rec.covers_primary_key();
+  if !fits {
+    return Err(IcError::new(err::IC_ERROR_KEY_RECORD));
+  }
+  Ok(())
+}
+
+/// As [`check_records`], for an operation through a unique index: the
+/// index must be unique and the records over its table. That the key
+/// record holds every indexed column is checked when the operation is
+/// defined.
+pub(crate) fn check_unique_records(
+  index: &IndexDef,
+  key_rec: &Record,
+  attr_rec: &Record,
+) -> Result<(), IcError> {
+  if !index.is_unique() {
+    return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
+  }
+  let table = index.table();
+  if !over_table(key_rec, table) || !over_table(attr_rec, table) {
+    return Err(IcError::new(err::IC_ERROR_KEY_RECORD));
+  }
+  Ok(())
+}
+
 /// One key operation, defined once and used many times
 /// (`IC_APID_QUERY`).
 pub struct ApidQuery {
@@ -274,12 +310,7 @@ impl ApidQuery {
     key_rec: &Record,
     attr_rec: &Record,
   ) -> Result<ApidQuery, IcError> {
-    let fits = over_table(key_rec, table)
-      && over_table(attr_rec, table)
-      && key_rec.covers_primary_key();
-    if !fits {
-      return Err(IcError::new(err::IC_ERROR_KEY_RECORD));
-    }
+    check_records(table, key_rec, attr_rec)?;
     Ok(ApidQuery {
       table: Arc::clone(table),
       index: None,
@@ -307,13 +338,8 @@ impl ApidQuery {
     key_rec: &Record,
     attr_rec: &Record,
   ) -> Result<ApidQuery, IcError> {
-    if !index.is_unique() {
-      return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
-    }
+    check_unique_records(index, key_rec, attr_rec)?;
     let table = index.table();
-    if !over_table(key_rec, table) || !over_table(attr_rec, table) {
-      return Err(IcError::new(err::IC_ERROR_KEY_RECORD));
-    }
     Ok(ApidQuery {
       table: Arc::clone(table),
       index: Some(Arc::clone(index)),

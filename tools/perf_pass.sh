@@ -21,6 +21,10 @@
 #      dirty reads as ours are committed reads; its read run under
 #      /usr/bin/time for its CPU, which covers the warm-up and cool-down
 #      as well: divide by its rate times their 15 seconds.
+#   5. Through executors (phase 8.1): application threads making one
+#      blocking call at a time, 64 through one executor and 256 through
+#      two, against 64 threads with a connection each, one call at a
+#      time (--batch 1 --depth 1); then ic_model's prediction of the same.
 set -u
 
 RONDB=${RONDB:-/Users/mikael/mysql_trees/rondb_2604_main}
@@ -37,7 +41,7 @@ run() {
   "$@" 2>&1 | tee -a "$OUT"
 }
 
-cargo build --release -p ic_bench -p ic_hashbench || exit 1
+cargo build --release -p ic_bench -p ic_hashbench -p ic_model || exit 1
 cargo build --release -p ic_bench --features count-allocs \
   --target-dir target/count-allocs || exit 1
 cc -O3 -I"$RONDB/extra/xxhash/xxHash-0.8.3" \
@@ -78,5 +82,14 @@ if [ "$(uname -s)" = Darwin ]; then TIME="/usr/bin/time -l"; else TIME="/usr/bin
 run $TIME $F -read -warmup_time 3 -execution_time "$SECONDS_RUN" -cooldown_time 2
 run $F -delete
 run $F -drop_table
+
+# 5. Through executors, and what the model says of the same.
+run $B --no-prepare --threads 64 --batch 1 --depth 1
+run $B --no-prepare --executors 1 --clients 64
+run $B --no-prepare --executors 2 --clients 256
+run $B --no-prepare --executors 1 --clients 64 --mode write
+run target/release/ic_model threads=64 depth=1 batch=1
+run target/release/ic_model executors=1 clients=64
+run target/release/ic_model executors=2 clients=256
 
 echo "The log is $OUT"

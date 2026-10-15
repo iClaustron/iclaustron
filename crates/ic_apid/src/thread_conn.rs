@@ -17,7 +17,10 @@
 //! Three things live here, as they do in the C:
 //!
 //! - [`ThreadConnection`], a user thread's inbox: a list of signals, a
-//!   mutex and a condition (`IC_THREAD_CONNECTION`).
+//!   mutex and a condition (`IC_THREAD_CONNECTION`). An executor's
+//!   inbox has a second list, of requests from application threads,
+//!   under the same mutex, with the same wake rule; see "Requests"
+//!   below.
 //! - [`ThreadTable`], which finds the inbox for a block number
 //!   (`grid_comm->thread_conn_array`).
 //! - [`Router`], a receive thread's own working state: the signals of
@@ -67,6 +70,22 @@
 //! rare rather than merely survivable, ids are handed out in rotation:
 //! a freed id is not used again until every other id has been.
 //!
+//! # Requests
+//!
+//! An [executor](crate::executor) is a user thread that runs work for
+//! other threads, so it waits for two things: replies, posted by the
+//! receive threads, and requests, submitted by application threads. A
+//! thread can sleep on only one thing, so both arrive here, and either
+//! wakes the executor by the rule a post already follows: append under
+//! the lock, and signal after releasing it, only if the executor was
+//! asleep and, for a request, asleep willing to take one. An executor
+//! at its in-flight limit sleeps for replies alone, and a request then
+//! waits without waking it.
+//!
+//! The list is bounded. A full list refuses a request, or makes its
+//! application thread wait on a second condition until the executor
+//! takes the list, which it does whole, in the same lock as the pages.
+//!
 //! **Note for C readers.** `Arc<ThreadConnection>` is a pointer with an
 //! atomic reference count; the inbox is freed when the last holder lets
 //! go. It is what makes it safe for a receive thread to still hold an
@@ -88,6 +107,7 @@ use ic_port::sync::IC_MUTEX_LEVEL_THREAD_CONN;
 use ic_port::IcError;
 use ic_signals::blocks;
 
+use crate::executor::Work;
 use crate::node_connect::ReceivedSignal;
 use crate::node_connect::SignalView;
 use crate::signal_page;
@@ -123,6 +143,19 @@ struct Inbox {
   /// True once the user thread has let go of its inbox. A receive
   /// thread may still hold it for a round; what it posts is dropped.
   closed: bool,
+  /// Requests from application threads, oldest first, for a user
+  /// thread that is an executor.
+  requests: Vec<Work>,
+  /// The most requests the list holds: zero for a user thread that is
+  /// no executor, which takes none.
+  request_limit: usize,
+  /// True while the user thread sleeps and will take requests when
+  /// woken, so that a request wakes it.
+  wants_requests: bool,
+  /// Application threads waiting for room in the list.
+  room_waiters: u32,
+  /// Set when the executor stops: requests are refused from then on.
+  requests_closed: bool,
 }
 
 /// A user thread's inbox (`IC_THREAD_CONNECTION`).
@@ -130,6 +163,8 @@ pub struct ThreadConnection {
   thread_id: u32,
   inbox: IcMutex<Inbox>,
   cond: IcCond,
+  /// What application threads wait on for room in a full request list.
+  room: IcCond,
 }
 
 impl std::fmt::Debug for ThreadConnection {
@@ -154,9 +189,15 @@ impl ThreadConnection {
           spare: Vec::new(),
           waiting: false,
           closed: false,
+          requests: Vec::new(),
+          request_limit: 0,
+          wants_requests: false,
+          room_waiters: 0,
+          requests_closed: false,
         },
       ),
       cond: IcCond::new(),
+      room: IcCond::new(),
     }
   }
 
@@ -207,6 +248,20 @@ impl ThreadConnection {
   /// signals it had already taken, which the design allows. Either way
   /// the caller goes round again.
   pub fn exchange(&self, wait_ms: u32, pages: &mut Vec<SignalPage>) {
+    self.exchange_with_requests(wait_ms, pages, None);
+  }
+
+  /// As [`exchange`](Self::exchange), for an executor. With `requests`,
+  /// which must be empty, the requests submitted since are taken too,
+  /// in the same lock, and a request ends the wait as a signal does.
+  /// Without, the requests stay where they are and only signals end
+  /// the wait: what an executor at its in-flight limit asks for.
+  pub(crate) fn exchange_with_requests(
+    &self,
+    wait_ms: u32,
+    pages: &mut Vec<SignalPage>,
+    requests: Option<&mut Vec<Work>>,
+  ) {
     let mut inbox = self.inbox.lock();
     for mut page in pages.drain(..) {
       if inbox.spare.len() < IC_SPARE_PAGES {
@@ -214,8 +269,12 @@ impl ThreadConnection {
         inbox.spare.push(page);
       }
     }
-    if inbox.pages.is_empty() && wait_ms != 0 {
+    let take = requests.is_some();
+    let nothing =
+      inbox.pages.is_empty() && (!take || inbox.requests.is_empty());
+    if nothing && wait_ms != 0 {
       inbox.waiting = true;
+      inbox.wants_requests = take;
       let micros = (wait_ms as u64) * 1000;
       let (woken, _timed_out) = self.cond.timed_wait(inbox, micros);
       inbox = woken;
@@ -223,8 +282,103 @@ impl ThreadConnection {
       // has, and leaving it set would cost the next poster a wake-up
       // sent to a thread that is not asleep.
       inbox.waiting = false;
+      inbox.wants_requests = false;
     }
     std::mem::swap(&mut inbox.pages, pages);
+    let mut make_room = false;
+    if let Some(requests) = requests {
+      if !inbox.requests.is_empty() {
+        std::mem::swap(&mut inbox.requests, requests);
+        make_room = inbox.room_waiters > 0;
+      }
+    }
+    // As for a wake-up: after the lock is let go of.
+    drop(inbox);
+    if make_room {
+      self.room.broadcast();
+    }
+  }
+
+  /// Make this the inbox of an executor, which takes requests as well
+  /// as signals, holding at most `limit` of them before it refuses
+  /// more.
+  pub(crate) fn open_requests(&self, limit: usize) {
+    let mut inbox = self.inbox.lock();
+    inbox.request_limit = limit.max(1);
+  }
+
+  /// Put a request in the list, and wake the executor if it is asleep
+  /// willing to take one (doc/rust/architecture.html, section 3). A
+  /// full list is waited on with `wait`, until the executor takes it,
+  /// and refused without, with `IC_ERROR_EXECUTOR_BUSY`. An inbox that
+  /// takes no requests, or no more, refuses with
+  /// `IC_ERROR_EXECUTOR_STOPPED`. A refused request is handed back.
+  pub(crate) fn submit(
+    &self,
+    work: Work,
+    wait: bool,
+  ) -> Result<(), (Work, IcError)> {
+    let mut inbox = self.inbox.lock();
+    loop {
+      if inbox.closed || inbox.requests_closed || inbox.request_limit == 0 {
+        return Err((work, IcError::new(err::IC_ERROR_EXECUTOR_STOPPED)));
+      }
+      if inbox.requests.len() < inbox.request_limit {
+        break;
+      }
+      if !wait {
+        return Err((work, IcError::new(err::IC_ERROR_EXECUTOR_BUSY)));
+      }
+      inbox.room_waiters += 1;
+      inbox = self.room.wait(inbox);
+      inbox.room_waiters -= 1;
+    }
+    inbox.requests.push(work);
+    let wake = inbox.waiting && inbox.wants_requests;
+    if wake {
+      inbox.waiting = false;
+      inbox.wants_requests = false;
+    }
+    // Unlock, and only then wake; see the note at the top of the file.
+    drop(inbox);
+    if wake {
+      self.cond.signal();
+    }
+    Ok(())
+  }
+
+  /// Take no more requests: every later submit is refused with
+  /// `IC_ERROR_EXECUTOR_STOPPED`, and so is every one waiting for room.
+  /// The executor is woken, to finish what it has; what is still in the
+  /// list it takes as it would have.
+  pub(crate) fn close_requests(&self) {
+    let mut inbox = self.inbox.lock();
+    inbox.requests_closed = true;
+    let wake = inbox.waiting;
+    inbox.waiting = false;
+    inbox.wants_requests = false;
+    let room_waiters = inbox.room_waiters > 0;
+    drop(inbox);
+    if wake {
+      self.cond.signal();
+    }
+    if room_waiters {
+      self.room.broadcast();
+    }
+  }
+
+  /// True once no request will come: requests are closed, and none is
+  /// left in the list. Asked in one lock, so that a request submitted
+  /// before the close is seen.
+  pub(crate) fn requests_drained(&self) -> bool {
+    let inbox = self.inbox.lock();
+    inbox.requests_closed && inbox.requests.is_empty()
+  }
+
+  /// How many requests wait to be taken.
+  #[cfg(test)]
+  pub(crate) fn pending_requests(&self) -> usize {
+    self.inbox.lock().requests.len()
   }
 
   /// Take every signal in the inbox as owned copies, waiting as
@@ -258,8 +412,19 @@ impl ThreadConnection {
   fn close(&self) {
     let mut inbox = self.inbox.lock();
     inbox.closed = true;
+    inbox.requests_closed = true;
     inbox.pages.clear();
     inbox.spare.clear();
+    let left = std::mem::take(&mut inbox.requests);
+    let room_waiters = inbox.room_waiters > 0;
+    drop(inbox);
+    if room_waiters {
+      self.room.broadcast();
+    }
+    // Let go of outside the lock. An executor takes every request before
+    // it goes, so this is empty unless it stopped by panicking; then a
+    // request whose caller waits on a slot tells the slot as it goes.
+    drop(left);
   }
 }
 
@@ -767,6 +932,128 @@ mod tests {
     assert!(waited >= 25, "returned after {} ms", waited);
     // And does not wait at all when told not to.
     assert!(conn.take(0).is_empty());
+  }
+
+  fn request() -> Work {
+    Work::Transaction(crate::executor::Request::new())
+  }
+
+  /// Take the inbox's requests, waiting up to `wait_ms` for one.
+  fn take_requests(conn: &ThreadConnection, wait_ms: u32) -> Vec<Work> {
+    let mut pages: Vec<SignalPage> = Vec::new();
+    let mut requests: Vec<Work> = Vec::new();
+    conn.exchange_with_requests(wait_ms, &mut pages, Some(&mut requests));
+    requests
+  }
+
+  #[test]
+  fn a_thread_that_is_no_executor_takes_no_requests() {
+    let table = ThreadTable::new();
+    let conn = table.allocate().expect("conn");
+    let refused = conn.submit(request(), false).expect_err("refused");
+    assert_eq!(refused.1.code, err::IC_ERROR_EXECUTOR_STOPPED);
+  }
+
+  #[test]
+  fn requests_are_taken_whole_in_order() {
+    let table = ThreadTable::new();
+    let conn = table.allocate().expect("conn");
+    conn.open_requests(4);
+    conn.submit(request(), false).expect("first");
+    conn.submit(request(), false).expect("second");
+    assert_eq!(conn.pending_requests(), 2);
+    // An exchange that does not ask for them leaves them.
+    let mut pages: Vec<SignalPage> = Vec::new();
+    conn.exchange_with_requests(0, &mut pages, None);
+    assert_eq!(conn.pending_requests(), 2);
+    assert_eq!(take_requests(&conn, 0).len(), 2);
+    assert_eq!(conn.pending_requests(), 0);
+  }
+
+  #[test]
+  fn a_full_list_refuses_or_waits_for_room() {
+    let table = ThreadTable::new();
+    let conn = table.allocate().expect("conn");
+    conn.open_requests(2);
+    conn.submit(request(), false).expect("first");
+    conn.submit(request(), false).expect("second");
+    let refused = conn.submit(request(), false).expect_err("full");
+    assert_eq!(refused.1.code, err::IC_ERROR_EXECUTOR_BUSY);
+    // One that waits goes in once the executor takes the list.
+    let waiter = Arc::clone(&conn);
+    let handle = thread::spawn(move || waiter.submit(request(), true).is_ok());
+    ic_port::time::microsleep(50_000);
+    assert_eq!(conn.pending_requests(), 2, "still waiting for room");
+    assert_eq!(take_requests(&conn, 0).len(), 2);
+    assert!(handle.join().expect("joined"), "went in");
+    assert_eq!(conn.pending_requests(), 1);
+  }
+
+  #[test]
+  fn a_request_wakes_an_executor_waiting_for_one() {
+    let table = ThreadTable::new();
+    let conn = table.allocate().expect("conn");
+    conn.open_requests(4);
+    let executor = Arc::clone(&conn);
+    let handle = thread::spawn(move || {
+      let start = ic_port::time::gethrtime();
+      let mut got = take_requests(&executor, 10_000);
+      while got.is_empty() {
+        got = take_requests(&executor, 10_000);
+      }
+      ic_port::time::millis_elapsed(start, ic_port::time::gethrtime())
+    });
+    ic_port::time::microsleep(50_000);
+    conn.submit(request(), false).expect("submitted");
+    let waited = handle.join().expect("joined");
+    assert!(waited < 5_000, "woken after {} ms", waited);
+  }
+
+  #[test]
+  fn an_executor_at_its_limit_sleeps_for_replies_alone() {
+    // It waits for signals only; a request must not wake it, which
+    // would cost it a wake-up for nothing it can take.
+    let table = ThreadTable::new();
+    let conn = table.allocate().expect("conn");
+    conn.open_requests(4);
+    let executor = Arc::clone(&conn);
+    let handle = thread::spawn(move || {
+      let start = ic_port::time::gethrtime();
+      let mut pages: Vec<SignalPage> = Vec::new();
+      executor.exchange_with_requests(300, &mut pages, None);
+      ic_port::time::millis_elapsed(start, ic_port::time::gethrtime())
+    });
+    ic_port::time::microsleep(50_000);
+    conn.submit(request(), false).expect("submitted");
+    let waited = handle.join().expect("joined");
+    assert!(waited >= 250, "woken after {} ms", waited);
+    assert_eq!(conn.pending_requests(), 1);
+  }
+
+  #[test]
+  fn closing_refuses_new_requests_and_those_waiting_for_room() {
+    let table = ThreadTable::new();
+    let conn = table.allocate().expect("conn");
+    conn.open_requests(1);
+    conn.submit(request(), false).expect("first");
+    let waiter = Arc::clone(&conn);
+    let handle = thread::spawn(move || match waiter.submit(request(), true) {
+      Ok(()) => 0,
+      Err(refused) => refused.1.code,
+    });
+    ic_port::time::microsleep(50_000);
+    assert!(!conn.requests_drained());
+    conn.close_requests();
+    assert_eq!(
+      handle.join().expect("joined"),
+      err::IC_ERROR_EXECUTOR_STOPPED
+    );
+    let refused = conn.submit(request(), false).expect_err("closed");
+    assert_eq!(refused.1.code, err::IC_ERROR_EXECUTOR_STOPPED);
+    // What came before the close is still there to be taken.
+    assert!(!conn.requests_drained());
+    assert_eq!(take_requests(&conn, 0).len(), 1);
+    assert!(conn.requests_drained());
   }
 
   #[test]

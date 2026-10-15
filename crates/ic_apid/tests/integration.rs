@@ -38,7 +38,9 @@
 //! (chapter 06 §8.6); `collation`, which asks the data nodes what a
 //! collation is and for its weights (RonDB 26.04 main and later); and
 //! `big_rows`, which writes and reads rows too large for one message,
-//! in memory and on disk (chapter 06 §6.6). That group makes a log file
+//! in memory and on disk (chapter 06 §6.6); `executor`, which runs key
+//! operations for application threads through an executor (chapter 06
+//! §8.1). The `big_rows` group makes a log file
 //! group and a tablespace if the cluster has none, and keeps them.
 //! Each test is its own program against the cluster, as an application
 //! would be: it takes an API node id, binds its tables, does its work
@@ -60,6 +62,13 @@ use ic_apid::collation_client;
 use ic_apid::collation_client::Collation;
 use ic_apid::dict_cache::IndexDef;
 use ic_apid::dict_cache::TableDef;
+use ic_apid::executor::Done;
+use ic_apid::executor::Executor;
+use ic_apid::executor::ExecutorOptions;
+use ic_apid::executor::KeyOp;
+use ic_apid::executor::OpShape;
+use ic_apid::executor::Request;
+use ic_apid::executor::Submitter;
 use ic_apid::key_op;
 use ic_apid::query::AbortOption;
 use ic_apid::query::QueryId;
@@ -1648,6 +1657,414 @@ fn uk_transactions_start_where_the_index_row_is() {
     assert_eq!(finish(&mut conn, tid), CommitState::RolledBack);
     conn.close_transaction(tid).expect("close");
   }
+}
+
+// ---- executor ----
+
+/// An executor on the cluster, with these limits.
+fn executor_with(cluster: &Cluster, in_flight: u32, queue: u32) -> Executor {
+  let options = ExecutorOptions { in_flight, queue };
+  Executor::start(&cluster.global, &options).expect("an executor")
+}
+
+/// The `pk` table bound through a submitter, with its default record,
+/// and the shape of operations on it by primary key.
+fn pk_through(submitter: &Submitter) -> (Table, Arc<OpShape>) {
+  let def = submitter.table_bind(IC_IT_DB, "pk").expect("bind pk");
+  let rec = Record::default_for(&def, None).expect("a record");
+  let shape = OpShape::new(&def, &rec, &rec).expect("a shape");
+  (Table { def, rec }, shape)
+}
+
+/// A write of a `pk` row, its values filled in.
+fn pk_write_op(
+  t: &Table,
+  shape: &Arc<OpShape>,
+  kind: WriteKind,
+  id: i64,
+  val: &str,
+  name: &str,
+) -> KeyOp {
+  let mut op = KeyOp::write(shape, kind);
+  t.put(op.key_row_mut(), "id", &id.to_string());
+  t.put(op.attr_row_mut(), "id", &id.to_string());
+  t.put(op.attr_row_mut(), "val", val);
+  t.put(op.attr_row_mut(), "name", name);
+  op
+}
+
+/// A committed read of a `pk` row.
+fn pk_read_op(t: &Table, shape: &Arc<OpShape>, id: i64) -> KeyOp {
+  let mut op = KeyOp::read(shape, ReadKind::Committed);
+  t.put(op.key_row_mut(), "id", &id.to_string());
+  op
+}
+
+/// Read a `pk` row through the executor: the row, or `None` if there is
+/// none, which leaves the transaction committed.
+fn exec_read(
+  submitter: &mut Submitter,
+  t: &Table,
+  shape: &Arc<OpShape>,
+  id: i64,
+) -> Option<Vec<u8>> {
+  let mut request = Request::with_op(pk_read_op(t, shape, id));
+  submitter.execute(&mut request).expect("a read commits");
+  let read = &request.ops()[0];
+  match read.error() {
+    None => Some(read.attr_row().to_vec()),
+    Some(e) if e.code == 626 => None,
+    Some(e) => panic!("the read failed: {} ({})", e.message(), e.code),
+  }
+}
+
+#[test]
+fn executor_reads_and_writes_by_key_in_the_blocking_form() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_tables().is_none() {
+    return;
+  }
+  let executor = executor_with(&cluster, 64, 256);
+  let mut submitter = executor.submitter();
+  let (t, shape) = pk_through(&submitter);
+
+  let mut insert = Request::with_op(pk_write_op(
+    &t,
+    &shape,
+    WriteKind::Insert,
+    1,
+    "10",
+    "one",
+  ));
+  submitter.execute(&mut insert).expect("insert");
+  assert_eq!(insert.commit_state(), CommitState::Committed);
+  assert!(insert.gci() > 0, "a commit has a global checkpoint");
+  let row = exec_read(&mut submitter, &t, &shape, 1).expect("the row");
+  assert_eq!(t.get(&row, "val"), "10");
+  assert_eq!(t.get(&row, "name"), "'one'");
+  let seen = mysql(&format!(
+    "SELECT val, name FROM {}.pk WHERE id = 1",
+    IC_IT_DB
+  ));
+  assert_eq!(seen, Some("10\tone".to_string()));
+
+  // The request is used again: its rows, then its outcome, are reset.
+  insert.ops_mut()[0]
+    .set_kind(ic_apid::executor::OpKind::Write(WriteKind::Update));
+  t.put(insert.ops_mut()[0].attr_row_mut(), "val", "11");
+  submitter.execute(&mut insert).expect("update");
+  let row = exec_read(&mut submitter, &t, &shape, 1).expect("still there");
+  assert_eq!(t.get(&row, "val"), "11");
+
+  // An insert of a row that is there rolls the transaction back.
+  let mut again = Request::with_op(pk_write_op(
+    &t,
+    &shape,
+    WriteKind::Insert,
+    1,
+    "12",
+    "uno",
+  ));
+  let e = submitter.execute(&mut again).expect_err("there already");
+  assert_eq!(e.code, 630);
+  assert_eq!(again.commit_state(), CommitState::RolledBack);
+  assert_eq!(again.ops()[0].error().map(|e| e.code), Some(630));
+
+  let mut delete =
+    Request::with_op(pk_write_op(&t, &shape, WriteKind::Delete, 1, "0", ""));
+  submitter.execute(&mut delete).expect("delete");
+  assert!(exec_read(&mut submitter, &t, &shape, 1).is_none(), "gone");
+  let seen = mysql(&format!("SELECT COUNT(*) FROM {}.pk", IC_IT_DB));
+  assert_eq!(seen, Some("0".to_string()));
+  let stats = executor.stats();
+  assert_eq!(stats.completed, stats.submitted);
+  assert_eq!(stats.refused, 0);
+}
+
+#[test]
+fn executor_a_request_of_several_operations_is_one_transaction() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_tables().is_none() {
+    return;
+  }
+  let executor = executor_with(&cluster, 64, 256);
+  let mut submitter = executor.submitter();
+  let (t, shape) = pk_through(&submitter);
+
+  let mut three = Request::new();
+  for id in 1..=3 {
+    three.push(pk_write_op(&t, &shape, WriteKind::Insert, id, "1", "x"));
+  }
+  submitter.execute(&mut three).expect("three inserts");
+  let seen = mysql(&format!("SELECT COUNT(*) FROM {}.pk", IC_IT_DB));
+  assert_eq!(seen, Some("3".to_string()));
+
+  // One write fails, so neither goes in.
+  let mut both = Request::new();
+  both.push(pk_write_op(&t, &shape, WriteKind::Insert, 4, "4", "four"));
+  both.push(pk_write_op(&t, &shape, WriteKind::Insert, 2, "2", "two"));
+  let e = submitter.execute(&mut both).expect_err("2 is there");
+  assert_eq!(e.code, 630);
+  assert_eq!(both.ops()[1].error().map(|e| e.code), Some(630));
+  let seen = mysql(&format!("SELECT COUNT(*) FROM {}.pk", IC_IT_DB));
+  assert_eq!(seen, Some("3".to_string()), "4 was not inserted");
+
+  // An operation that cannot be defined fails the request before
+  // anything is sent: a committed read cannot abort on error.
+  let mut bad = Request::new();
+  bad.push(pk_write_op(&t, &shape, WriteKind::Insert, 5, "5", "five"));
+  let mut read = pk_read_op(&t, &shape, 1);
+  read.set_abort_option(AbortOption::AbortOnError);
+  bad.push(read);
+  let e = submitter.execute(&mut bad).expect_err("not definable");
+  assert_eq!(e.code, err::IC_ERROR_NOT_SUPPORTED);
+  assert_eq!(bad.commit_state(), CommitState::RolledBack);
+  assert_eq!(
+    bad.ops()[0].error().map(|e| e.code),
+    Some(err::IC_ERROR_TRANSACTION_ROLLED_BACK)
+  );
+  let seen = mysql(&format!(
+    "SELECT COUNT(*) FROM {}.pk WHERE id = 5",
+    IC_IT_DB
+  ));
+  assert_eq!(seen, Some("0".to_string()), "5 was not inserted");
+
+  // A locked read and an update of the same row, together.
+  let mut locked = Request::new();
+  let mut read_locked = pk_read_op(&t, &shape, 3);
+  read_locked.set_kind(ic_apid::executor::OpKind::Read(ReadKind::Exclusive));
+  locked.push(read_locked);
+  locked.push(pk_write_op(&t, &shape, WriteKind::Update, 3, "33", "y"));
+  submitter.execute(&mut locked).expect("read and update");
+  assert_eq!(t.get(locked.ops()[0].attr_row(), "val"), "1");
+  let seen = mysql(&format!("SELECT val FROM {}.pk WHERE id = 3", IC_IT_DB));
+  assert_eq!(seen, Some("33".to_string()));
+}
+
+/// How many requests the callback test's function has been handed, and
+/// how many of them were handed on the executor's own thread.
+static EXEC_CALLBACKS: std::sync::atomic::AtomicUsize =
+  std::sync::atomic::AtomicUsize::new(0);
+static EXEC_CALLBACKS_ON_EXECUTOR: std::sync::atomic::AtomicUsize =
+  std::sync::atomic::AtomicUsize::new(0);
+static EXEC_CALLBACK_REFS: std::sync::atomic::AtomicUsize =
+  std::sync::atomic::AtomicUsize::new(0);
+
+fn note_request(request: Request, user_ref: usize) {
+  use std::sync::atomic::Ordering;
+  assert!(request.outcome().is_ok(), "{:?}", request);
+  let name = std::thread::current().name().unwrap_or("").to_string();
+  if name.starts_with("ic_executor_") {
+    EXEC_CALLBACKS_ON_EXECUTOR.fetch_add(1, Ordering::Relaxed);
+  }
+  EXEC_CALLBACK_REFS.fetch_add(user_ref, Ordering::Relaxed);
+  EXEC_CALLBACKS.fetch_add(1, Ordering::Release);
+}
+
+#[test]
+fn executor_hands_requests_to_a_callback_on_its_thread() {
+  use std::sync::atomic::Ordering;
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_tables().is_none() {
+    return;
+  }
+  let executor = executor_with(&cluster, 64, 256);
+  let mut submitter = executor.submitter();
+  let (t, shape) = pk_through(&submitter);
+  let mut row = Request::with_op(pk_write_op(
+    &t,
+    &shape,
+    WriteKind::Insert,
+    7,
+    "70",
+    "seven",
+  ));
+  submitter.execute(&mut row).expect("insert");
+  let count: usize = 100;
+  let mut i: usize = 1;
+  while i <= count {
+    let request = Request::with_op(pk_read_op(&t, &shape, 7));
+    submitter
+      .submit_wait(request, Done::Callback(note_request, i))
+      .expect("submitted");
+    i += 1;
+  }
+  let start = time::gethrtime();
+  while EXEC_CALLBACKS.load(Ordering::Acquire) < count {
+    let waited = time::millis_elapsed(start, time::gethrtime());
+    assert!(
+      waited < IC_IT_TRANS_WAIT_MS,
+      "the callbacks did not all come"
+    );
+    time::microsleep(1_000);
+  }
+  assert_eq!(EXEC_CALLBACKS.load(Ordering::Acquire), count);
+  assert_eq!(EXEC_CALLBACKS_ON_EXECUTOR.load(Ordering::Relaxed), count);
+  assert_eq!(
+    EXEC_CALLBACK_REFS.load(Ordering::Relaxed),
+    count * (count + 1) / 2,
+    "each user_ref handed back once"
+  );
+}
+
+#[test]
+fn executor_serves_many_application_threads_together() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_tables().is_none() {
+    return;
+  }
+  let executor = executor_with(&cluster, 400, 4000);
+  let mut submitter = executor.submitter();
+  let (t, shape) = pk_through(&submitter);
+  let rows: i64 = 200;
+  let mut load = Request::new();
+  for id in 1..=rows {
+    let val = (id * 10).to_string();
+    load.push(pk_write_op(&t, &shape, WriteKind::Insert, id, &val, "r"));
+  }
+  submitter
+    .execute(&mut load)
+    .expect("200 inserts in one transaction");
+  let threads: usize = 32;
+  let per_thread: i64 = 200;
+  std::thread::scope(|scope| {
+    let mut handles = Vec::new();
+    for thread in 0..threads {
+      let mut mine = submitter.clone();
+      let t = &t;
+      let shape = &shape;
+      handles.push(scope.spawn(move || {
+        let mut request = Request::with_op(pk_read_op(t, shape, 1));
+        for n in 0..per_thread {
+          let id = 1 + (thread as i64 * 7 + n) % rows;
+          t.put(request.ops_mut()[0].key_row_mut(), "id", &id.to_string());
+          mine.execute(&mut request).expect("a read");
+          let read = &request.ops()[0];
+          assert!(read.error().is_none(), "row {} is there", id);
+          assert_eq!(t.get(read.attr_row(), "val"), (id * 10).to_string());
+        }
+      }));
+    }
+    for handle in handles {
+      handle.join().expect("an application thread");
+    }
+  });
+  let stats = executor.stats();
+  let reads = threads as u64 * per_thread as u64;
+  assert!(stats.completed > reads, "{:?}", stats);
+  // Thirty-two threads waiting at once: passes of the loop admit
+  // several requests and send them together.
+  assert!(stats.sends < stats.admitted, "no batching: {:?}", stats);
+}
+
+#[test]
+fn executor_runs_operations_through_a_unique_index() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_tables().is_none() {
+    return;
+  }
+  mysql(&format!(
+    "INSERT INTO {}.uk VALUES (1, 100, 1), (2, 200, 2)",
+    IC_IT_DB
+  ));
+  let executor = executor_with(&cluster, 64, 256);
+  let mut submitter = executor.submitter();
+  let def = submitter.table_bind(IC_IT_DB, "uk").expect("bind uk");
+  let rec = Record::default_for(&def, None).expect("a record");
+  let t = Table { def, rec };
+  let index = submitter
+    .index_bind(IC_IT_DB, "uk_code$unique", "uk")
+    .expect("bind the index");
+  let key_rec = record_over(&t, &["code"]);
+  let shape = OpShape::new_unique(&index, &key_rec, &t.rec).expect("shape");
+  let mut read = KeyOp::read(&shape, ReadKind::Committed);
+  put_into(&t, &key_rec, read.key_row_mut(), "code", "200");
+  let mut request = Request::with_op(read);
+  submitter
+    .execute(&mut request)
+    .expect("read through the index");
+  assert!(request.ops()[0].error().is_none());
+  assert_eq!(t.get(request.ops()[0].attr_row(), "id"), "2");
+
+  // An update through the index, of a column it is not over.
+  let update_rec = record_over(&t, &["val"]);
+  let update_shape =
+    OpShape::new_unique(&index, &key_rec, &update_rec).expect("shape");
+  let mut update = KeyOp::write(&update_shape, WriteKind::Update);
+  put_into(&t, &key_rec, update.key_row_mut(), "code", "100");
+  put_into(&t, &update_rec, update.attr_row_mut(), "val", "17");
+  let mut request = Request::with_op(update);
+  submitter
+    .execute(&mut request)
+    .expect("update through the index");
+  let seen = mysql(&format!("SELECT val FROM {}.uk WHERE id = 1", IC_IT_DB));
+  assert_eq!(seen, Some("17".to_string()));
+}
+
+#[test]
+fn executor_deadlines_and_stopping_fail_requests_unsent() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_tables().is_none() {
+    return;
+  }
+  let mut executor = executor_with(&cluster, 64, 256);
+  let mut submitter = executor.submitter();
+  let (t, shape) = pk_through(&submitter);
+
+  // Past its deadline when its turn comes: back unsent.
+  let mut late = Request::with_op(pk_write_op(
+    &t,
+    &shape,
+    WriteKind::Insert,
+    9,
+    "9",
+    "late",
+  ));
+  late.set_timeout_ms(1);
+  time::microsleep(20_000);
+  let e = submitter.execute(&mut late).expect_err("too late");
+  assert_eq!(e.code, err::IC_ERROR_TIMEOUT);
+  assert_eq!(
+    late.ops()[0].error().map(|e| e.code),
+    Some(err::IC_ERROR_TIMEOUT)
+  );
+  assert_eq!(executor.stats().expired, 1);
+  let seen = mysql(&format!("SELECT COUNT(*) FROM {}.pk", IC_IT_DB));
+  assert_eq!(seen, Some("0".to_string()), "nothing was sent");
+
+  // Without a deadline it goes.
+  late.set_timeout_ms(0);
+  submitter.execute(&mut late).expect("in time");
+
+  // A stopped executor takes nothing, and hands the request back.
+  executor.stop();
+  let mut after = Request::with_op(pk_read_op(&t, &shape, 9));
+  let e = submitter.execute(&mut after).expect_err("stopped");
+  assert_eq!(e.code, err::IC_ERROR_EXECUTOR_STOPPED);
+  assert_eq!(after.ops().len(), 1, "handed back whole");
+  let refused = submitter
+    .submit(after, Done::Slot(ic_apid::executor::Slot::new()))
+    .expect_err("stopped");
+  assert_eq!(refused.error.code, err::IC_ERROR_EXECUTOR_STOPPED);
+  assert_eq!(refused.request.ops().len(), 1);
 }
 
 // ---- types ----

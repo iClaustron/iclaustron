@@ -177,6 +177,7 @@ functions; explicit shifts and masks, no bit-field macros.
 | — | `hash.rs` | New | distribution key, hash choice per table, hash map → partition → node, with the data nodes' dynamic primary rule; location domain and host proximity still to come. The digests themselves are `ic_util::md5` and `ic_util::xxh3`, written from the public algorithms |
 | — | `row_codec.rs` | New | `ROW_DATA_REP` ↔ record row; COLUMN_DATA_ORD/KEY_DATA_ORD from record rows; first cut built: key, packed read request, packed row unpacked |
 | — | `key_op.rs` | New | the first key operation, a committed read waited for; a stepping stone to `transaction.rs` |
+| — | `executor.rs` | New | built in phase 8.1: a user thread running key operations for any number of application threads, which submit requests through `thread_conn.rs`'s second list; shapes, requests, completion slots and callbacks, the blocking `Submitter::execute` |
 | `ic_apid_range.ic`, `ic_apid_tablespace.ic` | `range.rs`, `tablespace.rs` | later releases | |
 
 ## Crate `ic_capi` — New

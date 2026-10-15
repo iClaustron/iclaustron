@@ -4,10 +4,13 @@ A client library for RonDB 26.10 data nodes (an API node speaking the
 NDB protocol) written in C-like Rust, MIT licensed, usable from Rust, C,
 C++ and any language that can call C.
 
-Status: release 0.1 in preparation (phase 7 of `doc/rust/06-phases.md`).
-Rows are read and written by primary key and unique key, in
-transactions, synchronously or asynchronously with callbacks, every row
-size RonDB allows, with node failures handled; scans come next.
+Status: release 0.1 is tagged (`v0.1.0`); phase 8, toward 0.2, is under
+way (`doc/rust/06-phases.md`). Rows are read and written by primary key
+and unique key, in transactions, synchronously or asynchronously with
+callbacks, every row size RonDB allows, with node failures handled;
+threads without a connection of their own run their transactions
+through executors, which send many threads' calls together (phase 8.1).
+Scans come next.
 
 - **Using it**: the user guide, [`doc/user-guide.md`](doc/user-guide.md),
   and the same five example programs in Rust and C in

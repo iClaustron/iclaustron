@@ -39,6 +39,21 @@
 //! and the send pool see contention, and where one receive thread's
 //! ceiling shows.
 //!
+//! **Through executors.** With `--executors`, the work goes through
+//! that many executors instead (`ic_apid::executor`): `--clients`
+//! application threads, none with a connection of its own, each makes
+//! one blocking call at a time, a read or an update of its next key,
+//! through a submitter of its own on the executors in turn. This is the
+//! synchronous model's second form (doc/rust/architecture.html, section
+//! 4); the first, a connection per thread with one call at a time, is
+//! `--threads N --batch 1 --depth 1`. The report adds what the
+//! executors did: how many requests a send carried.
+//!
+//! ```text
+//!   ic_bench -d ictest t9 --keys 100000 --executors 1 --clients 64
+//!   ic_bench -d ictest t9 --keys 100000 --threads 64 --batch 1 --depth 1
+//! ```
+//!
 //! `--force` makes each batch go at once rather than leaving it to the
 //! adaptive send algorithm, which is what an application gets by
 //! default; for one thread the two are the same. `--callbacks` has
@@ -81,6 +96,14 @@ use ic_apid::apid_global::GlobalOptions;
 use ic_apid::apid_global::IC_EXTRA_READS;
 use ic_apid::apid_global::IC_LARGE_SIGNAL_WORDS;
 use ic_apid::dict_cache::TableDef;
+use ic_apid::executor::Executor;
+use ic_apid::executor::ExecutorOptions;
+use ic_apid::executor::ExecutorStats;
+use ic_apid::executor::KeyOp;
+use ic_apid::executor::OpShape;
+use ic_apid::executor::Request;
+use ic_apid::executor::Submitter;
+use ic_apid::executor::IC_EXECUTOR_IN_FLIGHT;
 use ic_apid::query::QueryId;
 use ic_apid::query::ReadKeyArgs;
 use ic_apid::query::ReadKind;
@@ -104,6 +127,10 @@ const IC_BENCH_MAX_BATCH: i64 = 1000;
 const IC_BENCH_MAX_DEPTH: i64 = 16;
 /// The most user threads.
 const IC_BENCH_MAX_THREADS: i64 = 64;
+/// The most executors.
+const IC_BENCH_MAX_EXECUTORS: i64 = 64;
+/// The most application threads through executors.
+const IC_BENCH_MAX_CLIENTS: i64 = 4096;
 /// One counter per slot of every thread, for `--callbacks`.
 const IC_BENCH_MAX_SLOTS: usize =
   (IC_BENCH_MAX_THREADS * IC_BENCH_MAX_DEPTH) as usize;
@@ -119,7 +146,7 @@ static DONE_BY_CALLBACK: [AtomicUsize; IC_BENCH_MAX_SLOTS] =
 static FAILED_BY_CALLBACK: [AtomicUsize; IC_BENCH_MAX_SLOTS] =
   [const { AtomicUsize::new(0) }; IC_BENCH_MAX_SLOTS];
 
-const OPTIONS: [OptionEntry; 18] = [
+const OPTIONS: [OptionEntry; 21] = [
   OptionEntry {
     long_name: "ndb-connectstring",
     short_name: b'c',
@@ -217,6 +244,24 @@ const OPTIONS: [OptionEntry; 18] = [
     help: "Complete queries through a callback, not the executed list",
   },
   OptionEntry {
+    long_name: "executors",
+    short_name: 0,
+    kind: OptionKind::Int,
+    help: "Run through this many executors, for --clients threads; 0 none",
+  },
+  OptionEntry {
+    long_name: "clients",
+    short_name: 0,
+    kind: OptionKind::Int,
+    help: "Threads making one blocking call at a time; the default is 64",
+  },
+  OptionEntry {
+    long_name: "in-flight",
+    short_name: 0,
+    kind: OptionKind::Int,
+    help: "Requests an executor keeps out at most; the default is 400",
+  },
+  OptionEntry {
     long_name: "node-id",
     short_name: 0,
     kind: OptionKind::Int,
@@ -246,6 +291,12 @@ struct Run {
   receive_threads: u32,
   force: bool,
   callbacks: bool,
+  /// Executors to run through, or 0 to run pipelines on connections.
+  executors: usize,
+  /// Application threads making blocking calls through the executors.
+  clients: usize,
+  /// Requests an executor keeps out at most.
+  in_flight: u32,
 }
 
 fn main() {
@@ -301,6 +352,21 @@ fn run() -> i32 {
     );
     return 1;
   }
+  let executors = parser.get_int_or("executors", 0);
+  let clients = parser.get_int_or("clients", 64);
+  let in_flight = parser.get_int_or("in-flight", IC_EXECUTOR_IN_FLIGHT as i64);
+  if !(0..=IC_BENCH_MAX_EXECUTORS).contains(&executors)
+    || !(1..=IC_BENCH_MAX_CLIENTS).contains(&clients)
+    || (executors > 0 && keys < clients)
+    || in_flight < 1
+  {
+    println!(
+      "The executors are between 0 and {}, the clients between 1 and {}, \
+       keys at least the clients, and in flight at least 1",
+      IC_BENCH_MAX_EXECUTORS, IC_BENCH_MAX_CLIENTS
+    );
+    return 1;
+  }
   let what = Run {
     write,
     seconds: seconds as u64,
@@ -320,6 +386,9 @@ fn run() -> i32 {
       .max(0) as u32,
     force: parser.get_flag("force"),
     callbacks: parser.get_flag("callbacks"),
+    executors: executors as usize,
+    clients: clients as usize,
+    in_flight: in_flight as u32,
   };
   let database = parser.get_string_or("database", "test");
   let connect_text =
@@ -422,6 +491,9 @@ fn bench(global: &ApidGlobal, database: &str, table: &str, what: &Run) -> i32 {
       }
     }
   }
+  if what.executors > 0 {
+    return bench_executors(global, &def, &rec, what, started);
+  }
   println!(
     "{} by primary key, {} thread(s) each with {} in flight as {} \
      batch(es) of {}, {} key(s) from {}, {} data node(s), for {} s",
@@ -493,7 +565,7 @@ fn bench(global: &ApidGlobal, database: &str, table: &str, what: &Run) -> i32 {
       }
     }
   }
-  tally.print(elapsed, what.threads);
+  tally.print(elapsed, what.threads, "batch", "from send to done");
   print_usage(usage_before, ic_port::time::process_usage(), tally.ops);
   print_allocations(allocs_before, alloc_count::counts(), tally.ops);
   print_reader(reader_before, ic_apid::signal_reader::reader_stats());
@@ -727,7 +799,9 @@ impl Tally {
     self.unexpected += other.unexpected;
   }
 
-  fn print(&mut self, elapsed_ms: u64, threads: usize) {
+  /// The rate, and how long each `unit` took, `how` saying from when
+  /// to when.
+  fn print(&mut self, elapsed_ms: u64, threads: usize, unit: &str, how: &str) {
     if elapsed_ms == 0 {
       return;
     }
@@ -760,9 +834,11 @@ impl Tally {
     let p99 = self.batch_nanos[(n * 99) / 100];
     let slowest = self.batch_nanos[n - 1];
     println!(
-      "A batch took {} us from send to done at the median, {} us at the \
-       99th percentile, {} us at most",
+      "A {} took {} us {} at the median, {} us at the 99th percentile, {} \
+       us at most",
+      unit,
       median / 1000,
+      how,
       p99 / 1000,
       slowest / 1000
     );
@@ -915,6 +991,248 @@ fn fill_query(
     }
   }
   Ok(())
+}
+
+/// As [`fill_query`], into an executor's operation.
+fn fill_op(
+  def: &Arc<TableDef>,
+  rec: &Record,
+  op: &mut KeyOp,
+  key: i64,
+  values_too: bool,
+  bytes: usize,
+) -> Result<(), IcError> {
+  for attr in &def.info().attributes {
+    let position = match rec.position_of(attr.column_id) {
+      Some(position) => position,
+      None => continue,
+    };
+    if values_too && !attr.primary_key && is_bytes(attr) {
+      put_bytes(rec, attr, position, bytes, op.attr_row_mut())?;
+      continue;
+    }
+    if attr.primary_key {
+      put_integer(rec, position, key, op.key_row_mut());
+      put_integer(rec, position, key, op.attr_row_mut());
+    } else if !values_too {
+      continue;
+    } else if is_integer(attr.type_code) {
+      put_integer(rec, position, key * 10, op.attr_row_mut());
+    } else {
+      rec.set_null(op.attr_row_mut(), position, true)?;
+    }
+  }
+  Ok(())
+}
+
+/// The run through executors: `--clients` application threads, each
+/// making one blocking call at a time through a submitter of its own,
+/// on the executors in turn, each over its own share of the keys.
+fn bench_executors(
+  global: &ApidGlobal,
+  def: &Arc<TableDef>,
+  rec: &Record,
+  what: &Run,
+  started: usize,
+) -> i32 {
+  let shape = match OpShape::new(def, rec, rec) {
+    Ok(shape) => shape,
+    Err(e) => {
+      report("Could not make the operations' shape", &e);
+      return 1;
+    }
+  };
+  let options = ExecutorOptions {
+    in_flight: what.in_flight,
+    ..ExecutorOptions::default()
+  };
+  let mut executors: Vec<Executor> = Vec::with_capacity(what.executors);
+  while executors.len() < what.executors {
+    match Executor::start(global, &options) {
+      Ok(executor) => executors.push(executor),
+      Err(e) => {
+        report("Could not start an executor", &e);
+        return 1;
+      }
+    }
+  }
+  println!(
+    "{} by primary key, {} application thread(s) each with one blocking \
+     call at a time, through {} executor(s) with up to {} in flight each, \
+     {} key(s) from {}, {} data node(s), for {} s",
+    if what.write {
+      "Updates"
+    } else {
+      "Committed reads"
+    },
+    what.clients,
+    what.executors,
+    what.in_flight,
+    what.keys,
+    what.from,
+    started,
+    what.seconds
+  );
+  let per_client = what.keys / what.clients as i64;
+  let usage_before = ic_port::time::process_usage();
+  let allocs_before = alloc_count::counts();
+  let reader_before = ic_apid::signal_reader::reader_stats();
+  let send_before = ic_apid::apid_global::send_stats();
+  let start = ic_port::time::gethrtime();
+  let outcomes: Vec<Result<Tally, String>> = std::thread::scope(|scope| {
+    let mut handles = Vec::with_capacity(what.clients);
+    let mut client: usize = 0;
+    while client < what.clients {
+      let submitter = executors[client % executors.len()].submitter();
+      let index = client as i64;
+      let first = what.from + index * per_client;
+      let mut span = per_client;
+      if client + 1 == what.clients {
+        span = what.keys - index * per_client;
+      }
+      let range = KeyRange {
+        start: first,
+        end: first + span,
+      };
+      let shape = &shape;
+      handles.push(
+        scope
+          .spawn(move || run_client(submitter, def, rec, shape, what, range)),
+      );
+      client += 1;
+    }
+    let mut outcomes = Vec::with_capacity(handles.len());
+    for handle in handles {
+      outcomes.push(match handle.join() {
+        Ok(outcome) => outcome,
+        Err(_) => Err("A thread panicked".to_string()),
+      });
+    }
+    outcomes
+  });
+  let elapsed =
+    ic_port::time::millis_elapsed(start, ic_port::time::gethrtime());
+  let mut tally = Tally::default();
+  let mut code = 0;
+  for outcome in outcomes {
+    match outcome {
+      Ok(one) => tally.merge(one),
+      Err(text) => {
+        println!("{}", text);
+        code = 1;
+      }
+    }
+  }
+  tally.print(elapsed, what.clients, "request", "from submit to return");
+  print_usage(usage_before, ic_port::time::process_usage(), tally.ops);
+  print_allocations(allocs_before, alloc_count::counts(), tally.ops);
+  print_reader(reader_before, ic_apid::signal_reader::reader_stats());
+  let (writes, bytes) = ic_apid::apid_global::send_stats();
+  let writes = writes - send_before.0;
+  if writes > 0 && tally.ops > 0 {
+    println!(
+      "Send: {} writes of {} bytes on average, {} writes per 1000 \
+       operations",
+      writes,
+      (bytes - send_before.1) / writes,
+      writes * 1000 / tally.ops
+    );
+  }
+  print_executors(&executors);
+  // Stopped before the global is: each finishes what it has out.
+  for mut executor in executors {
+    executor.stop();
+  }
+  if tally.failed > 0 {
+    return 1;
+  }
+  code
+}
+
+/// One application thread's run: one blocking call at a time, over its
+/// keys in order, until the time is up.
+fn run_client(
+  mut submitter: Submitter,
+  def: &Arc<TableDef>,
+  rec: &Record,
+  shape: &Arc<OpShape>,
+  what: &Run,
+  range: KeyRange,
+) -> Result<Tally, String> {
+  let op = if what.write {
+    KeyOp::write(shape, WriteKind::Update)
+  } else {
+    KeyOp::read(shape, ReadKind::Committed)
+  };
+  let mut request = Request::with_op(op);
+  let mut tally = Tally::default();
+  let end_at = ic_port::time::gethrtime() + what.seconds * 1_000_000_000;
+  let mut key = range.start;
+  loop {
+    let begun = ic_port::time::gethrtime();
+    if begun >= end_at {
+      break;
+    }
+    let filled = fill_op(
+      def,
+      rec,
+      &mut request.ops_mut()[0],
+      key,
+      what.write,
+      what.bytes,
+    );
+    if let Err(e) = filled {
+      return Err(describe("Could not fill a request", &e));
+    }
+    let outcome = submitter.execute(&mut request);
+    tally.note_batch(ic_port::time::gethrtime() - begun);
+    let mut failure = request.ops()[0].error();
+    if let Err(e) = outcome {
+      failure = Some(e);
+    }
+    match failure {
+      Some(e) => {
+        if tally.failed == 0 {
+          println!("An operation failed: {} ({})", e.message(), e.code);
+        }
+        tally.failed += 1;
+      }
+      None => tally.ops += 1,
+    }
+    key += 1;
+    if key >= range.end {
+      key = range.start;
+    }
+  }
+  Ok(tally)
+}
+
+/// What the executors did over the run, together.
+fn print_executors(executors: &[Executor]) {
+  let mut total = ExecutorStats::default();
+  for executor in executors {
+    let one = executor.stats();
+    total.admitted += one.admitted;
+    total.completed += one.completed;
+    total.refused += one.refused;
+    total.expired += one.expired;
+    total.sends += one.sends;
+    total.passes += one.passes;
+  }
+  if total.sends == 0 {
+    return;
+  }
+  println!(
+    "Executors: {} requests admitted in {} sends, {:.1} per send on \
+     average; {} passes of the loop, {:.2} per send; {} refused, {} expired",
+    total.admitted,
+    total.sends,
+    total.admitted as f64 / total.sends as f64,
+    total.passes,
+    total.passes as f64 / total.sends as f64,
+    total.refused,
+    total.expired
+  );
 }
 
 /// Write every key's row, a batch at a time, before measuring.

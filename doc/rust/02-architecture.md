@@ -307,8 +307,14 @@ somewhere testable against a live cluster:
    every link is seen through the nodes' atomics, whichever thread lost
    the last. `IC_TEST_RECEIVE_THREADS` runs the integration suite with
    several, and `ic_bench --receive-threads` measures.
-6. **Later.** Wake-up threads for rounds that wake hundreds of user
-   threads, and load-based placement of nodes on receive threads.
+6. **Executors** (phase 8.1, 2026-10-15; `executor`). A user thread
+   that runs key operations for any number of application threads,
+   which submit requests to its inbox: a second list under the inbox's
+   mutex, taken in the same lock as the signal pages, with the same
+   wake rule. Nothing else in the threading model changed.
+7. **Later.** Wake-up threads for rounds that wake hundreds of user
+   threads, and for executors, which wake each blocking caller; and
+   load-based placement of nodes on receive threads.
 
 ### Fragmented signals never leave the library (decided)
 
@@ -399,9 +405,11 @@ Mutex ordering levels (lock lower before higher, never the reverse):
 |---|---|---|
 | 1 | `ApidGlobal.dict_mutex` | global dictionary cache |
 | 2 | `ApidGlobal.mutex` | thread table, stop flag; start and stop only |
-| 3 | `ThreadConnection.mutex` | one user thread's inbound queue |
+| 3 | `ThreadConnection.mutex` | one user thread's inbound queue, and an executor's requests |
 | 5 | `SockBuf.mutex` | global page pool (thread-local free lists avoid it) |
 | 6 | `NodeConnection.mutex` | one node's send chain |
+| 8 | `SendPool.mutex` | the send pool's queue of nodes to write for |
+| 9 | `Slot.state` | a completion slot, where an executor leaves a finished request; nothing is locked under it |
 
 Levels 4 and 7 are deliberately empty. The C has a receive state mutex
 for moving nodes between receive threads and a heartbeat mutex for the

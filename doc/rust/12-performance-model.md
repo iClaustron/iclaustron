@@ -127,6 +127,7 @@ reply, the cores asked for and the stretch `f`.
 | Network | `net_ns` (one way) |
 | Data node | `node_recv_threads`, `node_packet_ns`, `node_signal_ns`, `node_exec_threads`, `node_exec_ns`, `chunk_ops`, `node_send_ns`, `node_send_op_ns`, `node_wake_ns`, `node_spin_ns` |
 | Machine and run | `cores` (0: unlimited), `other_cores`, `seconds`, `warmup`, `jitter`, `seed` |
+| Executors | `executors` (0: user threads as above), `clients`, `in_flight`, `submit_ns`, `deliver_ns`, `think_ns` |
 
 ### Calibration
 
@@ -190,6 +191,47 @@ node receive thread at close to 100 %; a second client receive thread
 gains nothing; and data nodes that spin less (`other_cores` 8 → 4)
 would give about 15 % more, 8.3 M/s, while ones that do not spin at all
 would give up to 9.8.
+
+### Executors
+
+With `executors` set, the user threads are executors serving `clients`
+application threads that each make one blocking call at a time
+(chapter 06 §8.1). A client spends `think_ns` and `submit_ns`, and
+wakes its executor if it sleeps willing to take a request; the
+executor admits everything waiting, up to `in_flight` out, as one batch
+of whatever size has gathered, and as replies complete requests it
+spends `complete_ns` and `deliver_ns` on each and wakes the client
+sleeping on its slot (`wake_cpu_ns` of the executor's time,
+`wake_latency_ns` before the client runs). Each line then counts
+requests, and its latency is a call's, from submit to return.
+
+```
+cargo run --release -p ic_model -- executors=1 sweep=clients:1,8,64,256
+cargo run --release -p ic_model -- clients=256 sweep=executors:1,2,4
+```
+
+Predicted before the first measurement, and measured (2026-10-15, the
+Mac; reads a second, median call, client CPU a call):
+
+| Run | Predicted | Measured |
+|---|---|---|
+| 64 threads, a connection each, one call at a time | 238 000, 259 µs, 16.4 µs | 198 000, 319 µs, 18.3 µs |
+| 64 callers, one executor | 193 000, 329 µs, 4.5 µs | 268 000, 231 µs, 9.8 µs |
+| 256 callers, two executors | 451 000, 562 µs, 4.3 µs | 307 000, 821 µs, 18.1 µs |
+
+The model had the limit right, the executor's thread waking its
+callers one by one, and the batching nearly so (63 writes per thousand
+calls against 86). It counted half the CPU: a caller's own cost of
+going to sleep on its slot and waking, which the kernel does and the
+model had no part for. That cost is now in `submit_ns`, fitted at
+5 µs a call, which brings the CPU to 9.2 µs against 9.8 and the two
+executors to 391 000. Two gaps remain. One executor is 28 % low: a
+caller's wake-up may cost the executor less than the 3 µs of
+`wake_cpu_ns`, which at 2 µs would give 238 000, but the other points
+fix `wake_cpu_ns` and it stays. Two executors are 27 % high: 256
+runnable threads doubled each call's kernel time in the measurement
+(8.3 to 16.2 µs) and preempted 3.45 million times in ten seconds,
+which a cost stretched on average across the cores does not show.
 
 To calibrate for another machine: measure depth 1, 2 and 4 with one
 user thread, and 4, 8 and 16 threads at batch 300; take the client

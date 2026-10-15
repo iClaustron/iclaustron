@@ -35,6 +35,11 @@ The C code had no counterpart: its header was the API itself, with the
   query's callback; the C function is kept in the query's binding word
   (`ReadKeyArgs::binding`) and turned back into a function pointer
   there.
+- An executor, its submitters, shapes and requests are boxes of the Rust
+  objects too (`Executor`, `Submitter`, `Arc<OpShape>`, `Request`). A
+  request owns its operations' rows, and its handle stays the same box
+  while `ic_apid_submitter_execute` moves the request to the executor
+  and back, so the row pointers C holds stay valid across runs.
 
 ## Deviations from the C code
 

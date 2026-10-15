@@ -66,6 +66,7 @@ use crate::dict_cache;
 use crate::dict_cache::IndexDef;
 use crate::dict_cache::TableDef;
 use crate::dict_client;
+use crate::executor::Work;
 use crate::fragments::FragmentAssembler;
 use crate::node_connect::ReceivedSignal;
 use crate::node_connect::SignalView;
@@ -642,6 +643,11 @@ impl ApidConnection {
     self.inbox.thread_id()
   }
 
+  /// This thread's inbox, which an executor's submitters share.
+  pub(crate) fn inbox(&self) -> &Arc<ThreadConnection> {
+    &self.inbox
+  }
+
   /// The block number data nodes address this thread's replies to.
   pub fn block_number(&self) -> u16 {
     self.inbox.block_number()
@@ -1018,6 +1024,18 @@ impl ApidConnection {
   /// and match it to the requests waiting for it. Returns how many
   /// signals were taken.
   pub fn poll(&mut self, wait_ms: u32) -> usize {
+    self.poll_with_requests(wait_ms, None)
+  }
+
+  /// As [`poll`](Self::poll), for an executor: with `requests`, which
+  /// must be empty, the requests application threads have submitted
+  /// are taken in the same lock as the signals, and one ends the wait
+  /// as a signal does; without, they stay in the inbox.
+  pub(crate) fn poll_with_requests(
+    &mut self,
+    wait_ms: u32,
+    requests: Option<&mut Vec<Work>>,
+  ) -> usize {
     if self.in_callback > 0 {
       // A query callback is running inside a poll already.
       return 0;
@@ -1040,7 +1058,9 @@ impl ApidConnection {
       lost = self.lost_transactions();
     }
     let mut pages = std::mem::take(&mut self.pages);
-    self.inbox.exchange(wait_ms, &mut pages);
+    self
+      .inbox
+      .exchange_with_requests(wait_ms, &mut pages, requests);
     for page in &pages {
       let mut at: usize = 0;
       while let Some(signal) = signal_page::next(page, &mut at) {

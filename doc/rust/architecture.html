@@ -455,16 +455,16 @@ footer { max-width: 1180px; margin: 64px auto 0; border-top: 1px solid var(--rul
     <p>A receive thread now waits in its poll set for up to 20 ms, so a newly connected link can go unwatched for that long. A self-pipe or eventfd would let a connect thread, or anyone else, wake it at once, and would remove the idle wake-ups.</p>
   </div></li>
   <li><span class="n">2</span><div>
-    <h4>Executor threads that serve application threads <span class="status proposed">Proposed</span></h4>
-    <p>Today every application thread that talks to RonDB is a user thread with its own block, capped at 256. An executor is a user thread that takes requests from any number of application threads through its inbox and pipelines them together. Section 3 describes it. It needs no new thread type in the library, only a second list in the inbox.</p>
+    <h4>Executor threads that serve application threads <span class="status built">Built</span></h4>
+    <p>Before phase 8.1 every application thread that talked to RonDB was a user thread with its own block. An executor is a user thread that takes requests from any number of application threads through its inbox and pipelines them together. Section 3 describes it. It needed no new thread type in the library, only a second list in the inbox (<code>ic_apid::executor</code>, 2026-10-15).</p>
   </div></li>
   <li><span class="n">3</span><div>
-    <h4>More user threads <span class="status planned">Planned</span></h4>
-    <p>Phase 7 raises the user-thread limit from 256 to 4711, which widens the block-number space and the thread table. The limit of four management servers in a connect string stays. It matters for the synchronous model's first form (section 4), where every application thread holds its own connection.</p>
+    <h4>More user threads <span class="status built">Built</span></h4>
+    <p>Phase 7 raised the user-thread limit from 256 to 4711, which widened the block-number space and the thread table. The limit of four management servers in a connect string stays. It matters for the synchronous model's first form (section 4), where every application thread holds its own connection.</p>
   </div></li>
   <li><span class="n">4</span><div>
     <h4>Wake-up helpers and more send threads <span class="status planned">Planned</span></h4>
-    <p>When one round wakes hundreds of sleeping user threads, the wake-ups themselves become the receive thread's cost. Helper threads could take over the wake-ups while the receive thread stays on the sockets. The send pool can likewise grow beyond one thread, taking nodes from a shared queue as it does now.</p>
+    <p>When one round wakes hundreds of sleeping user threads, the wake-ups themselves become the receive thread's cost. Helper threads could take over the wake-ups while the receive thread stays on the sockets. An executor serving blocking callers meets the same cost on its own thread, one wake-up per call; measured, it is what bounds one executor (section 4). The send pool can likewise grow beyond one thread, taking nodes from a shared queue as it does now.</p>
   </div></li>
   <li><span class="n">5</span><div>
     <h4>Placing nodes on receive threads by load <span class="status planned">Planned</span></h4>
@@ -668,7 +668,7 @@ loop {
 }</code></pre>
 <p>A callback runs inside <code>poll</code> on the polling thread, after the query has left its transaction's lists. It may define queries, start and commit transactions and send, which is how a pipeline keeps <em>depth</em> batches in flight. <code>ic_bench</code> works this way. The limitation is that <strong>new work can only come from this thread</strong>: from its own loop, or from a callback reacting to a reply. An application whose requests arrive on other threads, such as a network server's handlers, has to hand them to this thread somehow, and <code>poll</code> knows nothing about such hand-offs.</p>
 
-<h3 id="async-executor">An executor with two inputs <span class="status proposed">Proposed</span></h3>
+<h3 id="async-executor">An executor with two inputs <span class="status built">Built</span></h3>
 <p>An <strong>executor</strong> is a user thread that runs RonDB work for other threads. It must accept new queries while earlier ones are still in flight, so it listens to two interfaces:</p>
 <div class="two">
   <div class="panel">
@@ -697,7 +697,7 @@ loop {
   <text x="34" y="199" class="t-head">… any number</text>
 
   <text x="300" y="62" class="t-mono">INBOX · ONE MUTEX · ONE CONDITION</text>
-  <rect x="300" y="74" width="270" height="200" rx="4" class="box-proposed"/>
+  <rect x="300" y="74" width="270" height="200" rx="4" class="box-accent"/>
   <rect x="316" y="90" width="238" height="64" rx="3" class="box"/>
   <text x="330" y="114" class="t-head">requests</text>
   <text x="330" y="136" class="t-mono">new list · bounded · FIFO</text>
@@ -801,7 +801,8 @@ fn submit(&amp;self, r: Request) -&gt; Result&lt;(), Busy&gt; {
   </div>
 </div>
 <div class="callout">
-  <p><strong>What the hand-off costs.</strong> With the Mac calibration of chapter 12, waking a sleeping thread costs about 8 µs of latency and 3 µs of CPU. An application thread that submits to a busy executor pays no wake-up. One that blocks for its result pays one wake-up when the result comes back. At a few hundred operations per batch that cost is a small share of each operation. For a single operation on an idle system it is comparable to the round trip itself.</p>
+  <p><strong>What the hand-off costs.</strong> With the Mac calibration of chapter 12, waking a sleeping thread costs about 8 µs of latency and 3 µs of CPU. An application thread that submits to a busy executor pays no wake-up. One that blocks for its result pays one wake-up when the result comes back. This page predicted that at a few hundred operations per batch that cost would be a small share of each operation.</p>
+  <p><strong>Measured, it is not</strong> (2026-10-15, chapter 06 §8.1). Blocking callers make small batches, as many as call at once: 21 requests a send with 64 callers. And the wake-up is per call, not per batch: the executor wakes every caller, and every caller goes to sleep and wakes, about 10 µs of CPU per call in all against 0.5 µs pipelined. One executor's own thread, waking its callers, is what bounds it, near 270 000 calls a second on the Mac.</p>
 </div>
 </section>
 
@@ -821,21 +822,19 @@ conn.flush(1000, true)?;      <span class="c">// returns when done</span>
 let row = conn.query(q).attr_row();</code></pre>
     <ul>
       <li>Nothing between the caller and the socket: the lowest latency for one operation.</li>
-      <li>Throughput per thread is 1 / round trip. It scales only with threads, and each thread is a block (256 today, 4711 planned) with its own coordinator records.</li>
+      <li>Throughput per thread is 1 / round trip. It scales only with threads, and each thread is a block (at most 4711) with its own coordinator records.</li>
       <li>Replies still go through the receive thread and the inbox, so each call costs one wake-up.</li>
     </ul>
   </div>
   <div class="panel">
-    <h4>B · A blocking façade over executors <span class="status proposed">Proposed</span></h4>
-    <p>The application thread holds only a <code>Submitter</code>. A synchronous call submits a request to an executor (section 3) and sleeps on its own completion slot until the executor delivers the result.</p>
-<pre><code>let row = rondb.read(&amp;table, key)?;   <span class="c">// submit + wait</span>
-
-<span class="c">// inside: submit, then</span>
-let mut s = slot.lock();
-while !s.done { s = slot.cond.wait(s); }</code></pre>
+    <h4>B · A blocking façade over executors <span class="status built">Built</span></h4>
+    <p>The application thread holds only a <code>Submitter</code>. A synchronous call submits a request to an executor (section 3) and sleeps on its submitter's completion slot until the executor delivers the result.</p>
+<pre><code>let mut request = Request::with_op(KeyOp::read(&amp;shape, ReadKind::Committed));
+submitter.execute(&amp;mut request)?;   <span class="c">// submit + wait</span>
+let row = request.ops()[0].attr_row();</code></pre>
     <ul>
       <li>Any number of application threads, with no block number each. Thousands of blocking callers share a few executors.</li>
-      <li>Requests from different callers are batched together, so under load the cost per operation falls to that of the pipelined model.</li>
+      <li>Requests from different callers are batched together: with 64 callers, 21 a send. The per-batch costs are shared; the wake-up each call costs is not.</li>
       <li>Costs one extra hand-off, application thread → executor, and back.</li>
     </ul>
   </div>
@@ -850,20 +849,21 @@ while !s.done { s = slot.cond.wait(s); }</code></pre>
     <tr><td>Operations in flight</td><td>1 per thread</td><td>Many per executor</td><td>Many per thread</td></tr>
     <tr><td>Batching</td><td>Within one caller's transaction</td><td>Across callers, automatic</td><td>Chosen by the application</td></tr>
     <tr><td>Latency at light load</td><td>Lowest</td><td>+1 hand-off each way</td><td>Lowest</td></tr>
-    <tr><td>CPU per operation at load</td><td>Highest: per-batch costs on every call</td><td>Near the pipelined figure</td><td>Lowest, about 500 ns client CPU</td></tr>
+    <tr><td>CPU per operation at load</td><td>Highest: per-batch costs on every call; 18 µs measured, 64 threads</td><td>A wake-up per call, the batch costs shared; 10 µs measured, 64 callers</td><td>Lowest, about 500 ns client CPU</td></tr>
+    <tr><td>Reads a second, measured</td><td>198 000, 64 threads</td><td>268 000, 64 callers, one executor</td><td>2 million on one thread, 6 million on eight</td></tr>
     <tr><td>Fits</td><td>Tools, tests, low-rate services</td><td>Servers with a thread per request</td><td>Benchmarks, data loaders, REST/gRPC servers built for it</td></tr>
   </tbody>
 </table>
 </div>
 
-<p>All three rest on the same core: an <code>ApidConnection</code> polled by the thread that owns it, with receive threads that only route. Form A exists today. Form B and the asynchronous executor need the same addition: a second list in the inbox, under the same lock and wake rule as the first. Once that is built, the C ABI can offer blocking calls to languages whose threads are cheap to block (C, C++, Java, Go through cgo), and a Rust async layer can hand out Futures from the same executors.</p>
+<p>All three rest on the same core: an <code>ApidConnection</code> polled by the thread that owns it, with receive threads that only route. Form B and the executor needed the same addition: a second list in the inbox, under the same lock and wake rule as the first, built in phase 8.1 with blocking calls in the C ABI. A Rust async layer can hand out Futures from the same executors later. A blocking caller costs a wake-up per call whichever form it uses, so a service that wants the pipelined figures keeps several calls in flight per thread, through a callback or its own connection.</p>
 </section>
 
 </main>
 </div>
 
 <footer>
-  Sources: <code>crates/ic_apid</code> (<code>apid_conn.rs</code>, <code>thread_conn.rs</code>, <code>signal_page.rs</code>, <code>rec_thread.rs</code>, <code>send_pool.rs</code>, <code>transaction.rs</code>, <code>query.rs</code>, <code>apid_global.rs</code>) and <code>doc/rust</code> chapters 02, 04, 06 and 12. The coordinator imbalance was measured through <code>ndbinfo.cpustat</code> on 24 Sep 2026.
+  Sources: <code>crates/ic_apid</code> (<code>apid_conn.rs</code>, <code>executor.rs</code>, <code>thread_conn.rs</code>, <code>signal_page.rs</code>, <code>rec_thread.rs</code>, <code>send_pool.rs</code>, <code>transaction.rs</code>, <code>query.rs</code>, <code>apid_global.rs</code>) and <code>doc/rust</code> chapters 02, 04, 06 and 12. The coordinator imbalance was measured through <code>ndbinfo.cpustat</code> on 24 Sep 2026.
 </footer>
 
 </body>

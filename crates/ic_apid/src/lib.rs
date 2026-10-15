@@ -18,7 +18,10 @@
 //! time with the synchronous calls of [`key_op`], or many at once with
 //! queries defined on transactions, sent together and completed by
 //! [`poll`](apid_conn::ApidConnection::poll), each through the executed
-//! list or a callback ([`transaction`], [`query`]).
+//! list or a callback ([`transaction`], [`query`]). Threads that have no
+//! connection of their own hand their key operations to an
+//! [executor](executor), which runs them together with every other
+//! thread's.
 //!
 //! ```no_run
 //! use ic_apid::apid_global::ApidGlobal;
@@ -78,6 +81,8 @@
 //!   used many times.
 //! - [`transaction`]: defining queries on a transaction, sending them,
 //!   and completing them as their replies come.
+//! - [`executor`]: a user thread that runs key operations for any
+//!   number of application threads, and the blocking calls over it.
 //! - [`text_row`]: values as text, in and out of a row, for the tools.
 //! - [`fragments`]: putting a fragmented signal back together.
 //! - [`handshake`]: becoming a transporter connection to a data node.
@@ -85,7 +90,8 @@
 //! - [`node_connect`]: one connection to one data node.
 //! - [`node_state`]: what every thread may know about a node, lock-free.
 //! - [`thread_conn`]: handing signals from a receive thread to the user
-//!   thread they are for.
+//!   thread they are for, and requests from application threads to an
+//!   executor.
 
 pub mod adaptive_send;
 pub mod apid_conn;
@@ -95,6 +101,7 @@ pub mod collation_map;
 pub mod connect_thread;
 pub mod dict_cache;
 pub mod dict_client;
+pub mod executor;
 pub mod fragments;
 pub mod handshake;
 pub mod hash;
