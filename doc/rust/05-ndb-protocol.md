@@ -1672,6 +1672,63 @@ For the author, in sessions of their own (raised 2026-10-15):
   and a batch's rows outside 1 to 992 or 4 000, or an exclusive scan
   without keys (local ops:25643-25648).
 
+### 7.4 Seen on the wire (2026-10-16)
+
+A capture of `tools/scan_capture.sh` against the release cluster: 1 000
+rows over 8 fragments, 100 to 160 a fragment, so every fragment fitted
+in one batch of the reference's 384 rows. Read with the dissector; it
+confirms 7.2 where it says nothing below.
+
+- **`SCAN_REQ`.** Word 1 is 0, word 5 0x0000FFFF, flag bits 0–7 and 29
+  are 0, and the batch rows (384) are in both flag bits 16–25 and word
+  10. Word 8 names the transaction's record in every scan of the
+  reference, committed reads included; each scan's own record comes
+  from a `COORD_ALLOC_REQ` before it and goes back with a
+  `COORD_FREE_REQ` after it.
+- **Word 9 may be 0.** The reference lowers the bytes to the rows times
+  its estimate of a row (NR:728-743): 0 when nothing is read
+  (`--nodata`), 3 072 for keys alone. The data node then limits by rows
+  alone.
+- **Flags by lock mode:** committed reads 11; shared locks 10, without
+  keys; exclusive locks 8, 10 and 12. Bits 9 (no disk) and 13 (storage
+  order) are always set on a table scan, so the reference's storage
+  order option changes nothing on the wire.
+- **The column section.** The read part is the read-by-bitmap words of
+  a key read (0xFFF3 and the bitmap), [0, 0, 0, 0, 0] when nothing is
+  read. MySQL's range scan reads the range number first (0xFFFB, no
+  value). A pushed condition is the program part (5 and 8 words).
+  Parts 3 and 4 were always 0.
+- **Committed reads.** Each `SCAN_CONF` reports one receiver, done when
+  its fragment ended within the batch. The last has end of data, with
+  no `SCAN_MORE_REQ` at all. With parallelism 1, the one receiver went
+  through all 8 fragments, a `SCAN_MORE_REQ` naming it after each, its
+  pointer unchanged.
+- **Locking scans.** No receiver is done in its first `SCAN_CONF`, even
+  when the batch held the fragment's every row. After the
+  `SCAN_MORE_REQ` that releases the locks, each comes back with 0 rows
+  and done.
+- **`SCAN_MORE_REQ`** named subsets as the confirmations came: [06 01
+  03], then [05], then [00 07 04], with several `SCAN_CONF`s in between
+  (7.3 questions 7 and 8).
+- **Rows and their confirmation.** Rows and keys come straight from the
+  data node scanning the fragment, over its own link; `SCAN_CONF` comes
+  from the coordinator. Rows may come after their `SCAN_CONF`, even
+  after end of data on the same link. A batch is complete only when
+  its words are all in.
+- **Takeover** (MySQL's FOR UPDATE, UPDATE and DELETE). MySQL took over
+  the rows of the receivers whose `SCAN_CONF` had come and whose rows it
+  had used, waited for every `KEY_OP_CONF`, then named exactly those
+  receivers; then the next round, then `COMMIT_REQ` (7.3 question 12).
+  The takeover goes to the record of word 8, with flags 14 and 2, the
+  information word (0x181 for row word 0xC0), the fragment as the
+  distribution key, and the operation: read exclusive for FOR UPDATE,
+  with the key alone. The first carries Start.
+
+Not seen, because no fragment needed a second batch: a close
+(`LIMIT 5` ended by itself), the merge's refill of one receiver, more
+than one range, a fourth `SCAN_CONF` word. No `SCAN_REF` either. A second
+capture, with fragments larger than a batch, is for these.
+
 ## 8. Dictionary
 
 - `TABLE_DESC_REQ` (signal 24): the caller's data, the caller's
