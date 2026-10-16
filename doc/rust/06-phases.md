@@ -1314,9 +1314,10 @@ failure.
   started on a transaction, so that its rows may be taken over, takes
   it on the node and coordinator instance of the transaction's record
   and names that record; every other scan names none (the author,
-  2026-10-16; chapter 04, chapter 05 §7.2). Until the author has
-  settled the coordinator's check on that word, a scan naming none may
-  stop a data node.
+  2026-10-16; chapter 04, chapter 05 §7.2). A scan naming none needs
+  the author's mend of the coordinator's check on that word, in
+  `rondb_1107_cte_test` (d9f777a6847); on a tree without it such a
+  scan may stop a data node.
   Records for scans are pooled per node and instance and taken ahead,
   so that nothing waits for one, an executor least of all.
 - Receivers, one per fragment scanned in parallel, get ids in the

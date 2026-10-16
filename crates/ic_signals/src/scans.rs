@@ -57,9 +57,9 @@ pub const IC_SCAN_WORD5_PARTITION_ID: u32 = 1 << 30;
 /// Verify: chapter 05 §7.2.
 pub const IC_SCAN_NO_OWNER: u32 = 0xFFFF_FFFF;
 
-/// Rows a batch of a locking scan may hold: the takeover's operation
-/// number has ten bits. The data node stops on more for an exclusive
-/// scan; we keep every locking scan to it. Verify: chapter 05 §7.2.
+/// Rows a batch of a locking scan may hold, shared or exclusive: the
+/// takeover's operation number has ten bits. The coordinator refuses
+/// more with 1230. Verify: chapter 05 §7.2.
 pub const IC_SCAN_MAX_LOCKED_ROWS: u32 = 992;
 /// Rows a batch of a committed-read scan may hold.
 /// Verify: chapter 05 §7.2.

@@ -1364,13 +1364,15 @@ NTS = `src/ndbapi/NdbTransactionScan.cpp`, IF = `src/ndbapi/Ndbif.cpp`.
   is matched at the data node by the row word and the transaction id,
   which is why such a scan runs under its transaction's id.
 
-  Not yet settled: the coordinator treats word 8 as none when it is
-  0xFFFFFFFF (coordinator:16840-16841), or when it is not a valid record
-  of the same transaction (coordinator:16987-17010). It keeps the word
-  (coordinator:17369), though, and then requires it to be a valid
-  record for every scan (coordinator:18068-18070). So in this tree a
-  scan that names none may stop the data node. The author looks at this
-  in a session of its own.
+  The coordinator treats word 8 as none when it is 0xFFFFFFFF
+  (coordinator:16840-16841), or when it is not a valid record of the
+  same transaction (coordinator:16987-17010), and later requires a valid
+  owner for every scan (coordinator:18068-18070). In this tree it keeps
+  the word as it came (coordinator:17369), so a scan that names none
+  could stop the data node. Mended by the author in the tree the
+  integration runs use, `rondb_1107_cte_test` (d9f777a6847, 2026-10-16):
+  a scan with no owner named has its own record stand as its owner, so
+  the check passes. Every scan of the `scan_` group ran there.
 - **Receivers.** Receiver i serves fragment record i (coordinator:17624),
   and min(receivers, fragments) are used (coordinator:17932). The
   receiver id is word 0 of `ROW_DATA_REP` and of `SCAN_ROW_KEY_REP`,
@@ -1428,9 +1430,11 @@ NTS = `src/ndbapi/NdbTransactionScan.cpp`, IF = `src/ndbapi/Ndbif.cpp`.
   names every receiver whose batch it has used, and those whose
   batches came meanwhile wait for the next round (NSO:2229, 2347-2395).
   A receiver reported done (the null pointer) is never named. A
-  pointer named must be one whose
-  batch the API holds, named once: the coordinator does not check it,
-  and stops the data node if it is wrong (coordinator:19727-19731).
+  pointer named must be one whose batch the API holds, named once: in
+  this tree the coordinator does not check it and stops the data node
+  if it is wrong (coordinator:19727-19731); mended in
+  `rondb_1107_cte_test` (99ea088977e), which refuses it with 2206,
+  "Invalid scan continuation request".
   Stop set: the coordinator closes at
   once, ignoring the list, closes the fragments, and sends the bare end
   of data confirmation (coordinator:19678-19684, 19817-20102). While a scan
@@ -1456,8 +1460,13 @@ NTS = `src/ndbapi/NdbTransactionScan.cpp`, IF = `src/ndbapi/Ndbif.cpp`.
   stops otherwise; the coordinator passes the rows on unchecked (local
   ops:25643-25648, coordinator:17525-17538). A shared-lock scan that
   asks for keys may thus have 4 000 rows a batch, and rows past 1 023
-  get an operation number that wraps, a bug the author takes on
-  separately. Our locking scans, shared ones included, ask for at most
+  get an operation number that wraps. Mended by the author in
+  `rondb_1107_cte_test` (c2f5eff326b, 2026-10-16): the coordinator
+  refuses a batch of 0 rows or of more than 992 for any locking scan,
+  shared ones included, or 4 000 for committed reads, with 1230,
+  "Invalid scan batch size", and an exclusive scan without keys with
+  2205, and the data node holds every locking scan to 992. Our locking
+  scans, shared ones included, ask for at most
   992 rows a batch; committed reads for up to 4 000 (the author,
   2026-10-15). The reference asks for more only
   when every cached row is consumed (NSO:2168-2247): its policy, not
@@ -1675,13 +1684,16 @@ For the author, in sessions of their own (raised 2026-10-15):
   `src/ndbapi/ndberror.cpp:365, 580`);
 - ST:97-102 counts word 9 among the words whose high half is free;
 - the coordinator's check that every scan names a valid owning record
-  (coordinator:18068-18070), which a scan naming none would fail;
+  (coordinator:18068-18070), which a scan naming none would fail:
+  mended in `rondb_1107_cte_test`, d9f777a6847 (2026-10-16);
 - takeover past row 1 023 of a shared-lock batch, whose operation
-  number wraps (`include/kernel/signaldata/ScanFrag.hpp:552-562`);
+  number wraps (`include/kernel/signaldata/ScanFrag.hpp:552-562`):
+  mended there, c2f5eff326b, locking batches held to 992;
 - two things the data node stops on that a refusal would serve: a
   `SCAN_MORE_REQ` naming a pointer not held (coordinator:19727-19731),
   and a batch's rows outside 1 to 992 or 4 000, or an exclusive scan
-  without keys (local ops:25643-25648).
+  without keys (local ops:25643-25648): mended there, 99ea088977e
+  (2206) and c2f5eff326b (1230, 2205).
 
 ### 7.4 Seen on the wire (2026-10-16)
 
