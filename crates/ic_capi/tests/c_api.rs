@@ -978,6 +978,79 @@ fn c_api_scan_on_a_connection_and_through_an_executor() {
     assert_eq!(ic_apid_scan_free(conn, scan), 0);
     assert_eq!(ic_apid_scan_state(conn, scan), IC_SCAN_UNKNOWN);
 
+    // Rows taken over from an exclusive scan on a transaction: each row's
+    // val set to its id, then committed.
+    let mut taken: IcScanId = 0;
+    assert_eq!(ic_apid_scan_create(conn, table, rec, &mut taken), 0);
+    let any = IcTransactionHint {
+      kind: IC_HINT_ANY,
+      value: 0,
+    };
+    let mut trans: IcTransId = 0;
+    let ret = ic_apid_conn_start_transaction(conn, any, table, &mut trans);
+    assert_eq!(ret, 0, "start a transaction: {}", message(ret));
+    let mut queries: Vec<IcQueryId> = Vec::new();
+    while (queries.len() as u64) < IC_IT_CAPI_SCAN_ROWS {
+      let mut q: IcQueryId = 0;
+      assert_eq!(ic_apid_query_create(conn, table, rec, rec, &mut q), 0);
+      queries.push(q);
+    }
+    let mut takeover = std::mem::MaybeUninit::<IcTakeoverArgs>::uninit();
+    ic_takeover_args_init(
+      takeover.as_mut_ptr(),
+      std::mem::size_of::<IcTakeoverArgs>(),
+    );
+    let takeover = takeover.assume_init();
+    let val = field(table, "val");
+    args.lock = IC_SCAN_LOCK_EXCLUSIVE;
+    args.trans = trans;
+    assert_eq!(ic_apid_conn_start_scan(conn, taken, &args), 0);
+    // None read yet: nothing to take over.
+    assert_eq!(
+      ic_apid_conn_update_scan_row(conn, queries[0], taken, &takeover),
+      IC_ERROR_NO_SCAN_ROW
+    );
+    let mut used: usize = 0;
+    loop {
+      let mut more = false;
+      let ret = ic_apid_conn_next_row(conn, taken, &mut more);
+      assert_eq!(ret, 0, "next row: {}", message(ret));
+      if !more {
+        break;
+      }
+      let mut len: usize = 0;
+      let row = ic_apid_scan_row(conn, taken, &mut len);
+      let id_text = get(rec, row, len, id);
+      let q = queries[used];
+      used += 1;
+      let mut attr_len: usize = 0;
+      let attr = ic_apid_query_attr_row(conn, q, &mut attr_len);
+      put(rec, attr, attr_len, &[(id, &id_text), (val, &id_text)]);
+      let ret = ic_apid_conn_update_scan_row(conn, q, taken, &takeover);
+      assert_eq!(ret, 0, "update the row: {}", message(ret));
+    }
+    assert_eq!(used as u64, IC_IT_CAPI_SCAN_ROWS);
+    // The scan ended only once every batch's takeovers were confirmed.
+    for q in &queries {
+      assert_eq!(ic_apid_query_state(conn, *q), IC_QUERY_COMPLETED);
+      assert_eq!(ic_apid_query_error(conn, *q), 0);
+    }
+    assert_eq!(ic_apid_conn_commit_transaction(conn, trans), 0);
+    assert_eq!(finish(conn, trans), IC_COMMIT_STATE_COMMITTED);
+    assert_eq!(ic_apid_conn_close_transaction(conn, trans), 0);
+    assert_eq!(
+      mysql(&format!("SELECT SUM(val) FROM {}.capi_scan", IC_IT_DB)),
+      Some(id_sum().to_string())
+    );
+    let mut q: IcQueryId = 0;
+    while ic_apid_conn_get_next_executed_query(conn, &mut q) {}
+    for q in queries {
+      assert_eq!(ic_apid_query_free(conn, q), 0);
+    }
+    assert_eq!(ic_apid_scan_free(conn, taken), 0);
+    args.lock = IC_SCAN_LOCK_COMMITTED;
+    args.trans = IC_NO_TRANS;
+
     // Through an executor, with a reader.
     let mut options = std::mem::MaybeUninit::<IcExecutorOptions>::uninit();
     ic_executor_options_init(

@@ -1780,6 +1780,26 @@ a fragment:
 Still not seen: a `SCAN_CONF` with more than one entry (every one had
 one), and a fourth word, since no batch reached 1 023 rows.
 
+Read again for takeover (phase 8.5, 2026-10-16), the second capture:
+
+- **A key's operation number is its row's place in the batch.** Over
+  the 30 849 `SCAN_ROW_KEY_REP` of the capture, in 67 batches, the
+  number (bits 8 to 17 of the row word) starts at 0 in every batch and
+  rises by one per key, with no gap; the row word's low byte was 0xC0
+  throughout. The keys of a batch come before its rows, a few at a
+  time, and the data node packs several rows in one `ROW_DATA_REP`;
+  each kind keeps the scan's order. The reference pairs the n-th key
+  with the n-th row as they come (NR:75-103, 1065), and so do we.
+- **A locking scan's last batch carries no rows.** All 81 entries that
+  named the null record for a locking scan reported 0 rows; those of
+  committed reads carried rows in 199 of 225. So every batch whose rows
+  may be taken over is followed by a request for more, which is what
+  waits for the takeovers.
+- **The reference takes over in the scan's lock**: a lock taken over
+  reads shared from a shared-lock scan and exclusively from an
+  exclusive one; updates and deletes from either; on a base table's
+  record only, aborting on error (NSO:3513-3575, 5302-5316).
+
 ## 8. Dictionary
 
 - `TABLE_DESC_REQ` (signal 24): the caller's data, the caller's

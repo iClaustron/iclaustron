@@ -67,8 +67,9 @@
  * from; an error's text is copied into the caller's buffer.
  *
  * Structs with a size. IC_GLOBAL_OPTIONS, IC_EXECUTOR_OPTIONS,
- * IC_READ_KEY_ARGS, IC_WRITE_KEY_ARGS and IC_SCAN_ARGS are filled by
- * their _init(&s, sizeof s) before the program sets what it wants;
+ * IC_READ_KEY_ARGS, IC_WRITE_KEY_ARGS, IC_SCAN_ARGS and
+ * IC_TAKEOVER_ARGS are filled by their _init(&s, sizeof s) before the
+ * program sets what it wants;
  * IC_FIELD_INFO and IC_EXECUTOR_STATS are given with their size. A
  * later release adds fields at the end, and a program built against an
  * older header gets the fields it knows: IC_EXECUTOR_OPTIONS and
@@ -101,6 +102,10 @@
  * handed back with ic_apid_conn_release_scan_batch(). A receiver is
  * asked for more only once its batch is handed back, so the program
  * sets the pace, and a locking scan's rows stay locked until then.
+ * A locking scan started on a transaction may hand the row last read
+ * over to it: ic_apid_conn_lock_scan_row(), _update_scan_row() and
+ * _delete_scan_row() define a query that takes the row's lock, and its
+ * batch asks for more only once every such query of it has completed.
  * Through an executor: a scan shape (ic_scan_shape_create()), a reader
  * of it (ic_scan_reader_create()), ic_apid_submitter_scan() to run it,
  * and ic_scan_reader_next_row(), which waits for the executor. A slow
@@ -613,6 +618,12 @@
 #define IC_ERROR_SCAN_ACTIVE 7161
 
 /*
+ A takeover found no scanned row to act on: none read, or its batch
+ handed back.
+ */
+#define IC_ERROR_NO_SCAN_ROW 7162
+
+/*
  One thread's connection to the cluster (`IC_APID_CONNECTION`).
  Opaque.
  */
@@ -929,6 +940,30 @@ typedef struct {
  A scan's id in its connection (`IC_SCAN_ID`).
  */
 typedef uint32_t IC_SCAN_ID;
+
+/*
+ What a takeover of a scanned row asks for (`IC_TAKEOVER_ARGS`).
+ */
+typedef struct {
+  /*
+   The struct's size, as `ic_takeover_args_init` was given it.
+   */
+  uint32_t size;
+  /*
+   One of `IC_ABORT_DEFAULT`, `IC_ABORT_ON_ERROR`, `IC_IGNORE_ERROR`;
+   the default rolls the transaction back if the takeover fails.
+   */
+  uint32_t abort_option;
+  /*
+   Called when the takeover completes, or NULL for the executed
+   list: an `IC_APID_CALLBACK`.
+   */
+  void (*callback)(IC_APID_CONNECTION *conn, IC_QUERY_ID query, void *user_ref);
+  /*
+   Given back with the completed query.
+   */
+  void *user_ref;
+} IC_TAKEOVER_ARGS;
 
 /*
  Choices an executor is started with (`IC_EXECUTOR_OPTIONS`).
@@ -2215,6 +2250,75 @@ int32_t ic_apid_conn_next_batch(IC_APID_CONNECTION *conn,
                                 IC_SCAN_ID scan,
                                 IC_SCAN_BATCH_ID *batch,
                                 bool *more);
+
+/*
+ Fill `args`, `size` bytes, with the defaults: the default abort
+ option, no callback.
+
+ Leaves `args` as it is when `size` is smaller than this header's
+ `IC_TAKEOVER_ARGS`.
+
+ # Safety
+
+ A non-null `args` points to `size` writable bytes.
+ */
+void ic_takeover_args_init(IC_TAKEOVER_ARGS *args, size_t size);
+
+/*
+ Take the lock on the row last read from the scan over into the scan's
+ transaction (`IC_SCAN_ARGS`' `trans`), reading the fields of the
+ query's attribute record into its attribute row: shared from a
+ shared-lock scan, exclusive from an exclusive one. The query, over
+ the scanned table, completes as any query does and goes with the next
+ send; the batch the row came from asks for more only once every
+ takeover of it is done.
+
+ Errors: `IC_ERROR_NOT_SUPPORTED` for a scan with no transaction or a
+ query through an index; `IC_ERROR_NO_SCAN_ROW` when no row has been
+ read from a batch still with the program; `IC_ERROR_KEY_RECORD` for a
+ query over another table; `IC_ERROR_TRANSACTION_ACTIVE` for a query
+ already defined or a transaction no longer open.
+
+ # Safety
+
+ `conn` is a connection handle not yet freed; `args` was filled by
+ `ic_takeover_args_init`.
+ */
+int32_t ic_apid_conn_lock_scan_row(IC_APID_CONNECTION *conn,
+                                   IC_QUERY_ID query,
+                                   IC_SCAN_ID scan,
+                                   const IC_TAKEOVER_ARGS *args);
+
+/*
+ Update the row last read from the scan, in the scan's transaction,
+ with the values of the query's attribute row, its key fields left
+ out.
+
+ Errors: as `ic_apid_conn_lock_scan_row`.
+
+ # Safety
+
+ As `ic_apid_conn_lock_scan_row`.
+ */
+int32_t ic_apid_conn_update_scan_row(IC_APID_CONNECTION *conn,
+                                     IC_QUERY_ID query,
+                                     IC_SCAN_ID scan,
+                                     const IC_TAKEOVER_ARGS *args);
+
+/*
+ Delete the row last read from the scan, in the scan's transaction.
+
+ Errors: as `ic_apid_conn_lock_scan_row`; `IC_ERROR_DELETE_WITH_BLOBS`
+ on a table with a blob column.
+
+ # Safety
+
+ As `ic_apid_conn_lock_scan_row`.
+ */
+int32_t ic_apid_conn_delete_scan_row(IC_APID_CONNECTION *conn,
+                                     IC_QUERY_ID query,
+                                     IC_SCAN_ID scan,
+                                     const IC_TAKEOVER_ARGS *args);
 
 /*
  Fill `options`, `size` bytes, with the defaults: the fields that fit,

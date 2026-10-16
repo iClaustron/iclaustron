@@ -61,6 +61,7 @@ use ic_apid::scan::ScanBatchId;
 use ic_apid::scan::ScanId;
 use ic_apid::scan::ScanLock;
 use ic_apid::scan::ScanState;
+use ic_apid::scan::TakeoverArgs;
 use ic_apid::scan_reader::ScanReader;
 use ic_apid::scan_reader::ScanShape;
 use ic_apid::text_row;
@@ -296,6 +297,9 @@ pub const IC_ERROR_EXECUTOR_STOPPED: i32 = 7160;
 /// The scan, or the scan reader, is running, and cannot be started or
 /// freed until its run is over.
 pub const IC_ERROR_SCAN_ACTIVE: i32 = 7161;
+/// A takeover found no scanned row to act on: none read, or its batch
+/// handed back.
+pub const IC_ERROR_NO_SCAN_ROW: i32 = 7162;
 
 // ---- Types ----
 
@@ -542,6 +546,28 @@ pub struct IcExecutorStats {
   /// Scans started, each for a reader. Added after 0.1: left out for a
   /// program built against 0.1.
   pub scans: u64,
+}
+
+/// What a takeover of a scanned row asks for (`IC_TAKEOVER_ARGS`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct IcTakeoverArgs {
+  /// The struct's size, as `ic_takeover_args_init` was given it.
+  pub size: u32,
+  /// One of `IC_ABORT_DEFAULT`, `IC_ABORT_ON_ERROR`, `IC_IGNORE_ERROR`;
+  /// the default rolls the transaction back if the takeover fails.
+  pub abort_option: u32,
+  /// Called when the takeover completes, or NULL for the executed
+  /// list: an `IC_APID_CALLBACK`.
+  pub callback: Option<
+    unsafe extern "C" fn(
+      conn: *mut IcApidConnection,
+      query: IcQueryId,
+      user_ref: *mut c_void,
+    ),
+  >,
+  /// Given back with the completed query.
+  pub user_ref: *mut c_void,
 }
 
 /// What a scan asks for when it is started (`IC_SCAN_ARGS`).
@@ -3508,6 +3534,171 @@ pub unsafe extern "C" fn ic_apid_conn_next_batch(
   code
 }
 
+/// Fill `args`, `size` bytes, with the defaults: the default abort
+/// option, no callback.
+///
+/// Leaves `args` as it is when `size` is smaller than this header's
+/// `IC_TAKEOVER_ARGS`.
+///
+/// # Safety
+///
+/// A non-null `args` points to `size` writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn ic_takeover_args_init(
+  args: *mut IcTakeoverArgs,
+  size: usize,
+) {
+  if args.is_null() || size < std::mem::size_of::<IcTakeoverArgs>() {
+    return;
+  }
+  let value = IcTakeoverArgs {
+    size: size as u32,
+    abort_option: IC_ABORT_DEFAULT,
+    callback: None,
+    user_ref: std::ptr::null_mut(),
+  };
+  // SAFETY: the caller's promise; the struct fits.
+  unsafe { args.write(value) };
+}
+
+/// A takeover's arguments from C.
+///
+/// # Safety
+///
+/// A non-null `args` was filled by `ic_takeover_args_init`.
+unsafe fn takeover_args_from_c(
+  args: *const IcTakeoverArgs,
+) -> Result<TakeoverArgs, i32> {
+  // SAFETY: the caller's promise.
+  let given = match unsafe { args.as_ref() } {
+    Some(given) => *given,
+    None => return Err(err::IC_ERROR_NULL_POINTER),
+  };
+  if (given.size as usize) < std::mem::size_of::<IcTakeoverArgs>() {
+    return Err(err::IC_ERROR_INCONSISTENT_DATA);
+  }
+  let abort_option = match abort_from_c(given.abort_option) {
+    Some(option) => option,
+    None => return Err(err::IC_ERROR_NOT_SUPPORTED),
+  };
+  let mut rust_args = TakeoverArgs {
+    abort_option,
+    user_ref: given.user_ref as usize,
+    ..TakeoverArgs::default()
+  };
+  if let Some(callback) = given.callback {
+    rust_args.callback = Some(trampoline);
+    rust_args.binding = callback as usize;
+  }
+  Ok(rust_args)
+}
+
+/// What the three takeovers do.
+#[derive(Clone, Copy)]
+enum Takeover {
+  Lock,
+  Update,
+  Delete,
+}
+
+/// A takeover from C.
+///
+/// # Safety
+///
+/// `conn` is a connection handle not yet freed; `args` was filled by
+/// `ic_takeover_args_init`.
+unsafe fn take_over(
+  conn: *mut IcApidConnection,
+  query: IcQueryId,
+  scan: IcScanId,
+  args: *const IcTakeoverArgs,
+  what: Takeover,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let rust_args = match unsafe { takeover_args_from_c(args) } {
+    Ok(rust_args) => rust_args,
+    Err(code) => return code,
+  };
+  let query = QueryId::from_u32(query);
+  let scan = ScanId::from_u32(scan);
+  // SAFETY: the caller's promise.
+  unsafe {
+    conn_code(conn, |c| match what {
+      Takeover::Lock => c.lock_scan_row(query, scan, &rust_args),
+      Takeover::Update => c.update_scan_row(query, scan, &rust_args),
+      Takeover::Delete => c.delete_scan_row(query, scan, &rust_args),
+    })
+  }
+}
+
+/// Take the lock on the row last read from the scan over into the scan's
+/// transaction (`IC_SCAN_ARGS`' `trans`), reading the fields of the
+/// query's attribute record into its attribute row: shared from a
+/// shared-lock scan, exclusive from an exclusive one. The query, over
+/// the scanned table, completes as any query does and goes with the next
+/// send; the batch the row came from asks for more only once every
+/// takeover of it is done.
+///
+/// Errors: `IC_ERROR_NOT_SUPPORTED` for a scan with no transaction or a
+/// query through an index; `IC_ERROR_NO_SCAN_ROW` when no row has been
+/// read from a batch still with the program; `IC_ERROR_KEY_RECORD` for a
+/// query over another table; `IC_ERROR_TRANSACTION_ACTIVE` for a query
+/// already defined or a transaction no longer open.
+///
+/// # Safety
+///
+/// `conn` is a connection handle not yet freed; `args` was filled by
+/// `ic_takeover_args_init`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_conn_lock_scan_row(
+  conn: *mut IcApidConnection,
+  query: IcQueryId,
+  scan: IcScanId,
+  args: *const IcTakeoverArgs,
+) -> i32 {
+  // SAFETY: passed on from the caller.
+  unsafe { take_over(conn, query, scan, args, Takeover::Lock) }
+}
+
+/// Update the row last read from the scan, in the scan's transaction,
+/// with the values of the query's attribute row, its key fields left
+/// out.
+///
+/// Errors: as `ic_apid_conn_lock_scan_row`.
+///
+/// # Safety
+///
+/// As `ic_apid_conn_lock_scan_row`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_conn_update_scan_row(
+  conn: *mut IcApidConnection,
+  query: IcQueryId,
+  scan: IcScanId,
+  args: *const IcTakeoverArgs,
+) -> i32 {
+  // SAFETY: passed on from the caller.
+  unsafe { take_over(conn, query, scan, args, Takeover::Update) }
+}
+
+/// Delete the row last read from the scan, in the scan's transaction.
+///
+/// Errors: as `ic_apid_conn_lock_scan_row`; `IC_ERROR_DELETE_WITH_BLOBS`
+/// on a table with a blob column.
+///
+/// # Safety
+///
+/// As `ic_apid_conn_lock_scan_row`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_conn_delete_scan_row(
+  conn: *mut IcApidConnection,
+  query: IcQueryId,
+  scan: IcScanId,
+  args: *const IcTakeoverArgs,
+) -> i32 {
+  // SAFETY: passed on from the caller.
+  unsafe { take_over(conn, query, scan, args, Takeover::Delete) }
+}
+
 // ---- Executors ----
 
 /// The executor behind a handle.
@@ -4923,6 +5114,7 @@ mod tests {
     assert_eq!(IC_ERROR_EXECUTOR_BUSY, err::IC_ERROR_EXECUTOR_BUSY);
     assert_eq!(IC_ERROR_EXECUTOR_STOPPED, err::IC_ERROR_EXECUTOR_STOPPED);
     assert_eq!(IC_ERROR_SCAN_ACTIVE, err::IC_ERROR_SCAN_ACTIVE);
+    assert_eq!(IC_ERROR_NO_SCAN_ROW, err::IC_ERROR_NO_SCAN_ROW);
     let scan_errors: [(i32, i32); 4] = [
       (
         IC_NDB_ERROR_SCAN_NODE_FAILURE,
@@ -5125,6 +5317,33 @@ mod tests {
     // SAFETY: as above; the struct is whole, its size says otherwise.
     let short = unsafe { scan_args_from_c(&args) };
     assert_eq!(short.err(), Some(IC_ERROR_INCONSISTENT_DATA));
+  }
+
+  #[test]
+  fn takeover_args_start_from_the_defaults() {
+    let mut args = std::mem::MaybeUninit::<IcTakeoverArgs>::uninit();
+    // SAFETY: the init writes the whole struct, of the size given.
+    let mut args = unsafe {
+      ic_takeover_args_init(
+        args.as_mut_ptr(),
+        std::mem::size_of::<IcTakeoverArgs>(),
+      );
+      args.assume_init()
+    };
+    assert_eq!(args.abort_option, IC_ABORT_DEFAULT);
+    assert!(args.callback.is_none());
+    // SAFETY: filled by the init above.
+    let crossed = unsafe { takeover_args_from_c(&args) };
+    assert!(crossed.is_ok(), "refused: {:?}", crossed.err());
+    args.abort_option = 9;
+    // SAFETY: as above.
+    let refused = unsafe { takeover_args_from_c(&args) };
+    assert_eq!(refused.err(), Some(IC_ERROR_NOT_SUPPORTED));
+    // SAFETY: a null connection is refused before anything is followed.
+    let code = unsafe {
+      ic_apid_conn_update_scan_row(std::ptr::null_mut(), 1, 1, &args)
+    };
+    assert_eq!(code, IC_ERROR_NOT_SUPPORTED, "the arguments come first");
   }
 
   #[test]

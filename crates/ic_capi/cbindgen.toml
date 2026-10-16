@@ -68,8 +68,9 @@ after_includes = """
  * from; an error's text is copied into the caller's buffer.
  *
  * Structs with a size. IC_GLOBAL_OPTIONS, IC_EXECUTOR_OPTIONS,
- * IC_READ_KEY_ARGS, IC_WRITE_KEY_ARGS and IC_SCAN_ARGS are filled by
- * their _init(&s, sizeof s) before the program sets what it wants;
+ * IC_READ_KEY_ARGS, IC_WRITE_KEY_ARGS, IC_SCAN_ARGS and
+ * IC_TAKEOVER_ARGS are filled by their _init(&s, sizeof s) before the
+ * program sets what it wants;
  * IC_FIELD_INFO and IC_EXECUTOR_STATS are given with their size. A
  * later release adds fields at the end, and a program built against an
  * older header gets the fields it knows: IC_EXECUTOR_OPTIONS and
@@ -102,6 +103,10 @@ after_includes = """
  * handed back with ic_apid_conn_release_scan_batch(). A receiver is
  * asked for more only once its batch is handed back, so the program
  * sets the pace, and a locking scan's rows stay locked until then.
+ * A locking scan started on a transaction may hand the row last read
+ * over to it: ic_apid_conn_lock_scan_row(), _update_scan_row() and
+ * _delete_scan_row() define a query that takes the row's lock, and its
+ * batch asks for more only once every such query of it has completed.
  * Through an executor: a scan shape (ic_scan_shape_create()), a reader
  * of it (ic_scan_reader_create()), ic_apid_submitter_scan() to run it,
  * and ic_scan_reader_next_row(), which waits for the executor. A slow
@@ -150,6 +155,7 @@ include = ["IcApidCallback", "IcScanCallback"]
 "IcScanArgs" = "IC_SCAN_ARGS"
 "IcScanShape" = "IC_SCAN_SHAPE"
 "IcScanReader" = "IC_SCAN_READER"
+"IcTakeoverArgs" = "IC_TAKEOVER_ARGS"
 
 [enum]
 prefix_with_name = false

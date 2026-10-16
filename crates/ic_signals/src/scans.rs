@@ -555,12 +555,23 @@ impl ScanRowKeyRep {
 
   /// The fragment the row is in.
   pub fn fragment(&self) -> u32 {
-    self.row_word >> 20
+    Self::fragment_of(self.row_word)
   }
 
   /// The row's place in its batch.
   pub fn op_number(&self) -> u32 {
-    (self.row_word >> 8) & 0x3FF
+    Self::op_number_of(self.row_word)
+  }
+
+  /// The fragment a row word names.
+  pub fn fragment_of(row_word: u32) -> u32 {
+    row_word >> 20
+  }
+
+  /// The place in its batch a row word names: 0 for the batch's first
+  /// row, counting up as the rows come (chapter 05 §7.4).
+  pub fn op_number_of(row_word: u32) -> u32 {
+    (row_word >> 8) & 0x3FF
   }
 }
 

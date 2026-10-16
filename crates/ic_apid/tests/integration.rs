@@ -86,6 +86,7 @@ use ic_apid::scan::ScanArgs;
 use ic_apid::scan::ScanBatchId;
 use ic_apid::scan::ScanId;
 use ic_apid::scan::ScanLock;
+use ic_apid::scan::TakeoverArgs;
 use ic_apid::scan_reader::ScanReader;
 use ic_apid::scan_reader::ScanShape;
 use ic_apid::text_row;
@@ -4940,4 +4941,312 @@ fn scan_a_slow_reader_stalls_only_its_own_scan() {
   assert!(error.is_none(), "{:?}", error);
   assert_eq!(ids.len() as i64, IC_IT_SCAN_ROWS - 1);
   assert_eq!(executor.stats().scans, 6);
+}
+
+/// Queries over the `scan` table for takeovers, as many as `count`.
+fn takeover_queries(
+  conn: &mut ApidConnection,
+  t: &Table,
+  count: usize,
+) -> Vec<QueryId> {
+  let mut free: Vec<QueryId> = Vec::with_capacity(count);
+  while free.len() < count {
+    let qid = conn.create_query(&t.def, &t.rec, &t.rec).expect("a query");
+    free.push(qid);
+  }
+  free
+}
+
+/// Takeovers that have completed, back to the free list, each checked.
+fn take_back(conn: &mut ApidConnection, free: &mut Vec<QueryId>) {
+  while let Some(done) = conn.get_next_executed_query() {
+    let error = conn.query(done).expect("the query").error();
+    assert!(error.is_none(), "a takeover failed: {:?}", error);
+    free.push(done);
+  }
+}
+
+/// A count from SQL.
+fn count_of(sql: &str) -> i64 {
+  match mysql(sql) {
+    Some(text) => text.trim().parse().expect("a count"),
+    None => -1,
+  }
+}
+
+#[test]
+fn scan_rows_taken_over_are_updated_and_deleted() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  for lock in [ScanLock::Exclusive, ScanLock::Shared] {
+    if setup_scan_table().is_none() {
+      return;
+    }
+    let mut conn = cluster.global.create_connection().expect("connection");
+    let t = bind(&mut conn, "scan");
+    let scan = conn.create_scan(&t.def, &t.rec).expect("create the scan");
+    let mut free = takeover_queries(&mut conn, &t, 600);
+    let all = free.len();
+    let tid = conn
+      .start_transaction(TransactionHint::Any, Some(&t.def))
+      .expect("start a transaction");
+    let args = ScanArgs {
+      lock,
+      trans: Some(tid),
+      batch_rows: 100,
+      timeout_ms: IC_IT_SCAN_WAIT_MS as u32,
+      ..ScanArgs::default()
+    };
+    conn.start_scan(scan, &args).expect("start the scan");
+    let mut rows: i64 = 0;
+    // Row by row: every tenth row is updated, the one after it deleted.
+    // Each batch asks for more only once its takeovers are done.
+    while conn.next_row(scan).expect("a row") {
+      rows += 1;
+      let id: i64 = t.get(conn.scan_row(scan), "id").parse().expect("an id");
+      take_back(&mut conn, &mut free);
+      if id % 10 == 0 {
+        let qid = free.pop().expect("a free query");
+        let query = conn.query_mut(qid).expect("the query");
+        t.put(query.attr_row_mut(), "id", &id.to_string());
+        t.put(query.attr_row_mut(), "val", "-1");
+        t.put(query.attr_row_mut(), "name", "taken");
+        conn
+          .update_scan_row(qid, scan, &TakeoverArgs::default())
+          .expect("take the row over to update it");
+      } else if id % 10 == 1 {
+        let qid = free.pop().expect("a free query");
+        conn
+          .delete_scan_row(qid, scan, &TakeoverArgs::default())
+          .expect("take the row over to delete it");
+      }
+    }
+    assert_eq!(rows, IC_IT_SCAN_ROWS, "{:?}", lock);
+    assert!(conn.scan(scan).expect("the scan").error().is_none());
+    // The last takeovers, then the commit.
+    let _ = conn.send_queries(true);
+    let start = time::gethrtime();
+    while free.len() < all {
+      let _ = conn.flush(100, true);
+      take_back(&mut conn, &mut free);
+      let waited = time::millis_elapsed(start, time::gethrtime());
+      assert!(waited < IC_IT_SCAN_WAIT_MS, "the takeovers did not end");
+    }
+    conn.commit_transaction(tid).expect("commit");
+    assert_eq!(finish(&mut conn, tid), CommitState::Committed);
+    conn.close_transaction(tid).expect("close");
+    assert_eq!(conn.unexpected(), 0);
+    let tenth = IC_IT_SCAN_ROWS / 10;
+    let db = IC_IT_DB;
+    assert_eq!(
+      count_of(&format!("SELECT COUNT(*) FROM {}.scan", db)),
+      IC_IT_SCAN_ROWS - tenth,
+      "{:?}: a tenth deleted",
+      lock
+    );
+    let updated = format!(
+      "SELECT COUNT(*) FROM {}.scan WHERE val = -1 AND name = 'taken'",
+      db
+    );
+    assert_eq!(count_of(&updated), tenth, "{:?}: a tenth updated", lock);
+    let kept = format!(
+      "SELECT COUNT(*) FROM {}.scan WHERE val = id * 10 AND id % 10 > 1",
+      db
+    );
+    assert_eq!(count_of(&kept), IC_IT_SCAN_ROWS - 2 * tenth);
+  }
+}
+
+#[test]
+fn scan_a_lock_taken_over_is_held_to_commit() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_scan_table().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("connection");
+  let t = bind(&mut conn, "scan");
+  let scan = conn.create_scan(&t.def, &t.rec).expect("create the scan");
+  let qid = conn.create_query(&t.def, &t.rec, &t.rec).expect("a query");
+  let tid = conn
+    .start_transaction(TransactionHint::Any, Some(&t.def))
+    .expect("start a transaction");
+  let args = ScanArgs {
+    lock: ScanLock::Shared,
+    trans: Some(tid),
+    timeout_ms: IC_IT_SCAN_WAIT_MS as u32,
+    ..ScanArgs::default()
+  };
+  // Before any row is read there is none to take over.
+  conn.start_scan(scan, &args).expect("start the scan");
+  let e = conn
+    .lock_scan_row(qid, scan, &TakeoverArgs::default())
+    .expect_err("no row yet");
+  assert_eq!(e.code, err::IC_ERROR_NO_SCAN_ROW);
+  // Row 5's lock is taken over, its columns read; the scan reads on to
+  // the end and lets every other lock go.
+  while conn.next_row(scan).expect("a row") {
+    if t.get(conn.scan_row(scan), "id") == "5" {
+      conn
+        .lock_scan_row(qid, scan, &TakeoverArgs::default())
+        .expect("take the lock over");
+    }
+  }
+  complete(&mut conn, qid);
+  let query = conn.query(qid).expect("the query");
+  assert!(query.error().is_none(), "{:?}", query.error());
+  assert_eq!(t.get(query.attr_row(), "val"), "50");
+  // Another transaction cannot have row 5 exclusively while the lock is
+  // the first's, and can once it has committed; row 6 it can at once.
+  let reader = conn.create_query(&t.def, &t.rec, &t.rec).expect("a query");
+  let no_wait = ReadKeyArgs {
+    kind: ReadKind::ExclusiveNoWait,
+    ..ReadKeyArgs::default()
+  };
+  for (id, locked) in [("5", true), ("6", false)] {
+    let mut key = t.row();
+    t.put(&mut key, "id", id);
+    let other = start_for(&mut conn, &t, &key);
+    conn
+      .query_mut(reader)
+      .expect("the reader")
+      .key_row_mut()
+      .copy_from_slice(&key);
+    conn
+      .read_key(reader, other, &no_wait)
+      .expect("define the read");
+    complete(&mut conn, reader);
+    let error = conn.query(reader).expect("the reader").error();
+    if locked {
+      assert_eq!(error.map(|e| e.code), Some(635), "row 5 is locked");
+    } else {
+      assert!(error.is_none(), "row 6 is free: {:?}", error);
+    }
+    conn
+      .rollback_transaction(other)
+      .expect("roll the reader back");
+    finish(&mut conn, other);
+    conn.close_transaction(other).expect("close");
+  }
+  conn.commit_transaction(tid).expect("commit");
+  assert_eq!(finish(&mut conn, tid), CommitState::Committed);
+  conn.close_transaction(tid).expect("close");
+  let mut key = t.row();
+  t.put(&mut key, "id", "5");
+  let other = start_for(&mut conn, &t, &key);
+  conn
+    .query_mut(reader)
+    .expect("the reader")
+    .key_row_mut()
+    .copy_from_slice(&key);
+  conn
+    .read_key(reader, other, &no_wait)
+    .expect("define the read");
+  complete(&mut conn, reader);
+  let error = conn.query(reader).expect("the reader").error();
+  assert!(
+    error.is_none(),
+    "row 5 is free after the commit: {:?}",
+    error
+  );
+  conn.rollback_transaction(other).expect("roll back");
+  finish(&mut conn, other);
+}
+
+#[test]
+fn scan_takeovers_a_batch_at_a_time_and_across_a_close() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_scan_table().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("connection");
+  let t = bind(&mut conn, "scan");
+  let scan = conn.create_scan(&t.def, &t.rec).expect("create the scan");
+  let mut free = takeover_queries(&mut conn, &t, 200);
+  let all = free.len();
+  let tid = conn
+    .start_transaction(TransactionHint::Any, Some(&t.def))
+    .expect("start a transaction");
+  let args = ScanArgs {
+    lock: ScanLock::Exclusive,
+    trans: Some(tid),
+    batch_rows: 20,
+    timeout_ms: IC_IT_SCAN_WAIT_MS as u32,
+    ..ScanArgs::default()
+  };
+  conn.start_scan(scan, &args).expect("start the scan");
+  let _ = conn.send_queries(true);
+  // Every row of the first five batches is deleted, each batch handed
+  // back at once, its takeovers sent after; then the scan is closed with
+  // takeovers still to be confirmed. The stop waits for them.
+  let mut deleted: i64 = 0;
+  let mut batches: u32 = 0;
+  let start = time::gethrtime();
+  while batches < 5 {
+    conn.poll(100);
+    take_back(&mut conn, &mut free);
+    while let Some(batch) = conn.get_next_scan_batch() {
+      if batches >= 5 {
+        conn.release_scan_batch(batch).expect("hand back");
+        continue;
+      }
+      batches += 1;
+      while conn.next_scan_row(batch).expect("a row") {
+        let qid = free.pop().expect("a free query");
+        conn
+          .delete_scan_row(qid, scan, &TakeoverArgs::default())
+          .expect("delete the row");
+        deleted += 1;
+      }
+      // Handed back with its takeovers unsent: it asks for more only
+      // once they are confirmed.
+      conn.release_scan_batch(batch).expect("hand back");
+      let e = conn
+        .delete_scan_row(free[0], scan, &TakeoverArgs::default())
+        .expect_err("the batch is handed back");
+      assert_eq!(e.code, err::IC_ERROR_NO_SCAN_ROW);
+      let _ = conn.send_queries(true);
+    }
+    let waited = time::millis_elapsed(start, time::gethrtime());
+    assert!(waited < IC_IT_SCAN_WAIT_MS, "five batches did not come");
+  }
+  conn.close_scan(scan).expect("close");
+  let start = time::gethrtime();
+  while !conn.scan_done(scan) || free.len() < all {
+    let _ = conn.flush(100, true);
+    take_back(&mut conn, &mut free);
+    while let Some(batch) = conn.get_next_scan_batch() {
+      conn.release_scan_batch(batch).expect("hand back");
+    }
+    let waited = time::millis_elapsed(start, time::gethrtime());
+    assert!(waited < IC_IT_SCAN_WAIT_MS, "the close did not end");
+  }
+  assert!(conn.scan(scan).expect("the scan").error().is_none());
+  conn.commit_transaction(tid).expect("commit");
+  assert_eq!(finish(&mut conn, tid), CommitState::Committed);
+  conn.close_transaction(tid).expect("close");
+  assert!(deleted >= 5, "{} rows deleted", deleted);
+  assert_eq!(
+    count_of(&format!("SELECT COUNT(*) FROM {}.scan", IC_IT_DB)),
+    IC_IT_SCAN_ROWS - deleted
+  );
+  // A scan with no transaction has no rows to take over.
+  conn.start_scan(scan, &ScanArgs::default()).expect("start");
+  assert!(conn.next_row(scan).expect("a row"));
+  let e = conn
+    .lock_scan_row(free[0], scan, &TakeoverArgs::default())
+    .expect_err("no transaction");
+  assert_eq!(e.code, err::IC_ERROR_NOT_SUPPORTED);
+  conn.close_scan(scan).expect("close");
+  while !conn.scan_done(scan) {
+    conn.poll(100);
+  }
+  assert_eq!(conn.unexpected(), 0);
 }

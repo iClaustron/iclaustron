@@ -478,6 +478,61 @@ while reader.next_row()? {
   `IC_NDB_ERROR_SCAN_LOCK_TIMEOUT` (274), `IC_NDB_ERROR_SCAN_IDLE`
   (296) and `IC_NDB_ERROR_SCAN_NODE_FAILURE` (4028).
 
+### Taking scanned rows over (phase 8.5; built 2026-10-16)
+
+A locking scan started on a transaction (`ScanArgs::trans`) hands the
+row last read over to that transaction, as MySQL's `SELECT ... FOR
+UPDATE`, `UPDATE` and `DELETE` by scan do:
+
+```rust
+conn.start_scan(scan, &ScanArgs { lock: ScanLock::Exclusive, trans: Some(tid), ..ScanArgs::default() })?;
+while conn.next_row(scan)? {
+  if wanted(conn.scan_row(scan)) {
+    // ... the new values into the query's attribute row ...
+    conn.update_scan_row(qid, scan, &TakeoverArgs::default())?;
+  }
+}
+conn.commit_transaction(tid)?;
+```
+
+- `lock_scan_row`, `update_scan_row` and `delete_scan_row` each define
+  a query on the scan's transaction that acts on the row last read
+  from a batch still with the application. The query is an ordinary
+  one over the scanned table, and completes as any query does. Its key
+  is not taken from its key row but is the row's, as the data node gave
+  it with the row. A lock taken over reads the attribute record's
+  columns, shared from a shared-lock scan and exclusively from an
+  exclusive one, as the reference does. An update writes the attribute
+  row's values, its key columns left out. The lock is the
+  transaction's from then on, to its commit or rollback.
+- **`TakeoverArgs`**: `abort_option` (by default the transaction rolls
+  back if the takeover fails, as the reference's takeovers do),
+  `user_ref`, `callback` and `binding`, as for a query.
+- **The batch waits for its takeovers.** Handing a batch back is
+  always allowed. Its receiver asks for more, which releases the
+  batch's locks, only once every takeover of the batch has completed,
+  confirmed or failed (chapter 05 §7.2). A close's stop waits likewise.
+  `next_row`, waiting for a batch, sends the takeovers defined first;
+  a program reading a batch at a time sends them itself, as it sends
+  any query.
+- **Refused**: a scan with no transaction (`IC_ERROR_NOT_SUPPORTED`):
+  its rows' keys were not asked for. No row read yet, or its batch
+  handed back (`IC_ERROR_NO_SCAN_ROW`, 7162). A query through an index
+  (`IC_ERROR_NOT_SUPPORTED`), or over another table
+  (`IC_ERROR_KEY_RECORD`). A transaction no longer open
+  (`IC_ERROR_TRANSACTION_ACTIVE`).
+- **The transaction may commit while its scan still runs.** The
+  coordinator checks a scan's owning record each time it uses it, so
+  no harm comes of it. The scan goes on with its own locks, and
+  takeovers are refused from then on. Closing the scan first, as MySQL
+  does, is the usual order.
+- **C**: `ic_takeover_args_init(&args, sizeof args)` for an
+  `IC_TAKEOVER_ARGS` (`abort_option`, `callback`, `user_ref`), and
+  `ic_apid_conn_lock_scan_row(conn, q, scan, &args)`,
+  `_update_scan_row` and `_delete_scan_row`; `IC_ERROR_NO_SCAN_ROW`.
+- Not through an executor: its requests are whole transactions, and a
+  takeover needs one that stays open across calls (kept for later).
+
 ### Errors
 
 `IcError` is a code: 7000 and up iClaustron's own, small positive codes

@@ -1390,6 +1390,23 @@ asked for more only once every takeover of its batch has its
 `KEY_OP_CONF`, since that request releases the batch's locks (chapter
 05 §7.2).
 
+- Built 2026-10-16 (chapter 04, "Taking scanned rows over"):
+  `lock_scan_row`, `update_scan_row` and `delete_scan_row` on the row
+  last read, as queries on the scan's transaction, in Rust and C. The
+  second capture, read again, shows a key's operation number to be its
+  row's place in its batch, and a locking scan's last batch to carry no
+  rows, so every batch with rows to take over is followed by a request
+  for more (chapter 05 §7.4). That request, and a close's stop, wait
+  for the batch's takeovers.
+- Integration tests in the `scan_` group: rows updated and deleted from
+  exclusive and shared-lock scans, then committed and counted through
+  MySQL; a lock taken over held to the commit against another
+  transaction's no-wait read (635); takeovers on batches handed back at
+  once and across a close; the refusals; and in C, every row updated.
+- **Passes 2026-10-16**: the `scan_` group against
+  `rondb_1107_cte_test`, the 12 tests of 8.3 and 8.4 and the 3 new
+  ones, and the C ABI's test with its takeovers.
+
 ### 8.6 Character sets from the data nodes (1 week, with RonDB's new request)
 
 Decided by the author, 2026-10-08, in place of the hand-written latin1

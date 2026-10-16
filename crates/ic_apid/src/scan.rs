@@ -24,10 +24,17 @@
 //! back to its pool once the coordinator confirms. Rows that come after
 //! the end find their receiver's id stale and are dropped.
 //!
-//! A scan started on a transaction, so that its rows may be taken over
-//! (phase 8.5), runs at the transaction's coordinator instance, under
-//! its id, and names its record; any other scan names none and runs
-//! under an id of its own (the author, 2026-10-16).
+//! A scan started on a transaction, so that its rows may be taken over,
+//! runs at the transaction's coordinator instance, under its id, and
+//! names its record; any other scan names none and runs under an id of
+//! its own (the author, 2026-10-16).
+//!
+//! **A takeover** (phase 8.5) locks, updates or deletes the row last
+//! read from a locking scan, as a query on the scan's transaction whose
+//! key is the row's, as the data node gave it with the row. The lock
+//! moves from the scan to the transaction. The batch's receiver asks for
+//! more only once every takeover of the batch is done, confirmed or
+//! failed, since asking releases the batch's locks (chapter 05 §7.2).
 
 use std::sync::Arc;
 
@@ -37,6 +44,8 @@ use ic_port::IcError;
 use ic_signals::blocks;
 use ic_signals::coord_alloc::IC_ANY_COORD_INSTANCE;
 use ic_signals::header::SignalHeader;
+use ic_signals::key_ops;
+use ic_signals::key_ops::KeyOpFlags;
 use ic_signals::key_ops::RowDataRep;
 use ic_signals::numbers;
 use ic_signals::scans;
@@ -56,6 +65,9 @@ use crate::apid_conn::CoordRecord;
 use crate::apid_conn::IC_CALL_SLICE_MS;
 use crate::dict_cache::TableDef;
 use crate::node_connect::SignalView;
+use crate::query::AbortOption;
+use crate::query::QueryCallback;
+use crate::query::QueryId;
 use crate::query::TransId;
 use crate::record::Record;
 use crate::row_codec;
@@ -193,6 +205,41 @@ pub struct ScanArgs {
   pub binding: usize,
 }
 
+/// What a takeover of a scanned row asks for (chapter 04, "Scans").
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TakeoverArgs {
+  /// `Default` and `AbortOnError` roll the transaction back if the
+  /// takeover fails, as the reference's takeovers do; `IgnoreError`
+  /// fails the query alone.
+  pub abort_option: AbortOption,
+  /// Anything, given back to the callback.
+  pub user_ref: usize,
+  /// Called when the takeover completes, in place of the executed list.
+  pub callback: Option<QueryCallback>,
+  /// A word for a language binding's own use; see
+  /// [`crate::query::ReadKeyArgs::binding`].
+  pub binding: usize,
+}
+
+/// The receiver a takeover holds back: the scan, and its receiver's id
+/// in the run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct TakeoverOf {
+  pub scan: ScanId,
+  pub receiver: u32,
+}
+
+/// What a takeover's request is made of: the row's key as the data node
+/// gave it, the scan information word, the row's fragment, and the
+/// receiver it holds back.
+#[derive(Debug)]
+pub(crate) struct TakeoverKey {
+  pub key: Vec<u32>,
+  pub info: u32,
+  pub fragment: u32,
+  pub of: TakeoverOf,
+}
+
 /// Where a scan is in its life.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ScanState {
@@ -259,10 +306,15 @@ pub(crate) struct Receiver {
   /// Handed back, and its request for more not yet sent.
   unsent: bool,
   /// A locking scan's keys, one after another, where each ends, and
-  /// each row's word, for a takeover (phase 8.5).
+  /// each row's word, for a takeover: the n-th key is the n-th row's, as
+  /// they come in the same order, and its word's operation number says
+  /// so (chapter 05 §7.4).
   keys: Vec<u32>,
   key_ends: Vec<u32>,
   key_rows: Vec<u32>,
+  /// Takeovers of rows of the batch not yet done; the receiver asks for
+  /// more only once there are none.
+  takeovers: u32,
 }
 
 impl Receiver {
@@ -327,6 +379,9 @@ pub struct Scan {
   rows_read: u64,
   /// The batch [`next_row`](ApidConnection::next_row) reads from.
   reading: Option<ScanBatchId>,
+  /// The receiver, by place and id, whose batch the row last read came
+  /// from: the row a takeover acts on.
+  last_read: Option<(u32, u32)>,
 }
 
 impl std::fmt::Debug for Scan {
@@ -380,6 +435,7 @@ impl Scan {
       deadline: 0,
       rows_read: 0,
       reading: None,
+      last_read: None,
     })
   }
 
@@ -450,6 +506,18 @@ impl Scan {
       place += 1;
     }
     true
+  }
+
+  /// True if a takeover of a row of the run is not yet done.
+  fn takeovers_pending(&self) -> bool {
+    let mut place: usize = 0;
+    while place < self.used as usize {
+      if self.receivers[place].takeovers > 0 {
+        return true;
+      }
+      place += 1;
+    }
+    false
   }
 
   /// True if every receiver of the run gives no more.
@@ -722,6 +790,7 @@ impl ApidConnection {
         receiver.coord_ptr = 0;
         receiver.last = false;
         receiver.unsent = false;
+        receiver.takeovers = 0;
         receiver.state = ReceiverState::Asked;
         k += 1;
       }
@@ -747,6 +816,7 @@ impl ApidConnection {
       scan.deadline = deadline;
       scan.rows_read = 0;
       scan.reading = None;
+      scan.last_read = None;
     }
     self.scan_receiver_ids = ids;
     self.scans_live.push(id);
@@ -922,12 +992,14 @@ impl ApidConnection {
     }
     let end = receiver.row_ends[at] as usize;
     receiver.next_row += 1;
+    let receiver_id = receiver.id;
     row_codec::unpack_row(
       &scan.rec,
       &receiver.rows[start..end],
       &mut scan.row,
     )?;
     scan.rows_read += 1;
+    scan.last_read = Some((place, receiver_id));
     Ok(true)
   }
 
@@ -960,8 +1032,10 @@ impl ApidConnection {
     }
     let end = receiver.row_ends[at] as usize;
     receiver.next_row += 1;
+    let receiver_id = receiver.id;
     row_codec::unpack_row(&scan.rec, &receiver.rows[start..end], row)?;
     scan.rows_read += 1;
+    scan.last_read = Some((place, receiver_id));
     Ok(true)
   }
 
@@ -1171,6 +1245,15 @@ impl ApidConnection {
         // A poll does nothing inside a callback.
         return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
       }
+      // Takeovers of the rows read go first: a batch handed back with
+      // them waits for their confirmations to go on.
+      let pending = match self.scans.get(id.0) {
+        Some(scan) => scan.takeovers_pending(),
+        None => false,
+      };
+      if pending {
+        let _ = self.send_queries(false);
+      }
       self.poll(IC_CALL_SLICE_MS);
     }
   }
@@ -1192,6 +1275,226 @@ impl ApidConnection {
       }
     }
     None
+  }
+
+  // ---- Taking rows over ----
+
+  /// Take the lock on the row last read from the scan over into the
+  /// scan's transaction, reading the columns of the query's attribute
+  /// record into its attribute row. A shared-lock scan's lock is taken
+  /// over shared, an exclusive one's exclusively, as the reference does.
+  /// The query, over the scanned table, completes as any query does,
+  /// and is sent with the next send. The lock is the transaction's
+  /// until it ends.
+  ///
+  /// Refused with `IC_ERROR_NOT_SUPPORTED` for a scan not started on a
+  /// transaction, or a query through an index; with `IC_ERROR_NO_SCAN_ROW`
+  /// when no row has been read from a batch still with the application.
+  pub fn lock_scan_row(
+    &mut self,
+    query: QueryId,
+    scan: ScanId,
+    args: &TakeoverArgs,
+  ) -> Result<(), IcError> {
+    let exclusive = match self.scans.get(scan.0) {
+      Some(found) => found.lock == ScanLock::Exclusive,
+      None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
+    };
+    let mut operation = key_ops::IC_OP_READ;
+    if exclusive {
+      operation = key_ops::IC_OP_READ_EXCLUSIVE;
+    }
+    self.take_over_row(query, scan, operation, true, args)
+  }
+
+  /// Update the row last read from the scan, in the scan's transaction,
+  /// with the values of the query's attribute row, its key columns left
+  /// out. Refused as [`lock_scan_row`](Self::lock_scan_row) is.
+  pub fn update_scan_row(
+    &mut self,
+    query: QueryId,
+    scan: ScanId,
+    args: &TakeoverArgs,
+  ) -> Result<(), IcError> {
+    self.take_over_row(query, scan, key_ops::IC_OP_UPDATE, false, args)
+  }
+
+  /// Delete the row last read from the scan, in the scan's transaction.
+  /// Refused as [`lock_scan_row`](Self::lock_scan_row) is, and on a table
+  /// with a blob column with `IC_ERROR_DELETE_WITH_BLOBS`.
+  pub fn delete_scan_row(
+    &mut self,
+    query: QueryId,
+    scan: ScanId,
+    args: &TakeoverArgs,
+  ) -> Result<(), IcError> {
+    self.take_over_row(query, scan, key_ops::IC_OP_DELETE, false, args)
+  }
+
+  /// A takeover of the row last read, defined on the scan's transaction
+  /// and counted against its receiver.
+  fn take_over_row(
+    &mut self,
+    query: QueryId,
+    scan: ScanId,
+    operation: u32,
+    is_read: bool,
+    args: &TakeoverArgs,
+  ) -> Result<(), IcError> {
+    let (trans, mut over) = self.last_row_takeover(scan)?;
+    let same_table = match (self.queries.get(query.0), self.scans.get(scan.0)) {
+      (Some(found), Some(scanned)) => {
+        found.table().table_id() == scanned.table.table_id()
+          && found.table().table_version() == scanned.table.table_version()
+      }
+      (None, _) => {
+        self.takeover_key = over.key;
+        return Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD));
+      }
+      _ => false,
+    };
+    if !same_table {
+      self.takeover_key = over.key;
+      return Err(IcError::new(err::IC_ERROR_KEY_RECORD));
+    }
+    let mut abort_option = key_ops::IC_ABORT_ON_ERROR;
+    if args.abort_option == AbortOption::IgnoreError {
+      abort_option = key_ops::IC_IGNORE_ERROR;
+    }
+    let flags = KeyOpFlags {
+      operation,
+      abort_option,
+      dist_key: true,
+      scan_takeover: true,
+      ..KeyOpFlags::default()
+    };
+    let defined = self.define(
+      query,
+      trans,
+      flags,
+      is_read,
+      args.user_ref,
+      args.callback,
+      args.binding,
+      Some(&over),
+    );
+    self.takeover_key = std::mem::take(&mut over.key);
+    defined?;
+    if let Some(scanned) = self.scans.get_mut(scan.0) {
+      if let Some(receiver) = scanned
+        .receivers
+        .iter_mut()
+        .find(|receiver| receiver.id == over.of.receiver)
+      {
+        receiver.takeovers += 1;
+      }
+    }
+    Ok(())
+  }
+
+  /// The transaction and the key of the row last read from the scan,
+  /// from a batch still with the application.
+  fn last_row_takeover(
+    &mut self,
+    id: ScanId,
+  ) -> Result<(TransId, TakeoverKey), IcError> {
+    let no_row = IcError::new(err::IC_ERROR_NO_SCAN_ROW);
+    let scan = match self.scans.get(id.0) {
+      Some(scan) => scan,
+      None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
+    };
+    // Only a scan started on a transaction asked for the rows' keys.
+    let trans = match scan.trans {
+      Some(trans) => trans,
+      None => return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED)),
+    };
+    if scan.state != ScanState::Running {
+      return Err(no_row);
+    }
+    let (place, receiver_id) = match scan.last_read {
+      Some(last) => last,
+      None => return Err(no_row),
+    };
+    let receiver = match scan.receivers.get(place as usize) {
+      Some(receiver) => receiver,
+      None => return Err(no_row),
+    };
+    let with_us = receiver.id == receiver_id
+      && receiver.state == ReceiverState::Ready
+      && receiver.next_row > 0;
+    if !with_us {
+      return Err(no_row);
+    }
+    // The n-th key is the n-th row's, and its operation number says so.
+    let at = (receiver.next_row - 1) as usize;
+    let bad = IcError::new(err::IC_ERROR_INCONSISTENT_DATA);
+    if at >= receiver.key_ends.len() {
+      return Err(bad);
+    }
+    let row_word = receiver.key_rows[at];
+    if ScanRowKeyRep::op_number_of(row_word) != at as u32 {
+      return Err(bad);
+    }
+    let mut start: usize = 0;
+    if at > 0 {
+      start = receiver.key_ends[at - 1] as usize;
+    }
+    let end = receiver.key_ends[at] as usize;
+    let mut key = std::mem::take(&mut self.takeover_key);
+    key.clear();
+    key.extend_from_slice(&receiver.keys[start..end]);
+    Ok((
+      trans,
+      TakeoverKey {
+        key,
+        info: scans::takeover_info(row_word),
+        fragment: ScanRowKeyRep::fragment_of(row_word),
+        of: TakeoverOf {
+          scan: id,
+          receiver: receiver_id,
+        },
+      },
+    ))
+  }
+
+  /// A takeover is done, confirmed or failed: once its receiver's are
+  /// all done, a receiver handed back asks for more with the next send,
+  /// and a closing scan may send its stop.
+  pub(crate) fn takeover_settled(&mut self, of: TakeoverOf) {
+    let slot = match self
+      .receivers
+      .get(PtrId::from_u32(of.receiver & !IC_RECEIVER_TAG))
+    {
+      Some(slot) if slot.scan == of.scan => *slot,
+      // Its run has ended since.
+      _ => return,
+    };
+    let (ask, closing) = match self.scans.get_mut(of.scan.0) {
+      Some(scan) => {
+        let running = scan.state == ScanState::Running;
+        let closing = scan.state == ScanState::Closing;
+        let receiver = &mut scan.receivers[slot.place as usize];
+        if receiver.id != of.receiver || receiver.takeovers == 0 {
+          return;
+        }
+        receiver.takeovers -= 1;
+        if receiver.takeovers > 0 {
+          return;
+        }
+        let ask = running && receiver.unsent && !scan.queued;
+        if ask {
+          scan.queued = true;
+        }
+        (ask, closing)
+      }
+      None => return,
+    };
+    if ask {
+      self.scans_to_send.push(of.scan);
+    }
+    if closing {
+      self.close_when_settled(of.scan);
+    }
   }
 
   // ---- Sending ----
@@ -1237,7 +1540,8 @@ impl ApidConnection {
           let mut place: usize = 0;
           while place < scan.used as usize {
             let receiver = &mut scan.receivers[place];
-            if receiver.unsent {
+            // One whose takeovers are not all done waits for them.
+            if receiver.unsent && receiver.takeovers == 0 {
               receiver.unsent = false;
               ptrs.push(receiver.coord_ptr);
             }
@@ -1732,8 +2036,14 @@ impl ApidConnection {
   /// Send the stop of a closing run once nothing it asked for is still
   /// coming; a run the coordinator is done with ends at once.
   fn close_when_settled(&mut self, id: ScanId) {
+    // The stop releases the locks of the batches it names, so it waits
+    // for their takeovers as a request for more does.
     let (settled, stop_sent, coord_done) = match self.scans.get(id.0) {
-      Some(scan) => (scan.nothing_asked(), scan.stop_sent, scan.coord_done),
+      Some(scan) => (
+        scan.nothing_asked() && !scan.takeovers_pending(),
+        scan.stop_sent,
+        scan.coord_done,
+      ),
       None => return,
     };
     if !settled || stop_sent {
@@ -1802,11 +2112,13 @@ impl ApidConnection {
           }
           receiver.id = 0;
           receiver.clear_batch();
+          receiver.takeovers = 0;
           receiver.state = ReceiverState::Done;
           place += 1;
         }
         scan.state = ScanState::Done;
         scan.queued = false;
+        scan.last_read = None;
         scan.record.take()
       }
       None => None,

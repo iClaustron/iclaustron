@@ -218,6 +218,9 @@ pub(crate) struct Execution {
   /// True once the row has been unpacked into the attribute row
   /// straight from the signal it came in.
   pub unpacked: bool,
+  /// For a takeover of a scanned row, the receiver whose batch it is,
+  /// which asks for more only once every takeover of the batch is done.
+  pub takeover: Option<crate::scan::TakeoverOf>,
 }
 
 /// True if the record is over this version of the table.

@@ -407,6 +407,17 @@ if (ret != 0)
   goto error;
 ```
 
+**Updating and deleting rows a scan finds.** Start a locking scan on a
+transaction (`ScanArgs::trans`, `IC_SCAN_ARGS`' `trans`), and act on
+the row last read: `lock_scan_row`, `update_scan_row` or
+`delete_scan_row` (`ic_apid_conn_lock_scan_row` and so on) define a
+query on the transaction that takes the row's lock over and locks,
+updates or deletes it. The query is any query over the scanned table:
+an update takes its values from the query's attribute row, and its key
+from the scan. A batch handed back asks for more only once its rows'
+takeovers have completed, so the locks never go before the changes are
+in. Commit the transaction once the scan is done.
+
 Close a run early with `close_scan` (`ic_apid_conn_close_scan`), or a
 reader's with `close` (`ic_scan_reader_close`). A batch kept too long
 ends the scan with 296; a lock waited for too long with 274 or 266;
@@ -562,8 +573,9 @@ transaction that goes to a cluster with no started node fails with
 ## 10. What is not done yet
 
 - Scans read whole tables or one partition, with no conditions run on
-  the data nodes yet, no ordered index scans, and no updating or
-  deleting the rows a scan has locked; those come next.
+  the data nodes yet and no ordered index scans; those come next. Rows
+  a scan has locked are taken over on a connection only, not through
+  an executor.
 - No blob columns (BLOB, TEXT, JSON, GEOMETRY): records leave them out,
   and deletes on their tables are refused.
 - No schema changes: tables and indexes are made through a MySQL

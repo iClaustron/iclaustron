@@ -104,6 +104,7 @@ use crate::query::WriteKeyArgs;
 use crate::query::WriteKind;
 use crate::record::Record;
 use crate::row_codec;
+use crate::scan::TakeoverKey;
 
 /// NDB's error for a transaction its coordinator's failure aborted,
 /// reported once the failure is handled.
@@ -553,6 +554,7 @@ impl ApidConnection {
       args.user_ref,
       args.callback,
       args.binding,
+      None,
     )
   }
 
@@ -593,12 +595,16 @@ impl ApidConnection {
       args.user_ref,
       args.callback,
       args.binding,
+      None,
     )
   }
 
   /// What read and write have in common: the sections from the rows,
-  /// and the query onto the transaction's list.
-  fn define(
+  /// and the query onto the transaction's list. A takeover of a scanned
+  /// row takes its key from the scan instead, and its request carries
+  /// the scan information and the row's fragment (chapter 05 §7.2).
+  #[allow(clippy::too_many_arguments)]
+  pub(crate) fn define(
     &mut self,
     query_id: QueryId,
     trans_id: TransId,
@@ -607,6 +613,7 @@ impl ApidConnection {
     user_ref: usize,
     callback: Option<QueryCallback>,
     binding: usize,
+    takeover: Option<&TakeoverKey>,
   ) -> Result<(), IcError> {
     let (id, coord) = match self.transactions.get(trans_id.0) {
       Some(trans) if trans.is_open() => (trans.trans_id, trans.coord),
@@ -627,6 +634,10 @@ impl ApidConnection {
       && query.table().has_blob_columns()
     {
       return Err(IcError::new(err::IC_ERROR_DELETE_WITH_BLOBS));
+    }
+    // A takeover names the scanned row of the base table.
+    if takeover.is_some() && query.index().is_some() {
+      return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
     }
     // A unique query names the index's own table and goes as a
     // UNIQUE_OP_REQ; the coordinator looks the row up through the index.
@@ -672,9 +683,24 @@ impl ApidConnection {
     };
     let mut key = std::mem::take(&mut self.key_scratch);
     let mut attr = std::mem::take(&mut self.attr_scratch);
-    let built = build_sections(query, &flags, is_read, &mut key, &mut attr);
+    let built = match takeover {
+      Some(over) => {
+        key.clear();
+        key.extend_from_slice(&over.key);
+        build_attr_section(query, &flags, is_read, &mut attr)
+          .and_then(|()| sections_fit(&key, &attr))
+      }
+      None => build_sections(query, &flags, is_read, &mut key, &mut attr),
+    };
     let header =
       SignalHeader::new(signal, self.block_number(), coord.coord_block);
+    let eight = request.encode();
+    let ten;
+    let mut words: &[u32] = &eight;
+    if let Some(over) = takeover {
+      ten = request.encode_takeover(over.info, over.fragment);
+      words = &ten;
+    }
     let staged = match built {
       Ok(()) => {
         let both: [&[u32]; 2] = [&key, &attr];
@@ -686,7 +712,7 @@ impl ApidConnection {
           coord.node_id,
           coord.generation,
           &header,
-          &request.encode(),
+          words,
           sections,
         )
       }
@@ -714,6 +740,7 @@ impl ApidConnection {
           has_row: false,
           row_words: 0,
           unpacked: false,
+          takeover: takeover.map(|over| over.of),
         },
         user_ref,
         callback,
@@ -778,8 +805,14 @@ impl ApidConnection {
     }
     for qid in dropped {
       self.unstage_query(qid);
+      let mut takeover = None;
       if let Some(query) = self.queries.get_mut(qid.0) {
         query.set_state(QueryState::Idle);
+        takeover = query.execution.takeover.take();
+      }
+      // A takeover that never went holds its receiver back no longer.
+      if let Some(of) = takeover {
+        self.takeover_settled(of);
       }
     }
     Ok(())
@@ -1446,17 +1479,26 @@ impl ApidConnection {
   /// decides it, and runs with the poll marked, so that a poll from
   /// inside it does nothing.
   fn finish_query(&mut self, qid: QueryId) {
-    let (tid, callback, user_ref) = match self.queries.get(qid.0) {
-      Some(query) => {
-        (query.execution.trans, query.callback(), query.user_ref())
-      }
-      None => (None, None, 0),
+    let (tid, callback, user_ref, takeover) = match self.queries.get_mut(qid.0)
+    {
+      Some(query) => (
+        query.execution.trans,
+        query.callback(),
+        query.user_ref(),
+        query.execution.takeover.take(),
+      ),
+      None => (None, None, 0, None),
     };
     if callback.is_none() {
       self.executed.push_back(qid);
     }
     if let Some(tid) = tid {
       self.leave_transaction(qid, tid);
+    }
+    // A takeover is done, confirmed or failed: its receiver may go on
+    // once the batch's others are (chapter 05 §7.2).
+    if let Some(of) = takeover {
+      self.takeover_settled(of);
     }
     if let Some(callback) = callback {
       self.in_callback += 1;
@@ -1746,6 +1788,19 @@ fn build_sections(
     )?,
     None => row_codec::key_info_into(query.key_record(), query.key_row(), key)?,
   }
+  build_attr_section(query, flags, is_read, attr_info)?;
+  sections_fit(key, attr_info)
+}
+
+/// A query's attribute section from its rows, into a buffer the caller
+/// keeps, cleared first: for a read what to read, for a write the
+/// values, and for a delete nothing.
+fn build_attr_section(
+  query: &ApidQuery,
+  flags: &KeyOpFlags,
+  is_read: bool,
+  attr_info: &mut Vec<u32>,
+) -> Result<(), IcError> {
   attr_info.clear();
   if is_read {
     row_codec::read_attr_info_into(query.attr_record(), attr_info);
@@ -1758,7 +1813,7 @@ fn build_sections(
       attr_info,
     )?;
   }
-  sections_fit(key, attr_info)
+  Ok(())
 }
 
 /// Refuse what a data node would take for a malformed request rather

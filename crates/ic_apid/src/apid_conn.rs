@@ -555,6 +555,8 @@ pub struct ApidConnection {
   pub(crate) scan_words: Vec<u32>,
   pub(crate) scan_columns: Vec<u32>,
   pub(crate) scan_receiver_ids: Vec<u32>,
+  /// A takeover's key, kept for its allocation.
+  pub(crate) takeover_key: Vec<u32>,
 }
 
 /// Records for scans at one node and coordinator instance.
@@ -674,6 +676,7 @@ impl ApidConnection {
       scan_words: Vec::new(),
       scan_columns: Vec::new(),
       scan_receiver_ids: Vec::new(),
+      takeover_key: Vec::new(),
     })
   }
 

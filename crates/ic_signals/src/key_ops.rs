@@ -13,7 +13,8 @@
 //! order: the user id and its version for rate limits, the scan
 //! information, the distribution key. The coordinator refuses a long
 //! request that is not exactly as long as its flags make it, as a
-//! malicious signal. None of the optional words is used here.
+//! malicious signal. A scan's takeover uses the last two
+//! ([`KeyOpReq::encode_takeover`]); the user id is not used.
 //!
 //! **Every reply names its receiver in its first word.** `KEY_OP_CONF`
 //! names the transaction, by the pointer given when its record was
@@ -46,6 +47,9 @@ use ic_port::IcError;
 
 /// Words in a `KEY_OP_REQ` without optional words.
 pub const IC_KEY_OP_REQ_LEN: usize = 8;
+/// Words in a takeover's `KEY_OP_REQ`: the eight, the scan information
+/// and the distribution key.
+pub const IC_KEY_OP_REQ_TAKEOVER_LEN: usize = 10;
 /// Section of a `KEY_OP_REQ` holding the key.
 pub const IC_KEY_OP_REQ_KEY_SECTION: usize = 0;
 /// Section of a `KEY_OP_REQ` holding the column data.
@@ -81,6 +85,7 @@ pub const IC_IGNORE_ERROR: u32 = 2;
 // Request flags, as bit positions in the request information word.
 const IC_KEY_OP_DIRTY_SHIFT: u32 = 0;
 const IC_KEY_OP_NO_DISK_SHIFT: u32 = 1;
+const IC_KEY_OP_DIST_KEY_SHIFT: u32 = 2;
 const IC_KEY_OP_COMMIT_SHIFT: u32 = 4;
 const IC_KEY_OP_OPERATION_SHIFT: u32 = 5;
 const IC_KEY_OP_OPERATION_MASK: u32 = 7;
@@ -89,6 +94,7 @@ const IC_KEY_OP_EXECUTE_SHIFT: u32 = 10;
 const IC_KEY_OP_START_SHIFT: u32 = 11;
 const IC_KEY_OP_ABORT_SHIFT: u32 = 12;
 const IC_KEY_OP_ABORT_MASK: u32 = 3;
+const IC_KEY_OP_SCAN_TAKEOVER_SHIFT: u32 = 14;
 const IC_KEY_OP_COMMITTED_BASE_SHIFT: u32 = 20;
 const IC_KEY_OP_NO_WAIT_SHIFT: u32 = 21;
 const IC_KEY_OP_BATCH_SAFE_SHIFT: u32 = 22;
@@ -127,6 +133,12 @@ pub struct KeyOpFlags {
   pub batch_safe: bool,
   /// RonDB: the operation depends on earlier ones in its batch.
   pub batch_unsafe: bool,
+  /// The request carries the distribution key, after the scan
+  /// information.
+  pub dist_key: bool,
+  /// The request takes over a row a scan has locked, and carries the
+  /// scan information. Verify: chapter 05 §7.2.
+  pub scan_takeover: bool,
 }
 
 impl KeyOpFlags {
@@ -146,6 +158,8 @@ impl KeyOpFlags {
     info |= (self.no_wait as u32) << IC_KEY_OP_NO_WAIT_SHIFT;
     info |= (self.batch_safe as u32) << IC_KEY_OP_BATCH_SAFE_SHIFT;
     info |= (self.batch_unsafe as u32) << IC_KEY_OP_BATCH_UNSAFE_SHIFT;
+    info |= (self.dist_key as u32) << IC_KEY_OP_DIST_KEY_SHIFT;
+    info |= (self.scan_takeover as u32) << IC_KEY_OP_SCAN_TAKEOVER_SHIFT;
     info
   }
 }
@@ -184,6 +198,22 @@ impl KeyOpReq {
       self.table_version,
       self.trans_id_lo,
       self.trans_id_hi,
+    ]
+  }
+
+  /// The ten words of a takeover of a scanned row: the eight, then the
+  /// scan information (`scans::takeover_info`) and the row's fragment as
+  /// the distribution key. Its flags must have `dist_key` and
+  /// `scan_takeover` set, or the coordinator refuses its length.
+  pub fn encode_takeover(
+    &self,
+    scan_info: u32,
+    fragment: u32,
+  ) -> [u32; IC_KEY_OP_REQ_TAKEOVER_LEN] {
+    let eight = self.encode();
+    [
+      eight[0], eight[1], eight[2], eight[3], eight[4], eight[5], eight[6],
+      eight[7], scan_info, fragment,
     ]
   }
 }
@@ -659,6 +689,32 @@ mod tests {
       trans_id_hi: 0x2000,
     };
     assert_eq!(req.encode(), [11, 22, 0, 15, 0x0D11, 3, 0x1000, 0x2000]);
+  }
+
+  #[test]
+  fn a_takeover_sets_two_flags_and_carries_two_words_more() {
+    // As MySQL's takeover of an update by scan: update, the takeover
+    // and distribution key flags, the information word, the fragment.
+    let flags = KeyOpFlags {
+      operation: IC_OP_UPDATE,
+      dist_key: true,
+      scan_takeover: true,
+      ..KeyOpFlags::default()
+    };
+    assert_eq!(flags.flags_word(), (1 << 5) | (1 << 2) | (1 << 14));
+    let req = KeyOpReq {
+      coord_ptr: 11,
+      query_ref: 22,
+      table_id: 15,
+      flags_word: flags.flags_word(),
+      table_version: 3,
+      trans_id_lo: 0x1000,
+      trans_id_hi: 0x2000,
+    };
+    let words = req.encode_takeover(0x181, 2);
+    assert_eq!(words.len(), IC_KEY_OP_REQ_TAKEOVER_LEN);
+    assert_eq!(&words[..8], &req.encode());
+    assert_eq!(&words[8..], &[0x181, 2]);
   }
 
   #[test]
