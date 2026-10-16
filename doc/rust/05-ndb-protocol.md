@@ -1674,7 +1674,8 @@ For the author, in sessions of their own (raised 2026-10-15):
 
 ### 7.4 Seen on the wire (2026-10-16)
 
-A capture of `tools/scan_capture.sh` against the release cluster: 1 000
+A capture of `tools/scan_capture.sh` against the release cluster (kept as
+`~/captures/scans1.pcap`, the second as `scans2.pcap`): 1 000
 rows over 8 fragments, 100 to 160 a fragment, so every fragment fitted
 in one batch of the reference's 384 rows. Read with the dissector; it
 confirms 7.2 where it says nothing below.
@@ -1726,8 +1727,35 @@ confirms 7.2 where it says nothing below.
 
 Not seen, because no fragment needed a second batch: a close
 (`LIMIT 5` ended by itself), the merge's refill of one receiver, more
-than one range, a fourth `SCAN_CONF` word. No `SCAN_REF` either. A second
-capture, with fragments larger than a batch, is for these.
+than one range, a fourth `SCAN_CONF` word. No `SCAN_REF` either. So a
+second capture was taken the same day, with 20 000 rows, about 2 500
+a fragment:
+
+- **The ordered merge.** After the first batches, the reference's
+  ordered scan names one receiver at a time, the one its merge emptied,
+  and waits for that receiver's `SCAN_CONF` before naming the next.
+  MySQL's ordered range scans do the same (7.3 question 14).
+- **Two ranges.** Each fragment returns all of range 0, then all of
+  range 1, and the fragments come to range 1 at different times; a
+  fragment whose range 0 fits in a batch sends both in that batch. The
+  range number comes first in every row. The descending range sets flag
+  14 alone.
+- **A fragment's last batch** comes back done; when the batch before
+  happened to end the fragment, the last is 0 rows and done.
+- **Closing.** For `LIMIT 5`, with and without locks, MySQL waited
+  until every batch it had asked for had come, took over its five rows
+  in the locking case and had their `KEY_OP_CONF`, then sent stop
+  naming all eight receivers it held. The coordinator answered with the
+  bare end of data (no entries), and the locking transaction committed
+  (7.3 question 9).
+- **`SCAN_REF`.** A locked scan that met a row another transaction
+  held: the other seven receivers ended, and 3.2 s later, the deadlock
+  timeout under MTR, came `SCAN_REF` 274 with a close owed. The
+  reference sent stop, five words naming 0xFFFFFFFF, had the bare end of
+  data, and rolled back (7.3 question 10).
+
+Still not seen: a `SCAN_CONF` with more than one entry (every one had
+one), and a fourth word, since no batch reached 1 023 rows.
 
 ## 8. Dictionary
 
