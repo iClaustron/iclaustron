@@ -87,6 +87,9 @@
 //!   any number of application threads, and the blocking calls over it.
 //! - [`scan_reader`]: an application thread's end of a scan an
 //!   executor runs.
+//! - [`index_order`]: rows in an ordered index's order, for the merge
+//!   of an ordered range scan.
+//! - [`index_scan`]: the ranges of a scan of an ordered index.
 //! - [`text_row`]: values as text, in and out of a row, for the tools.
 //! - [`fragments`]: putting a fragmented signal back together.
 //! - [`handshake`]: becoming a transporter connection to a data node.
@@ -110,6 +113,8 @@ pub mod fragments;
 pub mod handshake;
 pub mod hash;
 pub mod heartbeat;
+pub mod index_order;
+pub mod index_scan;
 pub mod key_op;
 pub mod node_connect;
 pub mod node_state;

@@ -1,0 +1,440 @@
+// Copyright (c) 2026 Hopsworks and/or its affiliates.
+// Licensed under the MIT License. See LICENSE in the repository root.
+
+//! Scans of an ordered index (chapter 04, "Index scans"): the ranges a
+//! run reads, given as rows of a key record and encoded at once as the
+//! request carries them (chapter 05 §7.2). New: the C had no range
+//! scans.
+//!
+//! **A range** is a low and a high bound, each the values of the
+//! index's first few columns, taken from a row laid out by the key
+//! record, and a number. A bound is compared as the index orders its
+//! rows, column by column, so every column of a bound but its last is
+//! sent inclusive, as the reference sends them, and only the last says
+//! whether the bound's own values are in the range. A range whose two
+//! bounds take the same columns with the same values, both inclusive,
+//! goes as equalities. A range with no bound at all takes in every
+//! row: the first column at least NULL.
+//!
+//! **Pruning**: when every range of a run fixes the values of the
+//! table's distribution key columns, the same in both bounds, and they
+//! all place it in the same partition, the run scans that partition
+//! alone, as the reference prunes. The partition is worked out from the
+//! low bound's row as a key's is ([`hash::partition_of`]); one that
+//! cannot be worked out, as for a character column whose collation was
+//! not described, leaves the run unpruned.
+
+use std::sync::Arc;
+
+use ic_port::err;
+use ic_port::IcError;
+use ic_signals::column_header;
+use ic_signals::scans;
+
+use crate::dict_cache::IndexDef;
+use crate::hash;
+use crate::index_order::IndexOrder;
+use crate::record::Record;
+use crate::row_codec;
+use crate::scan::check_scan_record;
+
+/// One range of an index scan (chapter 04, "Index scans"), its bounds
+/// taken from rows laid out by the scan's key record.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ScanRange {
+  /// How many of the index's leading columns the low bound takes from
+  /// its row; 0 for no low bound.
+  pub low_columns: u32,
+  /// The low bound's own values are in the range.
+  pub low_inclusive: bool,
+  /// How many of the index's leading columns the high bound takes from
+  /// its row; 0 for no high bound.
+  pub high_columns: u32,
+  /// The high bound's own values are in the range.
+  pub high_inclusive: bool,
+  /// The range's number, 0 to 4095, given back with each of its rows
+  /// when a run has several ranges.
+  pub range_no: u32,
+}
+
+/// A column of the index, as a bound takes it.
+#[derive(Clone, Copy, Debug)]
+struct BoundColumn {
+  /// Its id in the table.
+  field_id: u32,
+  /// Its place in the key record.
+  position: u32,
+  /// Its id in the index's own table, which a bound's header names.
+  index_column: u32,
+}
+
+/// Ranges encoded for a run, one after another, as the request carries
+/// them.
+#[derive(Debug, Default)]
+pub(crate) struct RangeSet {
+  pub(crate) bounds: Vec<u32>,
+  pub(crate) count: u32,
+  /// The first range's number: the number of every row of a run with
+  /// one range.
+  pub(crate) first_no: u32,
+  last_no: u32,
+  /// Each range's number is above the one before.
+  pub(crate) rising: bool,
+  /// Every range is in `partition`.
+  pub(crate) pruned: bool,
+  pub(crate) partition: u32,
+}
+
+impl RangeSet {
+  /// Empty, its buffer kept.
+  fn clear(&mut self) {
+    self.bounds.clear();
+    self.count = 0;
+    self.first_no = 0;
+    self.last_no = 0;
+    self.rising = true;
+    self.pruned = false;
+    self.partition = 0;
+  }
+
+  /// Count a range that has been encoded, with its number and the
+  /// partition it is in if it is in one.
+  fn note(&mut self, range_no: u32, partition: Option<u32>) {
+    if self.count == 0 {
+      self.first_no = range_no;
+      self.rising = true;
+      self.pruned = partition.is_some();
+      self.partition = partition.unwrap_or(0);
+    } else {
+      if range_no <= self.last_no {
+        self.rising = false;
+      }
+      if partition != Some(self.partition) {
+        self.pruned = false;
+      }
+    }
+    self.last_no = range_no;
+    self.count += 1;
+  }
+}
+
+/// What a scan of an ordered index has beyond a table scan: the index,
+/// its key record, the ranges added for the next run and those of the
+/// run, and the order its rows are merged in.
+#[derive(Debug)]
+pub(crate) struct IndexScan {
+  index: Arc<IndexDef>,
+  key_rec: Record,
+  /// The index's columns, in its order.
+  columns: Vec<BoundColumn>,
+  /// The fewest leading columns of the index that hold every
+  /// distribution key column of the table; 0 if the index lacks one,
+  /// and then no range is pruned.
+  dist_prefix: u32,
+  /// The order of the index's columns in the scan's rows, or why an
+  /// ordered run cannot be had.
+  pub(crate) order: Result<IndexOrder, IcError>,
+  /// What a run with several ranges reads: each row's range number
+  /// first, then the record's columns.
+  pub(crate) read_part_ranged: Vec<u32>,
+  /// The ranges added since the last run was started.
+  pending: RangeSet,
+  /// The ranges of the run.
+  pub(crate) run: RangeSet,
+}
+
+impl IndexScan {
+  /// A scan of `index`, an ordered index, its bounds laid out by
+  /// `key_rec`, which must hold every column of the index, and its rows
+  /// by `rec`, whose read is `read_part`. Both records are over the
+  /// index's table.
+  pub(crate) fn new(
+    index: &Arc<IndexDef>,
+    key_rec: &Record,
+    rec: &Record,
+    read_part: &[u32],
+  ) -> Result<IndexScan, IcError> {
+    if !index.is_ordered() {
+      return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
+    }
+    let table = index.table();
+    check_scan_record(table, key_rec)?;
+    let mut columns: Vec<BoundColumn> = Vec::new();
+    for column in &index.info().attributes {
+      // The index's hidden column is no column of the table.
+      let field_id = match table.field_id(&column.name) {
+        Ok(field_id) => field_id,
+        Err(_) => continue,
+      };
+      let position = match key_rec.position_of(field_id) {
+        Some(position) => position,
+        None => return Err(IcError::new(err::IC_ERROR_KEY_RECORD)),
+      };
+      columns.push(BoundColumn {
+        field_id,
+        position,
+        index_column: column.column_id,
+      });
+    }
+    let mut dist_prefix: u32 = 0;
+    for attr in &table.info().attributes {
+      if !attr.distribution_key {
+        continue;
+      }
+      match place_of(&columns, attr.column_id) {
+        Some(place) => dist_prefix = dist_prefix.max(place + 1),
+        None => {
+          dist_prefix = 0;
+          break;
+        }
+      }
+    }
+    let mut read_part_ranged: Vec<u32> =
+      Vec::with_capacity(1 + read_part.len());
+    read_part_ranged
+      .push(column_header::column_header(scans::IC_COL_RANGE_NO, 0));
+    read_part_ranged.extend_from_slice(read_part);
+    let mut pending = RangeSet::default();
+    pending.clear();
+    let mut run = RangeSet::default();
+    run.clear();
+    Ok(IndexScan {
+      index: Arc::clone(index),
+      key_rec: key_rec.clone(),
+      columns,
+      dist_prefix,
+      order: IndexOrder::new(index, rec),
+      read_part_ranged,
+      pending,
+      run,
+    })
+  }
+
+  /// The index scanned.
+  pub(crate) fn index(&self) -> &Arc<IndexDef> {
+    &self.index
+  }
+
+  /// Ranges added for the next run.
+  pub(crate) fn pending(&self) -> &RangeSet {
+    &self.pending
+  }
+
+  /// Encode a range for the next run, from `low` and `high`, rows laid
+  /// out by the key record; a row a bound does not use may be empty.
+  /// Refused with `IC_ERROR_BAD_RANGE` for a number above 4095, more
+  /// columns than the index has, or bounds too long to send; nothing is
+  /// added then.
+  pub(crate) fn add_range(
+    &mut self,
+    range: &ScanRange,
+    low: &[u8],
+    high: &[u8],
+  ) -> Result<(), IcError> {
+    let columns = self.columns.len() as u32;
+    let bad = IcError::new(err::IC_ERROR_BAD_RANGE);
+    if range.range_no > scans::IC_RANGE_NO_MAX
+      || range.low_columns > columns
+      || range.high_columns > columns
+    {
+      return Err(bad);
+    }
+    let size = self.key_rec.row_size() as usize;
+    let short = (range.low_columns > 0 && low.len() < size)
+      || (range.high_columns > 0 && high.len() < size);
+    if short {
+      return Err(IcError::new(err::IC_ERROR_RECORD_LAYOUT));
+    }
+    let start = self.pending.bounds.len();
+    let encoded = encode_range(
+      &self.key_rec,
+      &self.columns,
+      range,
+      low,
+      high,
+      &mut self.pending.bounds,
+    );
+    if let Err(e) = encoded {
+      self.pending.bounds.truncate(start);
+      return Err(e);
+    }
+    let finished =
+      scans::finish_range(&mut self.pending.bounds, start, range.range_no);
+    if let Err(e) = finished {
+      self.pending.bounds.truncate(start);
+      return Err(e);
+    }
+    let partition = self.partition_of_range(range, low, high);
+    self.pending.note(range.range_no, partition);
+    Ok(())
+  }
+
+  /// The partition every row of the range is in, if its bounds fix the
+  /// table's distribution key and the partition can be worked out.
+  fn partition_of_range(
+    &self,
+    range: &ScanRange,
+    low: &[u8],
+    high: &[u8],
+  ) -> Option<u32> {
+    let fixed = self.dist_prefix > 0
+      && range.low_columns >= self.dist_prefix
+      && range.high_columns >= self.dist_prefix;
+    if !fixed {
+      return None;
+    }
+    let same =
+      same_values(&self.key_rec, &self.columns, low, high, self.dist_prefix);
+    match same {
+      Ok(true) => {
+        hash::partition_of(self.index.table(), &self.key_rec, low).ok()
+      }
+      _ => None,
+    }
+  }
+
+  /// Refuse what a run cannot be started with: several ranges whose
+  /// numbers do not rise, for an ordered run.
+  pub(crate) fn check_run(&self, ordered: bool) -> Result<(), IcError> {
+    if ordered && self.pending.count > 1 && !self.pending.rising {
+      return Err(IcError::new(err::IC_ERROR_BAD_RANGE));
+    }
+    Ok(())
+  }
+
+  /// The ranges added become the run's, and the next run is given its
+  /// own. A run given none reads the whole index, as one open range.
+  pub(crate) fn take_ranges(&mut self) {
+    std::mem::swap(&mut self.pending, &mut self.run);
+    self.pending.clear();
+    if self.run.count > 0 {
+      return;
+    }
+    scans::open_range_into(&mut self.run.bounds);
+    // An open range of number 0 always fits.
+    let _ = scans::finish_range(&mut self.run.bounds, 0, 0);
+    self.run.note(0, None);
+  }
+}
+
+/// Where a column of the table is among the index's columns.
+fn place_of(columns: &[BoundColumn], field_id: u32) -> Option<u32> {
+  let mut place: usize = 0;
+  while place < columns.len() {
+    if columns[place].field_id == field_id {
+      return Some(place as u32);
+    }
+    place += 1;
+  }
+  None
+}
+
+/// True if `low` and `high` hold the same values, NULL or not, in the
+/// first `count` columns of the index.
+fn same_values(
+  key_rec: &Record,
+  columns: &[BoundColumn],
+  low: &[u8],
+  high: &[u8],
+  count: u32,
+) -> Result<bool, IcError> {
+  let mut place: usize = 0;
+  while place < count as usize {
+    let position = columns[place].position;
+    let a = row_codec::field_value(key_rec, position, low)?;
+    let b = row_codec::field_value(key_rec, position, high)?;
+    if a != b {
+      return Ok(false);
+    }
+    place += 1;
+  }
+  Ok(true)
+}
+
+/// One range's bounds onto `out`, column by column, a column's low
+/// bound before its high one, as the reference sends them; the range's
+/// first word is finished by the caller.
+fn encode_range(
+  key_rec: &Record,
+  columns: &[BoundColumn],
+  range: &ScanRange,
+  low: &[u8],
+  high: &[u8],
+  out: &mut Vec<u32>,
+) -> Result<(), IcError> {
+  if range.low_columns == 0 && range.high_columns == 0 {
+    scans::open_range_into(out);
+    return Ok(());
+  }
+  let equal = range.low_columns == range.high_columns
+    && range.low_inclusive
+    && range.high_inclusive
+    && same_values(key_rec, columns, low, high, range.low_columns)?;
+  let most = range.low_columns.max(range.high_columns);
+  let mut place: u32 = 0;
+  while place < most {
+    let column = columns[place as usize];
+    if equal {
+      let value = row_codec::field_value(key_rec, column.position, low)?;
+      scans::bound_into(out, scans::IC_BOUND_EQ, column.index_column, value);
+      place += 1;
+      continue;
+    }
+    if place < range.low_columns {
+      let mut bound_type = scans::IC_BOUND_LE;
+      if !range.low_inclusive && place + 1 == range.low_columns {
+        bound_type = scans::IC_BOUND_LT;
+      }
+      let value = row_codec::field_value(key_rec, column.position, low)?;
+      scans::bound_into(out, bound_type, column.index_column, value);
+    }
+    if place < range.high_columns {
+      let mut bound_type = scans::IC_BOUND_GE;
+      if !range.high_inclusive && place + 1 == range.high_columns {
+        bound_type = scans::IC_BOUND_GT;
+      }
+      let value = row_codec::field_value(key_rec, column.position, high)?;
+      scans::bound_into(out, bound_type, column.index_column, value);
+    }
+    place += 1;
+  }
+  Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn set_with(numbers: &[(u32, Option<u32>)]) -> RangeSet {
+    let mut set = RangeSet::default();
+    set.clear();
+    for (range_no, partition) in numbers {
+      set.note(*range_no, *partition);
+    }
+    set
+  }
+
+  #[test]
+  fn ranges_rise_and_prune_only_together() {
+    let set = set_with(&[(0, Some(3)), (1, Some(3)), (5, Some(3))]);
+    assert!(set.rising);
+    assert!(set.pruned);
+    assert_eq!(set.partition, 3);
+    assert_eq!(set.first_no, 0);
+    assert_eq!(set.count, 3);
+    // A number not above the last, a second partition, or a range in
+    // no single partition each undo it.
+    assert!(!set_with(&[(2, None), (2, None)]).rising);
+    assert!(!set_with(&[(0, Some(3)), (1, Some(4))]).pruned);
+    assert!(!set_with(&[(0, Some(3)), (1, None)]).pruned);
+    assert!(!set_with(&[(0, None), (1, Some(3))]).pruned);
+    // Cleared, it is ready for the next run, its buffer kept.
+    let mut set = set_with(&[(7, Some(1))]);
+    set.bounds.extend_from_slice(&[1, 2, 3]);
+    let capacity = set.bounds.capacity();
+    set.clear();
+    assert_eq!(set.count, 0);
+    assert!(set.bounds.is_empty());
+    assert_eq!(set.bounds.capacity(), capacity);
+  }
+}

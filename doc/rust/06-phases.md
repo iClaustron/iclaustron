@@ -1521,6 +1521,39 @@ descending order; character columns compared in their collation's
 order (8.6), other types by type; a range pruned to one partition when it
 fixes the distribution key.
 
+- **Ranges as rows of a key record** (the author, 2026-10-17; chapter
+  04, "Index scans"): `create_index_scan` with the index, a key record
+  holding its columns and the record rows are read into;
+  `add_scan_range` with a `ScanRange` and a low and a high row, encoded
+  at once; `ScanArgs::ordered` and `descending`; `scan_range_no`.
+- **On a connection, built 2026-10-17:** the bounds,
+  section 2, in `index_scan.rs`, column by column as the reference
+  sends them, a fixed prefix as equalities; the request naming the
+  index, flag 15 in place of 13, and 14 for descending; range numbers
+  read first in each row when a run has several ranges; pruning to the
+  partition every range fixes; and the merge in `next_row`, which
+  hands back the batches it has read, waits for a row or the end from
+  every receiver, and takes the row whose range number, then order
+  key, comes first (`index_order.rs`, `CollationMap::sort_key`).
+  Binding an ordered index describes every character column's
+  collation with its weights.
+- **Tests**, in the `scan_` group, each against MySQL's rows, and for
+  an ordered run against MySQL's `ORDER BY` order by dense rank:
+  twelve ranges of an index over two columns, every bound type, open
+  on either side, bounds at NULL and a range of no rows, each
+  unordered, ordered and descending; three numbered ranges, each row's
+  number checked, and the refusals of numbers; pruning, by a table's
+  distribution key and by its primary key's ordered index, the run
+  seen to have one receiver; ordered scans over sixteen types and over
+  eleven latin1 columns in all eight collations, every byte and words
+  that sort apart in some, and six utf8mb4 collations; rows taken over
+  from an ordered exclusive scan and updated; and the refusals.
+- **Passes 2026-10-17**: the eight new tests and the whole `scan_`
+  group against `rondb_1107_cte_test`; the merge's order matches
+  MySQL's for every type, collation and word tried.
+- **Next, 8.7b**: index scans through an executor, a shape over the
+  index and the ranges given to the reader, which merges.
+
 ### 8.8 C ABI and examples (3 days)
 
 Scans in `ic_capi`, documented as in phase 7; examples in Rust and C: a

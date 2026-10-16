@@ -229,6 +229,84 @@ pub fn column_section_into(
   out.extend_from_slice(subroutines);
 }
 
+// ---- Range scan bounds ----
+
+/// A bound that the column's value is at least: a low bound, inclusive.
+/// The types read as "the bound is ... the value".
+/// Verify: chapter 05 §7.2.
+pub const IC_BOUND_LE: u32 = 0;
+/// A bound the value is above: a low bound, exclusive.
+pub const IC_BOUND_LT: u32 = 1;
+/// A bound the value is at most: a high bound, inclusive.
+pub const IC_BOUND_GE: u32 = 2;
+/// A bound the value is below: a high bound, exclusive.
+pub const IC_BOUND_GT: u32 = 3;
+/// A value the column equals: a low and a high bound in one.
+pub const IC_BOUND_EQ: u32 = 4;
+/// The largest range number, twelve bits of a range's first word.
+pub const IC_RANGE_NO_MAX: u32 = 0xFFF;
+/// The most words a range may take: its length is the high half of its
+/// first word.
+pub const IC_RANGE_MAX_WORDS: usize = 0xFFFF;
+/// The pseudo column that reads the number of the range a row was
+/// found in, one word, first in the row when asked for.
+/// Verify: chapter 05 §7.4.
+pub const IC_COL_RANGE_NO: u32 = 0xFFFB;
+
+/// Append one bound of a range to `out`: its type, the header of the
+/// column, by its place in the index, with the value's size in bytes,
+/// and the value, as the row keeps it, padded to whole words. A NULL
+/// value has size 0 and no words.
+pub fn bound_into(
+  out: &mut Vec<u32>,
+  bound_type: u32,
+  index_column: u32,
+  value: Option<&[u8]>,
+) {
+  out.push(bound_type);
+  let bytes = value.unwrap_or(&[]);
+  out.push(crate::column_header::column_header(
+    index_column,
+    bytes.len() as u32,
+  ));
+  let mut i: usize = 0;
+  while i < bytes.len() {
+    let mut word = [0u8; 4];
+    let take = (bytes.len() - i).min(4);
+    word[..take].copy_from_slice(&bytes[i..i + take]);
+    out.push(u32::from_ne_bytes(word));
+    i += 4;
+  }
+}
+
+/// Append a range that takes in every row to `out`: the first column at
+/// least NULL, which every value is, as the reference sends it.
+pub fn open_range_into(out: &mut Vec<u32>) {
+  bound_into(out, IC_BOUND_LE, 0, None);
+}
+
+/// Finish the range that starts at `start` in `bounds`: its first word
+/// takes the range's length in words, in its high half, and its number,
+/// in bits 4 to 15. Refused for a number above [`IC_RANGE_NO_MAX`], a
+/// range of more than [`IC_RANGE_MAX_WORDS`] words, or one with no
+/// bound at all.
+pub fn finish_range(
+  bounds: &mut [u32],
+  start: usize,
+  range_no: u32,
+) -> Result<(), IcError> {
+  let bad = IcError::new(err::IC_ERROR_BAD_RANGE);
+  if start >= bounds.len() || range_no > IC_RANGE_NO_MAX {
+    return Err(bad);
+  }
+  let len = bounds.len() - start;
+  if len > IC_RANGE_MAX_WORDS {
+    return Err(bad);
+  }
+  bounds[start] |= ((len as u32) << 16) | (range_no << 4);
+  Ok(())
+}
+
 // ---- SCAN_CONF ----
 
 /// Words in a `SCAN_CONF` before its entries.
@@ -586,6 +664,49 @@ pub fn takeover_info(row_word: u32) -> u32 {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn a_range_carries_its_length_and_number_in_its_first_word() {
+    // a >= 5 and a < 9, b = 'xy', as range 3.
+    let mut bounds: Vec<u32> = Vec::new();
+    bound_into(&mut bounds, IC_BOUND_LE, 0, Some(&5u32.to_le_bytes()));
+    bound_into(&mut bounds, IC_BOUND_GT, 0, Some(&9u32.to_le_bytes()));
+    bound_into(&mut bounds, IC_BOUND_EQ, 1, Some(&[2, b'x', b'y']));
+    finish_range(&mut bounds, 0, 3).expect("a range");
+    assert_eq!(bounds.len(), 9);
+    assert_eq!(bounds[0], (9 << 16) | (3 << 4) | IC_BOUND_LE);
+    assert_eq!(bounds[1], 4);
+    assert_eq!(bounds[2], 5);
+    assert_eq!(bounds[3], IC_BOUND_GT);
+    assert_eq!(bounds[6], IC_BOUND_EQ);
+    assert_eq!(bounds[7], (1 << 16) | 3);
+    assert_eq!(bounds[8], u32::from_ne_bytes([2, b'x', b'y', 0]));
+    // A second range after it starts where the first ended.
+    let start = bounds.len();
+    open_range_into(&mut bounds);
+    finish_range(&mut bounds, start, 4).expect("an open range");
+    assert_eq!(&bounds[start..], [(2 << 16) | (4 << 4), 0]);
+  }
+
+  #[test]
+  fn a_null_bound_has_a_header_of_size_zero() {
+    let mut bounds: Vec<u32> = Vec::new();
+    bound_into(&mut bounds, IC_BOUND_GE, 2, None);
+    assert_eq!(bounds, [IC_BOUND_GE, 2 << 16]);
+  }
+
+  #[test]
+  fn a_range_that_cannot_be_sent_is_refused() {
+    let mut bounds: Vec<u32> = Vec::new();
+    open_range_into(&mut bounds);
+    let e = finish_range(&mut bounds, 0, IC_RANGE_NO_MAX + 1)
+      .expect_err("number too big");
+    assert_eq!(e.code, err::IC_ERROR_BAD_RANGE);
+    assert!(finish_range(&mut bounds, 2, 0).is_err(), "no bound");
+    let mut long: Vec<u32> = vec![0; IC_RANGE_MAX_WORDS + 1];
+    assert!(finish_range(&mut long, 0, 0).is_err(), "too long");
+    finish_range(&mut bounds, 0, IC_RANGE_NO_MAX).expect("the largest");
+  }
 
   #[test]
   fn the_flags_take_their_bits() {

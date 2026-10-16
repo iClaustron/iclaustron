@@ -1337,7 +1337,9 @@ NTS = `src/ndbapi/NdbTransactionScan.cpp`, IF = `src/ndbapi/Ndbif.cpp`.
   A committed read sets
   11; shared and simple reads set hold lock; an exclusive read sets 8,
   hold lock and 12 (NSO:1865-1897). The reference always sets 13 for a
-  table scan (NSO:1570, 1662).
+  table scan (NSO:1570, 1662), and never for a scan of an ordered
+  index, which sets 15 in its place (NSO:1597-1613, 1668): 13 would
+  read the table's fragment in storage order and leave the index out.
 - **Its sections**: 0 the receiver ids, whose count is the parallelism
   (coordinator:16842-16856); 1 the column section, required (empty:
   269), beginning with five size words (NSO:3196-3205): the read
@@ -1508,7 +1510,20 @@ NTS = `src/ndbapi/NdbTransactionScan.cpp`, IF = `src/ndbapi/Ndbif.cpp`.
   each range's first word also holds len << 16 | range number << 4,
   range numbers up to 0xFFF and rising strictly in an ordered scan with
   several ranges; an open range is type 0 with a header of (0, 0)
-  (NSO:1102-1251, 4111-4196, 1150-1165; local ops:26196).
+  (NSO:1102-1251, 4111-4196, 1150-1165; local ops:26196). The header
+  names the column by its id in the index's own table, and its length
+  counts a variable-sized value's length bytes, which are sent with it
+  (NSO:4118-4166). A range's bounds go column by column, a column's
+  low bound before its high one. Every column of a bound but its last
+  is sent inclusive (0 or 2), so a bound is a prefix compared as the
+  index orders its rows, and only the last column says whether the
+  bound's own values are in the range. A range whose two bounds are the
+  same row, with as many columns, both inclusive, goes as type 4 alone
+  (NSO:1196-1243).
+- **The range number in the row.** A scan that reads range numbers
+  puts the pseudo-column 0xFFFB, size 0, before the read in its column
+  section (NSO:4262-4268). Each row then begins with 0xFFFB, size 4,
+  and one word, the number, before the packed row (NR:1231-1239).
 - **Ordered range scans** (the author, 2026-10-15). `SCAN_REQ` has no
   ordering flag: an ordered range scan scans every fragment in
   parallel, a receiver each, and the client merges.
@@ -1551,7 +1566,13 @@ NTS = `src/ndbapi/NdbTransactionScan.cpp`, IF = `src/ndbapi/Ndbif.cpp`.
   (`include/kernel/signaldata/TcKeyRef.hpp:61`, two entries at
   `src/ndbapi/ndberror.cpp:365, 580`). The reference prunes a range
   scan only when both bounds fix every distribution key column
-  (NSO:1268-1300).
+  (NSO:1268-1300), and sends the key's hash, bit 26 alone. Ours names
+  the partition by its id, bits 26 and 30, as for a table, which the
+  coordinator checks against the scanned object's fragment count
+  (coordinator:17921-17932): an ordered index has a fragment for each
+  of its table's. Seen to work in 8.7 (2026-10-17): runs pruned so, by
+  a table's distribution key and by its primary key's ordered index,
+  read every row MySQL selects, with one receiver.
 
   Pruning to the fanout's partitions is a pure optimisation and not in
   phase 8: a fanout table's scans cover every partition, which is

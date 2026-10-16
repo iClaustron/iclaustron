@@ -547,6 +547,93 @@ conn.commit_transaction(tid)?;
 - Not through an executor: its requests are whole transactions, and a
   takeover needs one that stays open across calls (kept for later).
 
+### Index scans (phase 8.7; agreed with the author and built 2026-10-17)
+
+A scan of an ordered index reads the rows of its table whose index
+columns lie in the ranges given, and is made once and run many times
+as a table scan is:
+
+```rust
+let index = conn.index_bind(db, "ix_val", "scan")?;    // an ordered index
+let key_rec = Record::default_for(&table, Some(&[val]))?; // its columns
+let scan = conn.create_index_scan(&index, &key_rec, &rec)?;
+let range = ScanRange {                // val from 100 to 200, both in
+  low_columns: 1, low_inclusive: true,
+  high_columns: 1, high_inclusive: true,
+  range_no: 0,
+};
+conn.add_scan_range(scan, &range, &low_row, &high_row)?;
+conn.start_scan(scan, &ScanArgs { ordered: true, ..ScanArgs::default() })?;
+while conn.next_row(scan)? {
+  let row = conn.scan_row(scan);       // in the index's order
+}
+```
+
+- **`create_index_scan(&index, &key_rec, &rec)`**: an ordered index
+  (another is refused, `IC_ERROR_NOT_SUPPORTED`); a key record over
+  its table holding every column of the index, the convention the key
+  records of `create_unique_query` follow (`IC_ERROR_KEY_RECORD`);
+  and the record the rows are read into, over the table.
+- **Ranges as rows** (the author, 2026-10-17, choosing between rows of
+  the key record, as the reference's bounds by record are given, and
+  a bound for each column, as its older interface has them):
+  `add_scan_range(scan, &range, low_row, high_row)`, both rows laid
+  out by the key record. `ScanRange` says how many of the index's
+  leading columns each bound takes from its row (`low_columns`,
+  `high_columns`; 0 for no bound on that side), whether a bound is in
+  the range (`low_inclusive`, `high_inclusive`), and the range's
+  number (`range_no`, 0 to 4095). A bound is compared as the index
+  orders its rows, column by column, so the low bound (7, 3) takes in
+  (7, 3) if inclusive, then (7, 4), (8, 0) and so on. A NULL in a
+  bound is a bound at NULL, which comes before every value. The range
+  is encoded at once, as the request carries it (chapter 05 §7.2), and
+  the rows are not kept. When both bounds take the same columns with
+  the same values and both are inclusive, the range goes as
+  equalities, as the reference sends it.
+- **A run takes the ranges added before it** and the next run is
+  given its own. A run given none reads the whole index, as one open
+  range. A range that cannot be sent is refused with
+  `IC_ERROR_BAD_RANGE` (7163): its number above 4095, more columns
+  than the index has, or more than 65 535 words of bounds.
+- **`ScanArgs::ordered`**: the rows in the index's order across
+  fragments. Every fragment is scanned at once, a receiver each,
+  whatever `parallelism` says, and `next_row` merges them. It needs a
+  row or the end from every receiver before it gives one (chapter 05
+  §7.2). Each column is compared as the data nodes compare it.
+  Numbers, decimals, dates and times compare by value, binary strings
+  by their bytes, and a character column by its collation's order,
+  from the description the data nodes give (chapter 06 §8.6). The
+  record must hold every column of the index (`IC_ERROR_KEY_RECORD`).
+  An index with a column whose order is not known here, an old
+  decimal or a character column whose collation could not be
+  described or weighs a character by its neighbours, refuses an
+  ordered run (`IC_ERROR_NOT_SUPPORTED`). An ordered run is read only
+  with `next_row` and `next_row_into`: its batches go on no ready
+  list, so a callback and `next_batch` are refused
+  (`IC_ERROR_NOT_SUPPORTED`). With several ranges the rows come range
+  by range, and the numbers must rise in the order the ranges were
+  added (`IC_ERROR_BAD_RANGE`).
+- **`ScanArgs::descending`**: each fragment from the high end, and an
+  ordered run's merge too; the ranges keep their order. `ordered` and
+  `descending` are refused on a table scan (`IC_ERROR_NOT_SUPPORTED`).
+- **Range numbers**: a run with more than one range reads each row's
+  range number with it (chapter 05 §7.2), and `conn.scan_range_no(scan)`
+  gives the number of the row last read. In a run with one range it
+  is that range's number.
+- **Pruning**: a run whose every range fixes the table's
+  distribution key to the same partition, both bounds taking every
+  distribution key column with the same values, scans that partition
+  alone, as the reference prunes (chapter 05 §7.2). A key whose
+  partition cannot be worked out here, such as one with a character
+  column whose collation could not be described, is not pruned.
+  `ScanArgs::partition` names one partition by its id, and wins.
+  `Scan::parallelism` gives the receivers a run had, one when pruned.
+- **Takeovers** as from a table scan (8.5): an index scan's rows come
+  with the table's keys.
+- **Through an executor**: a shape over the index, with ranges given
+  to the reader, after a connection's index scans pass. **C**: phase
+  8.8.
+
 ### Errors
 
 `IcError` is a code: 7000 and up iClaustron's own, small positive codes

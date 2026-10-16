@@ -41,9 +41,10 @@
 //! in memory and on disk (chapter 06 §6.6); `executor`, which runs key
 //! operations for application threads through an executor (chapter 06
 //! §8.1); `scan`, which reads tables by scans in every lock mode, closes
-//! them early and prunes them (chapter 06 §8.3). The `big_rows` group
-//! makes a log file
-//! group and a tablespace if the cluster has none, and keeps them.
+//! them early and prunes them (chapter 06 §8.3), and reads ordered
+//! indexes by ranges, merged in their order (chapter 06 §8.7). The
+//! `big_rows` group makes a log file group and a tablespace if the
+//! cluster has none, and keeps them.
 //! Each test is its own program against the cluster, as an application
 //! would be: it takes an API node id, binds its tables, does its work
 //! through the public API and lets go.
@@ -51,6 +52,7 @@
 #![cfg(feature = "integration")]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use std::collections::HashMap;
 use std::io::Write;
 use std::process::Command;
 use std::process::Stdio;
@@ -71,6 +73,7 @@ use ic_apid::executor::KeyOp;
 use ic_apid::executor::OpShape;
 use ic_apid::executor::Request;
 use ic_apid::executor::Submitter;
+use ic_apid::index_scan::ScanRange;
 use ic_apid::key_op;
 use ic_apid::query::AbortOption;
 use ic_apid::query::QueryId;
@@ -5446,5 +5449,1130 @@ fn scan_takeovers_a_batch_at_a_time_and_across_a_close() {
   while !conn.scan_done(scan) {
     conn.poll(100);
   }
+  assert_eq!(conn.unexpected(), 0);
+}
+
+// ---- Index scans (chapter 06 §8.7) ----
+
+/// Rows in the `rng` table.
+const IC_IT_RNG_ROWS: i64 = 999;
+
+/// Make the `rng` table afresh, `IC_IT_RNG_ROWS` rows: id 1 up, a the id
+/// modulo 50, b the id modulo 7 or NULL for every eleventh, u the id and
+/// v ten times the id; an ordered index over (a, b), and a unique one
+/// over u.
+fn setup_rng_table() -> Option<()> {
+  let sql = format!(
+    "CREATE DATABASE IF NOT EXISTS {db};
+     DROP TABLE IF EXISTS {db}.rng;
+     CREATE TABLE {db}.rng (
+       id INT NOT NULL PRIMARY KEY,
+       a INT NOT NULL,
+       b INT,
+       u INT NOT NULL,
+       v INT NOT NULL,
+       KEY ix_ab (a, b),
+       UNIQUE KEY uk_u (u)
+     ) ENGINE=NDB;
+     INSERT INTO {db}.rng
+       WITH RECURSIVE seq (n) AS
+         (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < {rows})
+       SELECT n, n % 50, IF(n % 11 = 0, NULL, n % 7), n, n * 10 FROM seq;",
+    db = IC_IT_DB,
+    rows = IC_IT_RNG_ROWS
+  );
+  mysql(&sql)?;
+  Some(())
+}
+
+/// A row of `key_rec` holding `values` in `columns`, in order; None is
+/// NULL.
+fn bound_row(
+  t: &Table,
+  key_rec: &Record,
+  columns: &[&str],
+  values: &[Option<&str>],
+) -> Vec<u8> {
+  let mut row = vec![0; key_rec.row_size() as usize];
+  let mut i: usize = 0;
+  while i < values.len() {
+    match values[i] {
+      Some(text) => put_into(t, key_rec, &mut row, columns[i], text),
+      None => {
+        let id = t.def.field_id(columns[i]).expect("no such column");
+        let position = key_rec.position_of(id).expect("not in the record");
+        key_rec
+          .set_null(&mut row, position, true)
+          .expect("set NULL");
+      }
+    }
+    i += 1;
+  }
+  row
+}
+
+/// Every row a run of a scan reads with `next_row`, each one's id and
+/// range number, and how the run ended.
+fn index_rows(
+  conn: &mut ApidConnection,
+  t: &Table,
+  scan: ScanId,
+  args: &ScanArgs,
+) -> (Vec<(i64, u32)>, Option<IcError>) {
+  conn.start_scan(scan, args).expect("start the scan");
+  let mut rows: Vec<(i64, u32)> = Vec::new();
+  loop {
+    match conn.next_row(scan) {
+      Ok(true) => {
+        let id: i64 = t.get(conn.scan_row(scan), "id").parse().expect("id");
+        rows.push((id, conn.scan_range_no(scan)));
+      }
+      Ok(false) => return (rows, None),
+      Err(e) => return (rows, Some(e)),
+    }
+  }
+}
+
+/// By id, the rows of `table` that `filter` selects, each with its
+/// dense rank in MySQL's `ORDER BY order`, or with the number `rank`
+/// gives it when that is a whole expression of its own.
+fn mysql_ranks(table: &str, rank: &str, filter: &str) -> HashMap<i64, i64> {
+  let sql = format!(
+    "SELECT id, {rank} FROM {db}.{table} WHERE {filter}",
+    rank = rank,
+    db = IC_IT_DB,
+    table = table,
+    filter = filter
+  );
+  let text = mysql(&sql).expect("MySQL");
+  let mut ranks: HashMap<i64, i64> = HashMap::new();
+  for line in text.lines() {
+    let mut parts = line.split('\t');
+    let id: i64 = parts.next().expect("an id").parse().expect("an id");
+    let value: i64 = parts.next().expect("a rank").parse().expect("a rank");
+    ranks.insert(id, value);
+  }
+  ranks
+}
+
+/// The rank of each row in MySQL's order of `order`.
+fn rank_by(order: &str) -> String {
+  format!("DENSE_RANK() OVER (ORDER BY {})", order)
+}
+
+/// What is wrong with `rows`, read in this order, against `ranks`: a row
+/// MySQL does not select, one read twice, rows not read; and for an
+/// ordered run a row out of order, range by range, each range's rows by
+/// rank, rising, or falling for a descending run.
+fn order_faults(
+  rows: &[(i64, u32)],
+  ranks: &HashMap<i64, i64>,
+  ordered: bool,
+  descending: bool,
+) -> Vec<String> {
+  let mut faults: Vec<String> = Vec::new();
+  let mut seen: HashMap<i64, bool> = HashMap::new();
+  let mut last: Option<(u32, i64)> = None;
+  for (id, range_no) in rows {
+    let rank = match ranks.get(id) {
+      Some(rank) => *rank,
+      None => {
+        faults.push(format!("{} is not selected", id));
+        continue;
+      }
+    };
+    if seen.insert(*id, true).is_some() {
+      faults.push(format!("{} read twice", id));
+    }
+    if !ordered {
+      continue;
+    }
+    if let Some((last_range, last_rank)) = last {
+      let in_order = if *range_no != last_range {
+        *range_no > last_range
+      } else if descending {
+        rank <= last_rank
+      } else {
+        rank >= last_rank
+      };
+      if !in_order {
+        faults.push(format!(
+          "{} (range {}, rank {}) after range {}, rank {}",
+          id, range_no, rank, last_range, last_rank
+        ));
+      }
+    }
+    last = Some((*range_no, rank));
+  }
+  if seen.len() != ranks.len() {
+    faults.push(format!("{} rows read of {}", seen.len(), ranks.len()));
+  }
+  faults
+}
+
+/// The first faults, for a message.
+fn first_faults(mut faults: Vec<String>) -> String {
+  faults.truncate(40);
+  faults.join("\n")
+}
+
+/// A range of `ix_ab` with no number.
+const fn ab(
+  low_columns: u32,
+  low_inclusive: bool,
+  high_columns: u32,
+  high_inclusive: bool,
+) -> ScanRange {
+  ScanRange {
+    low_columns,
+    low_inclusive,
+    high_columns,
+    high_inclusive,
+    range_no: 0,
+  }
+}
+
+/// A range of `ix_ab`, its bounds as text, with the condition MySQL
+/// selects its rows by.
+struct AbRange {
+  range: ScanRange,
+  low: &'static [Option<&'static str>],
+  high: &'static [Option<&'static str>],
+  filter: &'static str,
+}
+
+/// Every bound type, on one column and on two, open on either side,
+/// bounds at NULL, and a range of no rows.
+const IC_IT_AB_RANGES: [AbRange; 12] = [
+  AbRange {
+    range: ab(0, false, 0, false),
+    low: &[],
+    high: &[],
+    filter: "TRUE",
+  },
+  AbRange {
+    range: ab(1, true, 1, true),
+    low: &[Some("7")],
+    high: &[Some("7")],
+    filter: "a = 7",
+  },
+  AbRange {
+    range: ab(1, true, 1, false),
+    low: &[Some("10")],
+    high: &[Some("20")],
+    filter: "a >= 10 AND a < 20",
+  },
+  AbRange {
+    range: ab(1, false, 1, true),
+    low: &[Some("10")],
+    high: &[Some("20")],
+    filter: "a > 10 AND a <= 20",
+  },
+  AbRange {
+    range: ab(1, true, 0, false),
+    low: &[Some("45")],
+    high: &[],
+    filter: "a >= 45",
+  },
+  AbRange {
+    range: ab(0, false, 1, false),
+    low: &[],
+    high: &[Some("3")],
+    filter: "a < 3",
+  },
+  AbRange {
+    range: ab(2, true, 1, true),
+    low: &[Some("5"), Some("3")],
+    high: &[Some("5")],
+    filter: "a = 5 AND b >= 3",
+  },
+  AbRange {
+    range: ab(2, false, 2, false),
+    low: &[Some("5"), Some("3")],
+    high: &[Some("6"), Some("2")],
+    filter: "(a = 5 AND b > 3) OR (a = 6 AND (b < 2 OR b IS NULL))",
+  },
+  AbRange {
+    range: ab(2, true, 2, true),
+    low: &[Some("9"), None],
+    high: &[Some("9"), None],
+    filter: "a = 9 AND b IS NULL",
+  },
+  AbRange {
+    range: ab(2, true, 2, true),
+    low: &[Some("9"), None],
+    high: &[Some("9"), Some("2")],
+    filter: "a = 9 AND (b IS NULL OR b <= 2)",
+  },
+  AbRange {
+    range: ab(2, false, 1, true),
+    low: &[Some("9"), None],
+    high: &[Some("9")],
+    filter: "a = 9 AND b IS NOT NULL",
+  },
+  AbRange {
+    range: ab(1, false, 1, false),
+    low: &[Some("20")],
+    high: &[Some("20")],
+    filter: "FALSE",
+  },
+];
+
+/// The `ix_ab` index of `rng`, its key record and a scan of it reading
+/// the whole row.
+fn ab_scan(
+  conn: &mut ApidConnection,
+  t: &Table,
+) -> (Arc<IndexDef>, Record, ScanId) {
+  let index = conn
+    .index_bind(IC_IT_DB, "ix_ab", "rng")
+    .expect("bind the ordered index");
+  assert!(index.is_ordered());
+  let key_rec = record_over(t, &["a", "b"]);
+  let scan = conn
+    .create_index_scan(&index, &key_rec, &t.rec)
+    .expect("create the index scan");
+  (index, key_rec, scan)
+}
+
+#[test]
+fn scan_index_ranges_of_every_bound_type() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_rng_table().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("connection");
+  let t = bind(&mut conn, "rng");
+  let (_, key_rec, scan) = ab_scan(&mut conn, &t);
+  let columns = ["a", "b"];
+  let mut faults: Vec<String> = Vec::new();
+  for case in &IC_IT_AB_RANGES {
+    let ranks = mysql_ranks("rng", &rank_by("a, b"), case.filter);
+    let low = bound_row(&t, &key_rec, &columns, case.low);
+    let high = bound_row(&t, &key_rec, &columns, case.high);
+    // Unordered, ordered and ordered from the high end, in small
+    // batches, so that the merge waits for one fragment after another.
+    for (ordered, descending) in [(false, false), (true, false), (true, true)] {
+      conn
+        .add_scan_range(scan, &case.range, &low, &high)
+        .expect("add the range");
+      let args = ScanArgs {
+        ordered,
+        descending,
+        batch_rows: 5,
+        timeout_ms: IC_IT_SCAN_WAIT_MS as u32,
+        ..ScanArgs::default()
+      };
+      let (rows, error) = index_rows(&mut conn, &t, scan, &args);
+      let what =
+        format!("{} ordered {} desc {}", case.filter, ordered, descending);
+      if let Some(e) = error {
+        faults.push(format!("{}: error {} {}", what, e.code, e.message()));
+        continue;
+      }
+      for fault in order_faults(&rows, &ranks, ordered, descending) {
+        faults.push(format!("{}: {}", what, fault));
+      }
+    }
+  }
+  assert!(faults.is_empty(), "{}", first_faults(faults));
+  // A run given no range reads every row; ordered into a buffer of the
+  // caller's.
+  let args = ScanArgs {
+    ordered: true,
+    ..ScanArgs::default()
+  };
+  conn.start_scan(scan, &args).expect("start");
+  let mut row = t.row();
+  let mut rows: Vec<(i64, u32)> = Vec::new();
+  while conn.next_row_into(scan, &mut row).expect("a row") {
+    rows.push((t.get(&row, "id").parse().expect("an id"), 0));
+  }
+  let ranks = mysql_ranks("rng", &rank_by("a, b"), "TRUE");
+  let faults = order_faults(&rows, &ranks, true, false);
+  assert!(faults.is_empty(), "{}", first_faults(faults));
+  assert_eq!(conn.unexpected(), 0);
+  conn.free_scan(scan).expect("free the scan");
+}
+
+#[test]
+fn scan_index_several_ranges_with_their_numbers() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_rng_table().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("connection");
+  let t = bind(&mut conn, "rng");
+  let (_, key_rec, scan) = ab_scan(&mut conn, &t);
+  let columns = ["a", "b"];
+  // Range 0: a = 3; range 1: a from 10 to 12; range 5: a above 47.
+  let ranges: [(u32, ScanRange, &str, &str); 3] = [
+    (0, ab(1, true, 1, true), "3", "3"),
+    (1, ab(1, true, 1, true), "10", "12"),
+    (5, ab(1, false, 0, false), "47", "0"),
+  ];
+  let filter = "a = 3 OR a BETWEEN 10 AND 12 OR a > 47";
+  let numbers = mysql_ranks(
+    "rng",
+    "CASE WHEN a = 3 THEN 0 WHEN a <= 12 THEN 1 ELSE 5 END",
+    filter,
+  );
+  let ranks = mysql_ranks("rng", &rank_by("a, b"), filter);
+  let mut faults: Vec<String> = Vec::new();
+  for (ordered, descending) in [(false, false), (true, false), (true, true)] {
+    for (range_no, range, low, high) in &ranges {
+      let numbered = ScanRange {
+        range_no: *range_no,
+        ..*range
+      };
+      let low_row = bound_row(&t, &key_rec, &columns, &[Some(*low)]);
+      let high_row = bound_row(&t, &key_rec, &columns, &[Some(*high)]);
+      conn
+        .add_scan_range(scan, &numbered, &low_row, &high_row)
+        .expect("add a range");
+    }
+    let args = ScanArgs {
+      ordered,
+      descending,
+      batch_rows: 3,
+      timeout_ms: IC_IT_SCAN_WAIT_MS as u32,
+      ..ScanArgs::default()
+    };
+    let (rows, error) = index_rows(&mut conn, &t, scan, &args);
+    let what = format!("ordered {} desc {}", ordered, descending);
+    if let Some(e) = error {
+      faults.push(format!("{}: error {} {}", what, e.code, e.message()));
+      continue;
+    }
+    for fault in order_faults(&rows, &ranks, ordered, descending) {
+      faults.push(format!("{}: {}", what, fault));
+    }
+    // Each row came with the number of the range it is in.
+    for (id, range_no) in &rows {
+      let expected = numbers.get(id).copied().unwrap_or(-1);
+      if expected != *range_no as i64 {
+        faults.push(format!(
+          "{}: row {} in range {}, not {}",
+          what, id, range_no, expected
+        ));
+      }
+    }
+  }
+  assert!(faults.is_empty(), "{}", first_faults(faults));
+  // An ordered run's numbers must rise in the order the ranges came;
+  // the refused run leaves them for the next, an unordered one.
+  let low = bound_row(&t, &key_rec, &columns, &[Some("4")]);
+  for range_no in [4, 2] {
+    let range = ScanRange {
+      range_no,
+      ..ab(1, true, 1, true)
+    };
+    conn.add_scan_range(scan, &range, &low, &low).expect("add");
+  }
+  let ordered = ScanArgs {
+    ordered: true,
+    ..ScanArgs::default()
+  };
+  let e = conn.start_scan(scan, &ordered).expect_err("not rising");
+  assert_eq!(e.code, err::IC_ERROR_BAD_RANGE);
+  let (rows, error) = index_rows(&mut conn, &t, scan, &ScanArgs::default());
+  assert!(error.is_none(), "{:?}", error);
+  assert_eq!(
+    rows.len() as i64,
+    count_of(&format!(
+      "SELECT COUNT(*) FROM {}.rng WHERE a = 4",
+      IC_IT_DB
+    )) * 2,
+    "the rows of a = 4, once for each range"
+  );
+  // A number above 4095, or more columns than the index has.
+  let too_big = ScanRange {
+    range_no: 4096,
+    ..ab(1, true, 1, true)
+  };
+  let e = conn
+    .add_scan_range(scan, &too_big, &low, &low)
+    .expect_err("number too big");
+  assert_eq!(e.code, err::IC_ERROR_BAD_RANGE);
+  let e = conn
+    .add_scan_range(scan, &ab(3, true, 0, false), &low, &[])
+    .expect_err("too many columns");
+  assert_eq!(e.code, err::IC_ERROR_BAD_RANGE);
+  assert_eq!(conn.unexpected(), 0);
+}
+
+#[test]
+fn scan_index_pruned_to_one_partition() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_rng_table().is_none() {
+    return;
+  }
+  let sql = format!(
+    "DROP TABLE IF EXISTS {db}.rngd;
+     CREATE TABLE {db}.rngd (
+       k INT NOT NULL,
+       id INT NOT NULL,
+       v INT NOT NULL,
+       PRIMARY KEY (k, id),
+       KEY ix_kv (k, v)
+     ) ENGINE=NDB PARTITION BY KEY (k);
+     INSERT INTO {db}.rngd
+       WITH RECURSIVE seq (n) AS
+         (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 800)
+       SELECT n % 40, n, n % 13 FROM seq;",
+    db = IC_IT_DB
+  );
+  if mysql(&sql).is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("connection");
+  let t = bind(&mut conn, "rngd");
+  let fragments = t.def.info().fragment_count;
+  let index = conn
+    .index_bind(IC_IT_DB, "ix_kv", "rngd")
+    .expect("bind the ordered index");
+  let columns = ["k", "v"];
+  let key_rec = record_over(&t, &columns);
+  let scan = conn
+    .create_index_scan(&index, &key_rec, &t.rec)
+    .expect("create the index scan");
+  // Each case: its ranges as (k, v from, v to) with None for no bound
+  // on v, the condition, and whether the run is pruned.
+  struct Case {
+    ranges: &'static [(&'static str, Option<(&'static str, &'static str)>)],
+    filter: &'static str,
+    pruned: bool,
+  }
+  let cases = [
+    Case {
+      ranges: &[("5", None)],
+      filter: "k = 5",
+      pruned: true,
+    },
+    Case {
+      ranges: &[("5", Some(("2", "6")))],
+      filter: "k = 5 AND v BETWEEN 2 AND 6",
+      pruned: true,
+    },
+    Case {
+      ranges: &[("7", Some(("0", "2"))), ("7", Some(("10", "12")))],
+      filter: "k = 7 AND (v <= 2 OR v >= 10)",
+      pruned: true,
+    },
+  ];
+  let mut faults: Vec<String> = Vec::new();
+  for case in &cases {
+    let ranks = mysql_ranks("rngd", &rank_by("k, v"), case.filter);
+    for ordered in [false, true] {
+      // Each range numbered by its place.
+      let mut range_no: u32 = 0;
+      while (range_no as usize) < case.ranges.len() {
+        let (k, v) = case.ranges[range_no as usize];
+        let (range, low, high) = match v {
+          Some((from, to)) => (
+            ab(2, true, 2, true),
+            bound_row(&t, &key_rec, &columns, &[Some(k), Some(from)]),
+            bound_row(&t, &key_rec, &columns, &[Some(k), Some(to)]),
+          ),
+          None => {
+            let row = bound_row(&t, &key_rec, &columns, &[Some(k)]);
+            (ab(1, true, 1, true), row.clone(), row)
+          }
+        };
+        let numbered = ScanRange { range_no, ..range };
+        conn
+          .add_scan_range(scan, &numbered, &low, &high)
+          .expect("add a range");
+        range_no += 1;
+      }
+      let args = ScanArgs {
+        ordered,
+        batch_rows: 4,
+        timeout_ms: IC_IT_SCAN_WAIT_MS as u32,
+        ..ScanArgs::default()
+      };
+      let (rows, error) = index_rows(&mut conn, &t, scan, &args);
+      let what = format!("{} ordered {}", case.filter, ordered);
+      if let Some(e) = error {
+        faults.push(format!("{}: error {} {}", what, e.code, e.message()));
+        continue;
+      }
+      for fault in order_faults(&rows, &ranks, ordered, false) {
+        faults.push(format!("{}: {}", what, fault));
+      }
+      let parallelism = conn.scan(scan).expect("the scan").parallelism();
+      let expected = if case.pruned { 1 } else { fragments };
+      if parallelism != expected {
+        faults.push(format!("{}: {} receivers", what, parallelism));
+      }
+    }
+  }
+  // k from 5 to 6 fixes no partition: every fragment is scanned.
+  let low = bound_row(&t, &key_rec, &columns, &[Some("5")]);
+  let high = bound_row(&t, &key_rec, &columns, &[Some("6")]);
+  conn
+    .add_scan_range(scan, &ab(1, true, 1, true), &low, &high)
+    .expect("add a range");
+  let (rows, error) = index_rows(&mut conn, &t, scan, &ScanArgs::default());
+  assert!(error.is_none(), "{:?}", error);
+  let ranks = mysql_ranks("rngd", &rank_by("k, v"), "k BETWEEN 5 AND 6");
+  for fault in order_faults(&rows, &ranks, false, false) {
+    faults.push(format!("k from 5 to 6: {}", fault));
+  }
+  let parallelism = conn.scan(scan).expect("the scan").parallelism();
+  assert!(fragments < 2 || parallelism == fragments, "{}", parallelism);
+  assert!(faults.is_empty(), "{}", first_faults(faults));
+  conn.free_scan(scan).expect("free the scan");
+  // The table's own ordered index: each id alone finds its row, wherever
+  // the hash places it.
+  let r = bind(&mut conn, "rng");
+  let primary = conn
+    .index_bind(IC_IT_DB, "PRIMARY", "rng")
+    .expect("bind the primary key's ordered index");
+  let id_rec = record_over(&r, &["id"]);
+  let scan = conn
+    .create_index_scan(&primary, &id_rec, &r.rec)
+    .expect("create the index scan");
+  let mut id: i64 = 1;
+  while id <= 40 {
+    let text = id.to_string();
+    let row = bound_row(&r, &id_rec, &["id"], &[Some(text.as_str())]);
+    conn
+      .add_scan_range(scan, &ab(1, true, 1, true), &row, &row)
+      .expect("add a range");
+    let (rows, error) = index_rows(&mut conn, &r, scan, &ScanArgs::default());
+    assert!(error.is_none(), "id {}: {:?}", id, error);
+    assert_eq!(rows, vec![(id, 0)], "id {}", id);
+    assert_eq!(conn.scan(scan).expect("the scan").parallelism(), 1);
+    id += 1;
+  }
+  assert_eq!(conn.unexpected(), 0);
+}
+
+/// Check an ordered scan of each index `ix_<column>` of `table`, its key
+/// record over the column, both ways, against MySQL's `ORDER BY` of the
+/// column. The faults found, by column.
+fn ordered_faults(
+  conn: &mut ApidConnection,
+  t: &Table,
+  table: &str,
+  columns: &[&str],
+) -> Vec<String> {
+  let mut faults: Vec<String> = Vec::new();
+  for column in columns {
+    let name = format!("ix_{}", column);
+    let index = match conn.index_bind(IC_IT_DB, &name, table) {
+      Ok(index) => index,
+      Err(e) => {
+        faults.push(format!("{}: no index: {}", column, e.message()));
+        continue;
+      }
+    };
+    let key_rec = record_over(t, &[*column]);
+    let scan = conn
+      .create_index_scan(&index, &key_rec, &t.rec)
+      .expect("create the index scan");
+    let ranks = mysql_ranks(table, &rank_by(column), "TRUE");
+    for descending in [false, true] {
+      let args = ScanArgs {
+        ordered: true,
+        descending,
+        batch_rows: 3,
+        timeout_ms: IC_IT_SCAN_WAIT_MS as u32,
+        ..ScanArgs::default()
+      };
+      let (rows, error) = index_rows(conn, t, scan, &args);
+      let what = format!("{} desc {}", column, descending);
+      if let Some(e) = error {
+        faults.push(format!("{}: error {} {}", what, e.code, e.message()));
+        continue;
+      }
+      for fault in order_faults(&rows, &ranks, true, descending) {
+        faults.push(format!("{}: {}", what, fault));
+      }
+    }
+    conn.free_scan(scan).expect("free the scan");
+  }
+  faults
+}
+
+#[test]
+fn scan_index_ordered_by_every_type() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  let columns = [
+    "ti", "su", "mi", "i", "bi", "bu", "f", "d", "de", "bn", "vb", "dt", "tm",
+    "dtm", "ts", "yr",
+  ];
+  let mut keys = String::new();
+  for column in &columns {
+    keys.push_str(&format!(",\n KEY ix_{c} ({c})", c = column));
+  }
+  let sql = format!(
+    "CREATE DATABASE IF NOT EXISTS {db};
+     DROP TABLE IF EXISTS {db}.ordt;
+     CREATE TABLE {db}.ordt (
+       id INT NOT NULL PRIMARY KEY,
+       ti TINYINT, su SMALLINT UNSIGNED, mi MEDIUMINT, i INT,
+       bi BIGINT, bu BIGINT UNSIGNED, f FLOAT, d DOUBLE,
+       de DECIMAL(12,3), bn BINARY(4), vb VARBINARY(8),
+       dt DATE, tm TIME(2), dtm DATETIME(3), ts TIMESTAMP(1) NULL,
+       yr YEAR{keys}
+     ) ENGINE=NDB;
+     INSERT INTO {db}.ordt
+       WITH RECURSIVE seq (n) AS
+         (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 600)
+       SELECT n,
+         IF(n % 13 = 0, NULL, n * 37 % 255 - 127),
+         IF(n % 13 = 1, NULL, n * 7919 % 65536),
+         IF(n % 13 = 2, NULL, n * 7919 % 16000001 - 8000000),
+         IF(n % 13 = 3, NULL, n * 2654435761 % 4294967296 - 2147483648),
+         IF(n % 13 = 4, NULL,
+            (n * 2654435761 % 4294967296 - 2147483648) * 2147483647),
+         IF(n % 13 = 5, NULL,
+            CAST(n * 2654435761 % 4294967296 AS UNSIGNED) * 4294967291),
+         IF(n % 13 = 6, NULL, (n * 7919 % 2001 - 1000) / 7),
+         IF(n % 13 = 7, NULL, POW(10, n % 41 - 20) * (n % 7 - 3)),
+         IF(n % 13 = 8, NULL, (n * 7919 % 2000001 - 1000000) * 0.997),
+         IF(n % 13 = 9, NULL,
+            UNHEX(LPAD(HEX(n * 2654435761 % 4294967296), 8, '0'))),
+         IF(n % 13 = 10, NULL,
+            LEFT(UNHEX(LPAD(HEX(n * 40503 % 65536 * 65536 + n % 3), 8,
+                 '0')), n % 5)),
+         IF(n % 13 = 11, NULL,
+            DATE_ADD('1950-01-01', INTERVAL n * 7919 % 30000 DAY)),
+         IF(n % 13 = 12, NULL,
+            SEC_TO_TIME(n * 7919 % 200000 - 100000 + n % 100 / 100)),
+         IF(n % 17 = 0, NULL,
+            TIMESTAMPADD(MICROSECOND, n % 1000 * 1000,
+              DATE_ADD('1990-01-01 00:00:00',
+                       INTERVAL n * 104729 % 900000000 SECOND))),
+         IF(n % 17 = 1, NULL,
+            FROM_UNIXTIME(100000000 + n * 7919 % 1000000000 + n % 10 / 10)),
+         IF(n % 17 = 2, NULL, 1901 + n * 37 % 255)
+       FROM seq;",
+    db = IC_IT_DB,
+    keys = keys
+  );
+  if mysql(&sql).is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("connection");
+  let t = bind(&mut conn, "ordt");
+  let faults = ordered_faults(&mut conn, &t, "ordt", &columns);
+  assert!(faults.is_empty(), "{}", first_faults(faults));
+  assert_eq!(conn.unexpected(), 0);
+}
+
+/// Insert rows of `table` whose every column but the id holds the same
+/// string, given in hexadecimal and put through `wrap` (`{}` for the
+/// literal), ids from `first` up; and one row of NULLs after them.
+fn insert_strings(
+  table: &str,
+  columns: usize,
+  first: i64,
+  hex: &[String],
+  wrap: &str,
+) -> Option<()> {
+  let mut values: Vec<String> = Vec::new();
+  let mut id = first;
+  for bytes in hex {
+    let literal = wrap.replace("{}", &format!("X'{}'", bytes));
+    let mut row = id.to_string();
+    let mut i: usize = 0;
+    while i < columns {
+      row.push_str(", ");
+      row.push_str(&literal);
+      i += 1;
+    }
+    values.push(format!("({})", row));
+    id += 1;
+  }
+  let mut nulls = id.to_string();
+  let mut i: usize = 0;
+  while i < columns {
+    nulls.push_str(", NULL");
+    i += 1;
+  }
+  values.push(format!("({})", nulls));
+  mysql(&format!(
+    "INSERT INTO {}.{} VALUES {};",
+    IC_IT_DB,
+    table,
+    values.join(", ")
+  ))?;
+  Some(())
+}
+
+/// Strings that sort apart in some collations and together in others:
+/// case, accents, the German and Danish letters and their spellings,
+/// trailing spaces and a tab, which comes before a space.
+const IC_IT_LATIN1_WORDS: [&str; 33] = [
+  "7373", "DF", "6165", "E4", "4145", "C4", "6F65", "F6", "7565", "FC", "6161",
+  "E5", "6368", "6120", "2061", "", "6109", "7A7A", "5A7A", "4141", "C5", "6E",
+  "F1", "6F", "6E6E", "4C4C", "6C6C", "41E4", "E4E4", "61626364", "41424344",
+  "6162", "FF41",
+];
+
+#[test]
+fn scan_index_ordered_by_each_latin1_collation() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  let columns: [(&str, &str); 11] = [
+    (
+      "c_sw",
+      "CHAR(4) CHARACTER SET latin1 COLLATE latin1_swedish_ci",
+    ),
+    (
+      "c_g1",
+      "CHAR(4) CHARACTER SET latin1 COLLATE latin1_german1_ci",
+    ),
+    (
+      "c_da",
+      "CHAR(4) CHARACTER SET latin1 COLLATE latin1_danish_ci",
+    ),
+    (
+      "c_g2",
+      "CHAR(4) CHARACTER SET latin1 COLLATE latin1_german2_ci",
+    ),
+    ("c_bin", "CHAR(4) CHARACTER SET latin1 COLLATE latin1_bin"),
+    (
+      "c_gci",
+      "CHAR(4) CHARACTER SET latin1 COLLATE latin1_general_ci",
+    ),
+    (
+      "c_gcs",
+      "CHAR(4) CHARACTER SET latin1 COLLATE latin1_general_cs",
+    ),
+    (
+      "c_sp",
+      "CHAR(4) CHARACTER SET latin1 COLLATE latin1_spanish_ci",
+    ),
+    (
+      "v_sw",
+      "VARCHAR(4) CHARACTER SET latin1 COLLATE latin1_swedish_ci",
+    ),
+    (
+      "v_g2",
+      "VARCHAR(4) CHARACTER SET latin1 COLLATE latin1_german2_ci",
+    ),
+    (
+      "v_bin",
+      "VARCHAR(4) CHARACTER SET latin1 COLLATE latin1_bin",
+    ),
+  ];
+  let mut defs = String::new();
+  let mut keys = String::new();
+  let mut names: Vec<&str> = Vec::new();
+  for (name, def) in &columns {
+    defs.push_str(&format!(",\n {} {}", name, def));
+    keys.push_str(&format!(",\n KEY ix_{c} ({c})", c = name));
+    names.push(*name);
+  }
+  let sql = format!(
+    "CREATE DATABASE IF NOT EXISTS {db};
+     DROP TABLE IF EXISTS {db}.ordl;
+     CREATE TABLE {db}.ordl (
+       id INT NOT NULL PRIMARY KEY{defs}{keys}
+     ) ENGINE=NDB;",
+    db = IC_IT_DB,
+    defs = defs,
+    keys = keys
+  );
+  if mysql(&sql).is_none() {
+    return;
+  }
+  // Every byte but 0 alone, then the words.
+  let mut hex: Vec<String> = Vec::new();
+  let mut byte: u32 = 1;
+  while byte <= 0xFF {
+    hex.push(format!("{:02X}", byte));
+    byte += 1;
+  }
+  for word in &IC_IT_LATIN1_WORDS {
+    hex.push(word.to_string());
+  }
+  if insert_strings("ordl", columns.len(), 1, &hex, "{}").is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("connection");
+  let t = bind(&mut conn, "ordl");
+  let faults = ordered_faults(&mut conn, &t, "ordl", &names);
+  assert!(faults.is_empty(), "{}", first_faults(faults));
+  // A range in a collation's order: from 'ae' up to but not 'b' in
+  // latin1_german2_ci, where 'ä' is 'ae'.
+  let index = conn
+    .index_bind(IC_IT_DB, "ix_c_g2", "ordl")
+    .expect("bind the index");
+  let key_rec = record_over(&t, &["c_g2"]);
+  let scan = conn
+    .create_index_scan(&index, &key_rec, &t.rec)
+    .expect("create the index scan");
+  let low = bound_row(&t, &key_rec, &["c_g2"], &[Some("ae")]);
+  let high = bound_row(&t, &key_rec, &["c_g2"], &[Some("b")]);
+  conn
+    .add_scan_range(scan, &ab(1, true, 1, false), &low, &high)
+    .expect("add the range");
+  let args = ScanArgs {
+    ordered: true,
+    ..ScanArgs::default()
+  };
+  let (rows, error) = index_rows(&mut conn, &t, scan, &args);
+  assert!(error.is_none(), "{:?}", error);
+  let ranks =
+    mysql_ranks("ordl", &rank_by("c_g2"), "c_g2 >= 'ae' AND c_g2 < 'b'");
+  let faults = order_faults(&rows, &ranks, true, false);
+  assert!(faults.is_empty(), "{}", first_faults(faults));
+  assert_eq!(conn.unexpected(), 0);
+}
+
+/// Strings in UTF-8, in hexadecimal: Latin letters with their cases and
+/// accents, the German sharp s and its capital, ligatures, Greek and
+/// Cyrillic, kana and Han characters, emoji, digits, punctuation, and
+/// trailing spaces and a tab.
+const IC_IT_UTF8_WORDS: [&str; 45] = [
+  "61", "41", "C3A1", "C381", "C3A0", "62", "42", "C39F", "7373", "5353",
+  "E1BA9E", "C3A6", "6165", "C386", "7A", "5A", "C3A4", "65", "C3A9", "45",
+  "C3AA", "F09F9880", "F09F9881", "E4B8AD", "E697A5", "E38182", "E382A2",
+  "6120", "612020", "2061", "", "6161", "6142", "4162", "6162", "6109", "C5A0",
+  "73", "CEB1", "D0B0", "31", "39", "2D", "5F", "E282AC",
+];
+
+#[test]
+fn scan_index_ordered_by_unicode_collations() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  let columns: [(&str, &str); 6] = [
+    (
+      "v_ai",
+      "VARCHAR(8) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci",
+    ),
+    (
+      "v_as",
+      "VARCHAR(8) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_as_cs",
+    ),
+    (
+      "v_ub",
+      "VARCHAR(8) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin",
+    ),
+    (
+      "v_bin",
+      "VARCHAR(8) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin",
+    ),
+    (
+      "v_gen",
+      "VARCHAR(8) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci",
+    ),
+    (
+      "c_ai",
+      "CHAR(4) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci",
+    ),
+  ];
+  let mut defs = String::new();
+  let mut keys = String::new();
+  let mut names: Vec<&str> = Vec::new();
+  for (name, def) in &columns {
+    defs.push_str(&format!(",\n {} {}", name, def));
+    keys.push_str(&format!(",\n KEY ix_{c} ({c})", c = name));
+    names.push(*name);
+  }
+  let sql = format!(
+    "CREATE DATABASE IF NOT EXISTS {db};
+     DROP TABLE IF EXISTS {db}.ordu;
+     CREATE TABLE {db}.ordu (
+       id INT NOT NULL PRIMARY KEY{defs}{keys}
+     ) ENGINE=NDB;",
+    db = IC_IT_DB,
+    defs = defs,
+    keys = keys
+  );
+  if mysql(&sql).is_none() {
+    return;
+  }
+  let mut hex: Vec<String> = Vec::new();
+  for word in &IC_IT_UTF8_WORDS {
+    hex.push(word.to_string());
+  }
+  let wrap = "CONVERT({} USING utf8mb4)";
+  if insert_strings("ordu", columns.len(), 1, &hex, wrap).is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("connection");
+  let t = bind(&mut conn, "ordu");
+  let faults = ordered_faults(&mut conn, &t, "ordu", &names);
+  assert!(faults.is_empty(), "{}", first_faults(faults));
+  assert_eq!(conn.unexpected(), 0);
+}
+
+#[test]
+fn scan_index_rows_taken_over_are_updated() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_rng_table().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("connection");
+  let t = bind(&mut conn, "rng");
+  let (_, key_rec, scan) = ab_scan(&mut conn, &t);
+  // Queries whose update writes v alone.
+  let id_rec = record_over(&t, &["id"]);
+  let v_rec = record_over(&t, &["id", "v"]);
+  let mut free: Vec<QueryId> = Vec::new();
+  while free.len() < 300 {
+    free.push(conn.create_query(&t.def, &id_rec, &v_rec).expect("a query"));
+  }
+  let all = free.len();
+  let tid = conn
+    .start_transaction(TransactionHint::Any, Some(&t.def))
+    .expect("start a transaction");
+  let low = bound_row(&t, &key_rec, &["a"], &[Some("10")]);
+  let high = bound_row(&t, &key_rec, &["a"], &[Some("19")]);
+  conn
+    .add_scan_range(scan, &ab(1, true, 1, true), &low, &high)
+    .expect("add the range");
+  let args = ScanArgs {
+    lock: ScanLock::Exclusive,
+    trans: Some(tid),
+    ordered: true,
+    batch_rows: 10,
+    timeout_ms: IC_IT_SCAN_WAIT_MS as u32,
+    ..ScanArgs::default()
+  };
+  conn.start_scan(scan, &args).expect("start the scan");
+  let mut rows: i64 = 0;
+  while conn.next_row(scan).expect("a row") {
+    rows += 1;
+    take_back(&mut conn, &mut free);
+    let qid = free.pop().expect("a free query");
+    let query = conn.query_mut(qid).expect("the query");
+    put_into(&t, &v_rec, query.attr_row_mut(), "v", "-1");
+    conn
+      .update_scan_row(qid, scan, &TakeoverArgs::default())
+      .expect("take the row over to update it");
+  }
+  assert!(conn.scan(scan).expect("the scan").error().is_none());
+  let _ = conn.send_queries(true);
+  let start = time::gethrtime();
+  while free.len() < all {
+    let _ = conn.flush(100, true);
+    take_back(&mut conn, &mut free);
+    let waited = time::millis_elapsed(start, time::gethrtime());
+    assert!(waited < IC_IT_SCAN_WAIT_MS, "the takeovers did not end");
+  }
+  conn.commit_transaction(tid).expect("commit");
+  assert_eq!(finish(&mut conn, tid), CommitState::Committed);
+  conn.close_transaction(tid).expect("close");
+  let db = IC_IT_DB;
+  let in_range = count_of(&format!(
+    "SELECT COUNT(*) FROM {}.rng WHERE a BETWEEN 10 AND 19",
+    db
+  ));
+  assert_eq!(rows, in_range);
+  let updated = count_of(&format!(
+    "SELECT COUNT(*) FROM {}.rng WHERE v = -1 AND a BETWEEN 10 AND 19",
+    db
+  ));
+  assert_eq!(updated, in_range, "every row of the range updated");
+  let others =
+    count_of(&format!("SELECT COUNT(*) FROM {}.rng WHERE v = -1", db));
+  assert_eq!(others, in_range, "and no other");
+  assert_eq!(conn.unexpected(), 0);
+}
+
+/// A scan's callback that is never called: an ordered run with one is
+/// refused.
+fn never_called(_: &mut ApidConnection, _: ScanBatchId, _: usize) {}
+
+#[test]
+fn scan_index_refusals() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_rng_table().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("connection");
+  let t = bind(&mut conn, "rng");
+  let not_supported = err::IC_ERROR_NOT_SUPPORTED;
+  // A unique hash index has no order to scan.
+  let unique = bind_unique_index(&mut conn, "uk_u", "rng");
+  let u_rec = record_over(&t, &["u"]);
+  let e = conn
+    .create_index_scan(&unique, &u_rec, &t.rec)
+    .expect_err("a hash index");
+  assert_eq!(e.code, not_supported);
+  // A key record without every column of the index.
+  let index = conn.index_bind(IC_IT_DB, "ix_ab", "rng").expect("bind");
+  let a_rec = record_over(&t, &["a"]);
+  let e = conn
+    .create_index_scan(&index, &a_rec, &t.rec)
+    .expect_err("b is missing");
+  assert_eq!(e.code, err::IC_ERROR_KEY_RECORD);
+  // A table scan takes no range and has no order.
+  let table_scan = conn.create_scan(&t.def, &t.rec).expect("a table scan");
+  let e = conn
+    .add_scan_range(table_scan, &ab(0, false, 0, false), &[], &[])
+    .expect_err("a table scan");
+  assert_eq!(e.code, not_supported);
+  let ordered = ScanArgs {
+    ordered: true,
+    ..ScanArgs::default()
+  };
+  let e = conn.start_scan(table_scan, &ordered).expect_err("no order");
+  assert_eq!(e.code, not_supported);
+  // An ordered run needs every index column in the rows it reads; an
+  // unordered one does not.
+  let key_rec = record_over(&t, &["a", "b"]);
+  let narrow = record_over(&t, &["id"]);
+  let scan = conn
+    .create_index_scan(&index, &key_rec, &narrow)
+    .expect("an index scan reading the id alone");
+  let e = conn.start_scan(scan, &ordered).expect_err("no a or b read");
+  assert_eq!(e.code, err::IC_ERROR_KEY_RECORD);
+  let (rows, error) = index_rows(&mut conn, &t, scan, &ScanArgs::default());
+  assert!(error.is_none(), "{:?}", error);
+  assert_eq!(rows.len() as i64, IC_IT_RNG_ROWS);
+  // An ordered run is read only row by row.
+  let (_, _, scan) = ab_scan(&mut conn, &t);
+  let with_callback = ScanArgs {
+    ordered: true,
+    callback: Some(never_called),
+    ..ScanArgs::default()
+  };
+  let e = conn
+    .start_scan(scan, &with_callback)
+    .expect_err("a callback");
+  assert_eq!(e.code, not_supported);
+  conn.start_scan(scan, &ordered).expect("start");
+  let e = conn.next_batch(scan).expect_err("batches are merged");
+  assert_eq!(e.code, not_supported);
+  // Read a few rows, then close it. Its batches went on no ready list.
+  let mut read: u32 = 0;
+  while read < 10 && conn.next_row(scan).expect("a row") {
+    read += 1;
+  }
+  assert_eq!(read, 10);
+  assert!(conn.get_next_scan_batch().is_none(), "on no ready list");
+  conn.close_scan(scan).expect("close");
+  assert!(!conn.next_row(scan).expect("closed"));
+  assert!(conn.scan(scan).expect("the scan").error().is_none());
   assert_eq!(conn.unexpected(), 0);
 }

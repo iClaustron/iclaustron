@@ -327,6 +327,29 @@ pub fn unpack_row(
   Ok(1 + mask_words + used / 4)
 }
 
+/// The value at `position` of `row`, a row laid out by `rec`, as a
+/// request carries it: a fixed-size one in full, a variable-sized one
+/// behind its length bytes with only the bytes it has; none for NULL.
+pub(crate) fn field_value<'a>(
+  rec: &Record,
+  position: u32,
+  row: &'a [u8],
+) -> Result<Option<&'a [u8]>, IcError> {
+  if row.len() < rec.row_size() as usize {
+    return Err(IcError::new(err::IC_ERROR_RECORD_LAYOUT));
+  }
+  if rec.is_null(row, position) {
+    return Ok(None);
+  }
+  let (attr, field) = match field_at(rec, position) {
+    Some(found) => found,
+    None => return Err(IcError::new(err::IC_ERROR_KEY_RECORD)),
+  };
+  let start = field.offset() as usize;
+  let len = value_len(attr, field, &row[start..])?;
+  Ok(Some(&row[start..start + len]))
+}
+
 /// How many bytes of `value` belong to the field: its full size if
 /// fixed, or its length bytes and the length they say.
 fn value_len(

@@ -704,21 +704,25 @@ fn fetch_table(
 
 /// By attribute place, the collations of the character columns a key
 /// is hashed through: a table's distribution key columns, or with
-/// `of_index` an index's own key columns. Each is fetched with its
-/// weights the first time any thread needs it, and kept. One that
-/// cannot be fetched, or whose keys its weights cannot place, leaves
-/// its column without one, and such a key is placed in turn: a hop, not
-/// a wrong answer (chapter 06 §8.6).
+/// `of_index` an index's own key columns; and every character column of
+/// an ordered index, whose rows a range scan merges in their order
+/// (chapter 06 §8.7). Each is fetched with its weights the first time
+/// any thread needs it, and kept. One that cannot be fetched, or whose
+/// weights cannot place keys, leaves its column without one: such a
+/// key is placed in turn, a hop and not a wrong answer (chapter 06
+/// §8.6), and such an index's rows are not merged.
 fn key_collations(
   cache: &DictCache,
   conn: &mut ApidConnection,
   info: &TableProps,
   of_index: bool,
 ) -> Vec<Option<Arc<CollationMap>>> {
+  let ordered =
+    of_index && info.table_kind == table_props::IC_OBJECT_KIND_ORDERED_INDEX;
   let mut out: Vec<Option<Arc<CollationMap>>> = Vec::new();
   for attr in &info.attributes {
     let hashed = if of_index {
-      attr.primary_key
+      attr.primary_key || ordered
     } else {
       attr.distribution_key
     };

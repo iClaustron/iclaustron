@@ -35,6 +35,16 @@
 //! moves from the scan to the transaction. The batch's receiver asks for
 //! more only once every takeover of the batch is done, confirmed or
 //! failed, since asking releases the batch's locks (chapter 05 §7.2).
+//!
+//! **A scan of an ordered index** (phase 8.7) reads the ranges added
+//! before its run ([`index_scan`](crate::index_scan)), and an ordered
+//! run merges its receivers' rows in the index's order: every fragment
+//! has a receiver, and the merge needs a row or the end from each
+//! before it gives one. Each receiver's next row is unpacked once, with
+//! its order key ([`IndexOrder`]) and its range number, and the row
+//! that comes first is taken. A receiver whose batch is used up is
+//! handed back, and the merge waits for its next batch, as the
+//! reference's does (chapter 05 §7.2).
 
 use std::sync::Arc;
 
@@ -42,6 +52,7 @@ use ic_port::debug::IC_NDB_MESSAGE_LEVEL;
 use ic_port::err;
 use ic_port::IcError;
 use ic_signals::blocks;
+use ic_signals::column_header;
 use ic_signals::coord_alloc::IC_ANY_COORD_INSTANCE;
 use ic_signals::header::SignalHeader;
 use ic_signals::key_ops;
@@ -63,7 +74,11 @@ use crate::apid_conn::coord_index_of;
 use crate::apid_conn::ApidConnection;
 use crate::apid_conn::CoordRecord;
 use crate::apid_conn::IC_CALL_SLICE_MS;
+use crate::dict_cache::IndexDef;
 use crate::dict_cache::TableDef;
+use crate::index_order::IndexOrder;
+use crate::index_scan::IndexScan;
+use crate::index_scan::ScanRange;
 use crate::node_connect::SignalView;
 use crate::query::AbortOption;
 use crate::query::QueryCallback;
@@ -186,6 +201,12 @@ pub struct ScanArgs {
   pub batch_bytes: u32,
   /// Scan this partition only, by its id.
   pub partition: Option<u32>,
+  /// For a scan of an ordered index: the rows in the index's order,
+  /// merged from every fragment, read with `next_row` (chapter 04,
+  /// "Index scans").
+  pub ordered: bool,
+  /// For a scan of an ordered index: from the high end of each range.
+  pub descending: bool,
   /// Close the scan with `IC_ERROR_TIMEOUT` if it is still running this
   /// long after it was started, in milliseconds; 0 for no limit.
   pub timeout_ms: u32,
@@ -315,7 +336,16 @@ pub(crate) struct Receiver {
   /// Takeovers of rows of the batch not yet done; the receiver asks for
   /// more only once there are none.
   takeovers: u32,
+  /// For an ordered run's merge: the row `head_at`, unpacked, with its
+  /// order key and range number; `IC_NO_HEAD` when none is.
+  head_at: u32,
+  head_row: Vec<u8>,
+  head_key: Vec<u8>,
+  head_range: u32,
 }
+
+/// No row of the receiver's batch is unpacked for the merge.
+const IC_NO_HEAD: u32 = u32::MAX;
 
 impl Receiver {
   /// Ready for the next batch, its buffers kept.
@@ -331,6 +361,23 @@ impl Receiver {
     self.keys.clear();
     self.key_ends.clear();
     self.key_rows.clear();
+    self.head_at = IC_NO_HEAD;
+  }
+
+  /// Where the row `at` of the batch starts and ends in `rows`.
+  fn row_span(&self, at: usize) -> (usize, usize) {
+    let mut start: usize = 0;
+    if at > 0 {
+      start = self.row_ends[at - 1] as usize;
+    }
+    (start, self.row_ends[at] as usize)
+  }
+
+  /// True if the batch is with the application and has a row not yet
+  /// read.
+  fn has_row(&self) -> bool {
+    self.state == ReceiverState::Ready
+      && (self.next_row as usize) < self.row_ends.len()
   }
 }
 
@@ -382,6 +429,16 @@ pub struct Scan {
   /// The receiver, by place and id, whose batch the row last read came
   /// from: the row a takeover acts on.
   last_read: Option<(u32, u32)>,
+  /// For a scan of an ordered index: its ranges and order.
+  index: Option<IndexScan>,
+  /// The run merges its receivers' rows in the index's order.
+  ordered: bool,
+  /// The run reads each range from its high end.
+  descending: bool,
+  /// The run reads each row's range number.
+  reads_range_no: bool,
+  /// The range number of the row last read.
+  range_no: u32,
 }
 
 impl std::fmt::Debug for Scan {
@@ -436,7 +493,80 @@ impl Scan {
       rows_read: 0,
       reading: None,
       last_read: None,
+      index: None,
+      ordered: false,
+      descending: false,
+      reads_range_no: false,
+      range_no: 0,
     })
+  }
+
+  /// A scan of `index`, an ordered index, its ranges laid out by
+  /// `key_rec` and its rows read into `rec`, both over the index's
+  /// table (chapter 04, "Index scans").
+  pub fn new_index(
+    index: &Arc<IndexDef>,
+    key_rec: &Record,
+    rec: &Record,
+  ) -> Result<Scan, IcError> {
+    let mut scan = Scan::new(index.table(), rec)?;
+    scan.index = Some(IndexScan::new(index, key_rec, rec, &scan.read_part)?);
+    Ok(scan)
+  }
+
+  /// The ordered index it scans, if it scans one.
+  pub fn index(&self) -> Option<&Arc<IndexDef>> {
+    let index = self.index.as_ref()?;
+    Some(index.index())
+  }
+
+  /// The number of the range the row last read is in.
+  pub fn range_no(&self) -> u32 {
+    self.range_no
+  }
+
+  /// The number of every row of a run with one range.
+  fn single_range_no(&self) -> u32 {
+    match &self.index {
+      Some(index) => index.run.first_no,
+      None => 0,
+    }
+  }
+
+  /// Refuse what a run of this scan cannot be started with: an order
+  /// on a table scan; for an ordered run, a callback, an index whose
+  /// order is not known here, or ranges whose numbers do not rise.
+  fn check_run(&self, args: &ScanArgs) -> Result<(), IcError> {
+    let index = match &self.index {
+      Some(index) => index,
+      None => {
+        if args.ordered || args.descending {
+          return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
+        }
+        return Ok(());
+      }
+    };
+    if !args.ordered {
+      return Ok(());
+    }
+    if args.callback.is_some() {
+      return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
+    }
+    if let Err(e) = &index.order {
+      return Err(*e);
+    }
+    index.check_run(true)
+  }
+
+  /// The partition every range added for the next run is in, if they
+  /// are all in one.
+  fn pruned_partition(&self) -> Option<u32> {
+    let index = self.index.as_ref()?;
+    let pending = index.pending();
+    if pending.count > 0 && pending.pruned {
+      return Some(pending.partition);
+    }
+    None
   }
 
   /// The table it scans.
@@ -482,6 +612,12 @@ impl Scan {
   /// Rows read from the run's batches so far.
   pub fn rows_read(&self) -> u64 {
     self.rows_read
+  }
+
+  /// Fragments the last run scanned at once, a receiver each: one for a
+  /// run of one partition.
+  pub fn parallelism(&self) -> u32 {
+    self.used
   }
 
   /// The transaction its rows may be taken over into.
@@ -552,11 +688,16 @@ impl Scan {
   /// set 11; shared locks 10, and 12 for keys when the rows may be taken
   /// over; exclusive locks 8, 10 and 12, as the data node requires keys
   /// with them. Every table scan goes in storage order, as the
-  /// reference's do, and asks for the extended confirmation.
+  /// reference's do; a scan of an ordered index sets 15 instead, and 14
+  /// to read from the high end. Every scan asks for the extended
+  /// confirmation.
   fn flags(&self) -> ScanFlags {
+    let of_index = self.index.is_some();
     let mut flags = ScanFlags {
       no_disk: !self.reads_disk(),
-      storage_order: true,
+      storage_order: !of_index,
+      range: of_index,
+      descending: self.descending,
       batch_rows: scans::batch_rows_field(self.batch_rows),
       dist_key: self.partition.is_some(),
       extended_conf: true,
@@ -622,17 +763,75 @@ fn batch_size(
   (rows, bytes)
 }
 
-/// How many fragments a run scans at once: one for a partition, else
-/// the scan's own, at most the table's fragments.
-fn parallelism_of(args: &ScanArgs, fragments: u32) -> u32 {
-  if args.partition.is_some() {
+/// How many fragments a run scans at once: one for a partition, every
+/// fragment for an ordered run, which merges them all, else the scan's
+/// own, at most the table's fragments.
+fn parallelism_of(args: &ScanArgs, fragments: u32, one_partition: bool) -> u32 {
+  if one_partition {
     return 1;
   }
-  let fragments = fragments.max(1);
-  if args.parallelism == 0 || args.parallelism > fragments {
-    return fragments;
+  let all = fragments.max(1);
+  if args.ordered || args.parallelism == 0 || args.parallelism > all {
+    return all;
   }
   args.parallelism
+}
+
+/// A row's words with its range number taken off the front, for a run
+/// that reads it; else the words and the number of the run's one range.
+fn split_range_no(
+  words: &[u32],
+  reads: bool,
+  single_no: u32,
+) -> Result<(u32, &[u32]), IcError> {
+  if !reads {
+    return Ok((single_no, words));
+  }
+  let numbered = words.len() >= 2
+    && column_header::column_id(words[0]) == scans::IC_COL_RANGE_NO;
+  if !numbered {
+    return Err(IcError::new(err::IC_ERROR_INCONSISTENT_DATA));
+  }
+  Ok((words[1], &words[2..]))
+}
+
+/// Unpack the receiver's next row into its head for the merge, with its
+/// order key and range number, unless it is there already.
+fn fill_head(
+  rec: &Record,
+  order: &IndexOrder,
+  reads_range_no: bool,
+  single_no: u32,
+  receiver: &mut Receiver,
+) -> Result<(), IcError> {
+  let at = receiver.next_row;
+  if receiver.head_at == at {
+    return Ok(());
+  }
+  let size = rec.row_size() as usize;
+  if receiver.head_row.len() != size {
+    receiver.head_row.resize(size, 0);
+  }
+  let (start, end) = receiver.row_span(at as usize);
+  let (range_no, words) =
+    split_range_no(&receiver.rows[start..end], reads_range_no, single_no)?;
+  row_codec::unpack_row(rec, words, &mut receiver.head_row)?;
+  order.key_into(rec, &receiver.head_row, &mut receiver.head_key)?;
+  receiver.head_range = range_no;
+  receiver.head_at = at;
+  Ok(())
+}
+
+/// True if receiver `a`'s head row comes before `b`'s: by range number,
+/// then by order key, the keys reversed for a run from the high end.
+fn comes_before(a: &Receiver, b: &Receiver, descending: bool) -> bool {
+  if a.head_range != b.head_range {
+    return a.head_range < b.head_range;
+  }
+  if descending {
+    return a.head_key > b.head_key;
+  }
+  a.head_key < b.head_key
 }
 
 impl ApidConnection {
@@ -647,6 +846,54 @@ impl ApidConnection {
   ) -> Result<ScanId, IcError> {
     let scan = Scan::new(table, rec)?;
     Ok(ScanId(self.scans.insert(scan)?))
+  }
+
+  /// A scan of an ordered index (chapter 04, "Index scans"): its ranges
+  /// laid out by `key_rec`, which must hold every column of the index,
+  /// and its rows read into its row by `rec`, both over the index's
+  /// table. Refused for an index that is not ordered
+  /// (`IC_ERROR_NOT_SUPPORTED`). It lives in the connection until freed.
+  pub fn create_index_scan(
+    &mut self,
+    index: &Arc<IndexDef>,
+    key_rec: &Record,
+    rec: &Record,
+  ) -> Result<ScanId, IcError> {
+    let scan = Scan::new_index(index, key_rec, rec)?;
+    Ok(ScanId(self.scans.insert(scan)?))
+  }
+
+  /// Add a range to the next run of a scan of an ordered index, its
+  /// bounds taken from `low` and `high`, rows laid out by the scan's key
+  /// record; a row a bound does not use may be empty. The range is
+  /// encoded at once and the rows are not kept. Refused with
+  /// `IC_ERROR_BAD_RANGE` for a number above 4095, more columns than the
+  /// index has, or bounds too long to send, and on a table scan with
+  /// `IC_ERROR_NOT_SUPPORTED`.
+  pub fn add_scan_range(
+    &mut self,
+    id: ScanId,
+    range: &ScanRange,
+    low: &[u8],
+    high: &[u8],
+  ) -> Result<(), IcError> {
+    let scan = match self.scans.get_mut(id.0) {
+      Some(scan) => scan,
+      None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
+    };
+    match &mut scan.index {
+      Some(index) => index.add_range(range, low, high),
+      None => Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED)),
+    }
+  }
+
+  /// The number of the range the scan's row last read is in; 0 if the
+  /// id names no scan.
+  pub fn scan_range_no(&self, id: ScanId) -> u32 {
+    match self.scans.get(id.0) {
+      Some(scan) => scan.range_no,
+      None => 0,
+    }
   }
 
   /// A scan, if the id names one.
@@ -693,15 +940,25 @@ impl ApidConnection {
     id: ScanId,
     args: &ScanArgs,
   ) -> Result<(), IcError> {
-    let (fragments, table) = match self.scans.get(id.0) {
+    let (fragments, table, pruned) = match self.scans.get(id.0) {
       Some(scan) => {
         if scan.is_running() {
           return Err(IcError::new(err::IC_ERROR_SCAN_ACTIVE));
         }
-        (scan.table.info().fragment_count, Arc::clone(&scan.table))
+        scan.check_run(args)?;
+        (
+          scan.table.info().fragment_count,
+          Arc::clone(&scan.table),
+          scan.pruned_partition(),
+        )
       }
       None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
     };
+    // A partition named wins over one the ranges fix.
+    let mut partition = args.partition;
+    if partition.is_none() {
+      partition = pruned;
+    }
     if args.read_ahead {
       // The application holds each batch and hands it back itself.
       return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
@@ -730,8 +987,8 @@ impl ApidConnection {
       }
       None => {
         let mut hint = TransactionHint::Any;
-        if let Some(partition) = args.partition {
-          hint = TransactionHint::Partition(partition);
+        if let Some(one) = partition {
+          hint = TransactionHint::Partition(one);
         }
         let mut started = std::mem::take(&mut self.started_scratch);
         self.shared.started_nodes_into(&mut started);
@@ -741,7 +998,7 @@ impl ApidConnection {
         (chosen?, self.next_transaction_id())
       }
     };
-    let parallelism = parallelism_of(args, fragments);
+    let parallelism = parallelism_of(args, fragments, partition.is_some());
     let (batch_rows, batch_bytes) = batch_size(
       args,
       parallelism,
@@ -806,7 +1063,15 @@ impl ApidConnection {
       scan.trans_id = trans_id;
       scan.node_id = node_id;
       scan.instance = instance;
-      scan.partition = args.partition;
+      scan.partition = partition;
+      scan.ordered = args.ordered;
+      scan.descending = args.descending;
+      scan.range_no = 0;
+      scan.reads_range_no = false;
+      if let Some(index) = &mut scan.index {
+        index.take_ranges();
+        scan.reads_range_no = index.run.count > 1;
+      }
       scan.batch_rows = batch_rows;
       scan.batch_bytes = batch_bytes;
       scan.record = None;
@@ -850,6 +1115,8 @@ impl ApidConnection {
     let mut words = std::mem::take(&mut self.scan_words);
     let mut columns = std::mem::take(&mut self.scan_columns);
     let mut ids = std::mem::take(&mut self.scan_receiver_ids);
+    let mut bounds = std::mem::take(&mut self.scan_bounds);
+    bounds.clear();
     let queued = match self.scans.get_mut(id.0) {
       Some(scan) => {
         scan.record = Some(rec);
@@ -858,11 +1125,24 @@ impl ApidConnection {
         if scan.partition.is_some() {
           word5 |= scans::IC_SCAN_WORD5_PARTITION_ID;
         }
+        // A scan of an ordered index names the index, and reads the
+        // range numbers first when it has several ranges.
+        let mut table_id = scan.table.table_id();
+        let mut table_version = scan.table.table_version();
+        let mut read: &[u32] = &scan.read_part;
+        if let Some(index) = &scan.index {
+          table_id = index.index().index_id();
+          table_version = index.index().index_version();
+          if scan.reads_range_no {
+            read = &index.read_part_ranged;
+          }
+          bounds.extend_from_slice(&index.run.bounds);
+        }
         let request = ScanReq {
           coord_ptr: rec.coord_ptr,
           flags_word: scan.flags().flags_word(),
-          table_id: scan.table.table_id(),
-          table_version: scan.table.table_version(),
+          table_id,
+          table_version,
           word5,
           trans_id_lo: scan.trans_id as u32,
           trans_id_hi: (scan.trans_id >> 32) as u32,
@@ -874,7 +1154,7 @@ impl ApidConnection {
         let encoded = request.encode();
         words.clear();
         words.extend_from_slice(&encoded[..request.len()]);
-        scans::column_section_into(&scan.read_part, &[], &[], &mut columns);
+        scans::column_section_into(read, &[], &[], &mut columns);
         ids.clear();
         let mut place: usize = 0;
         while place < scan.used as usize {
@@ -892,13 +1172,18 @@ impl ApidConnection {
         self.block_number(),
         rec.coord_block,
       );
-      let sections: [&[u32]; 2] = [&ids, &columns];
+      // Section 2, the bounds, only for a scan of an index.
+      let all: [&[u32]; 3] = [&ids, &columns, &bounds];
+      let mut sections: &[&[u32]] = &all;
+      if bounds.is_empty() {
+        sections = &all[..2];
+      }
       let sent = self.queue_signal_for_generation(
         rec.node_id,
         rec.generation,
         &header,
         &words,
-        &sections,
+        sections,
       );
       self.scan_send_due = true;
       if let Err(e) = sent {
@@ -918,6 +1203,7 @@ impl ApidConnection {
     self.scan_words = words;
     self.scan_columns = columns;
     self.scan_receiver_ids = ids;
+    self.scan_bounds = bounds;
   }
 
   /// Note the scan running on the record at `index`, or none.
@@ -973,34 +1259,7 @@ impl ApidConnection {
   /// Unpack the batch's next row into the scan's row (`Scan::row`).
   /// False once every row of the batch has been read.
   pub fn next_scan_row(&mut self, batch: ScanBatchId) -> Result<bool, IcError> {
-    let place = match self.ready_receiver(batch) {
-      Some(place) => place,
-      None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
-    };
-    let scan = match self.scans.get_mut(batch.scan.0) {
-      Some(scan) => scan,
-      None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
-    };
-    let receiver = &mut scan.receivers[place as usize];
-    let at = receiver.next_row as usize;
-    if at >= receiver.row_ends.len() {
-      return Ok(false);
-    }
-    let mut start: usize = 0;
-    if at > 0 {
-      start = receiver.row_ends[at - 1] as usize;
-    }
-    let end = receiver.row_ends[at] as usize;
-    receiver.next_row += 1;
-    let receiver_id = receiver.id;
-    row_codec::unpack_row(
-      &scan.rec,
-      &receiver.rows[start..end],
-      &mut scan.row,
-    )?;
-    scan.rows_read += 1;
-    scan.last_read = Some((place, receiver_id));
-    Ok(true)
+    self.read_batch_row(batch, None)
   }
 
   /// As [`next_scan_row`](Self::next_scan_row), into `row`, a buffer of
@@ -1010,6 +1269,16 @@ impl ApidConnection {
     batch: ScanBatchId,
     row: &mut [u8],
   ) -> Result<bool, IcError> {
+    self.read_batch_row(batch, Some(row))
+  }
+
+  /// The batch's next row into `into`, or the scan's row, with its range
+  /// number.
+  fn read_batch_row(
+    &mut self,
+    batch: ScanBatchId,
+    into: Option<&mut [u8]>,
+  ) -> Result<bool, IcError> {
     let place = match self.ready_receiver(batch) {
       Some(place) => place,
       None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
@@ -1018,22 +1287,30 @@ impl ApidConnection {
       Some(scan) => scan,
       None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
     };
-    if row.len() < scan.rec.row_size() as usize {
-      return Err(IcError::new(err::IC_ERROR_RECORD_SIZE_TOO_BIG));
+    if let Some(row) = &into {
+      if row.len() < scan.rec.row_size() as usize {
+        return Err(IcError::new(err::IC_ERROR_RECORD_SIZE_TOO_BIG));
+      }
     }
+    let single_no = scan.single_range_no();
     let receiver = &mut scan.receivers[place as usize];
     let at = receiver.next_row as usize;
     if at >= receiver.row_ends.len() {
       return Ok(false);
     }
-    let mut start: usize = 0;
-    if at > 0 {
-      start = receiver.row_ends[at - 1] as usize;
-    }
-    let end = receiver.row_ends[at] as usize;
+    let (start, end) = receiver.row_span(at);
     receiver.next_row += 1;
     let receiver_id = receiver.id;
-    row_codec::unpack_row(&scan.rec, &receiver.rows[start..end], row)?;
+    let (range_no, words) = split_range_no(
+      &receiver.rows[start..end],
+      scan.reads_range_no,
+      single_no,
+    )?;
+    match into {
+      Some(row) => row_codec::unpack_row(&scan.rec, words, row)?,
+      None => row_codec::unpack_row(&scan.rec, words, &mut scan.row)?,
+    };
+    scan.range_no = range_no;
     scan.rows_read += 1;
     scan.last_read = Some((place, receiver_id));
     Ok(true)
@@ -1169,6 +1446,13 @@ impl ApidConnection {
     id: ScanId,
     mut row: Option<&mut [u8]>,
   ) -> Result<bool, IcError> {
+    let ordered = match self.scans.get(id.0) {
+      Some(scan) => scan.ordered,
+      None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
+    };
+    if ordered {
+      return self.next_merged_row(id, row);
+    }
     loop {
       let reading = match self.scans.get(id.0) {
         Some(scan) => scan.reading,
@@ -1206,10 +1490,17 @@ impl ApidConnection {
   /// [`next_row`](Self::next_row) does; none once the run is over with
   /// no error. The application reads its rows with
   /// [`next_scan_row`](Self::next_scan_row) and hands it back itself.
+  /// Refused for an ordered run, whose rows `next_row` merges
+  /// (`IC_ERROR_NOT_SUPPORTED`).
   pub fn next_batch(
     &mut self,
     id: ScanId,
   ) -> Result<Option<ScanBatchId>, IcError> {
+    if let Some(scan) = self.scans.get(id.0) {
+      if scan.ordered {
+        return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
+      }
+    }
     self.wait_scan_batch(id)
   }
 
@@ -1241,21 +1532,179 @@ impl ApidConnection {
         }
         _ => {}
       }
-      if self.in_callback > 0 {
-        // A poll does nothing inside a callback.
-        return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
-      }
-      // Takeovers of the rows read go first: a batch handed back with
-      // them waits for their confirmations to go on.
-      let pending = match self.scans.get(id.0) {
-        Some(scan) => scan.takeovers_pending(),
-        None => false,
-      };
-      if pending {
-        let _ = self.send_queries(false);
-      }
-      self.poll(IC_CALL_SLICE_MS);
+      self.wait_for_scan(id)?;
     }
+  }
+
+  /// One wait for what a scan needs: its takeovers go first, since a
+  /// batch handed back with them waits for their confirmations, then a
+  /// poll. Refused inside a callback, where a poll does nothing.
+  fn wait_for_scan(&mut self, id: ScanId) -> Result<(), IcError> {
+    if self.in_callback > 0 {
+      return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
+    }
+    let pending = match self.scans.get(id.0) {
+      Some(scan) => scan.takeovers_pending(),
+      None => false,
+    };
+    if pending {
+      let _ = self.send_queries(false);
+    }
+    self.poll(IC_CALL_SLICE_MS);
+    Ok(())
+  }
+
+  // ---- The ordered merge ----
+
+  /// The next row of an ordered run, merged from its receivers' (chapter
+  /// 04, "Index scans"), into `row` or the scan's row. A batch whose
+  /// rows are all read is handed back first, and then the merge waits
+  /// until every receiver has a row or has ended, since the next row
+  /// may be any of theirs. False once the run has read to the end or was
+  /// closed; the run's error once it has failed.
+  fn next_merged_row(
+    &mut self,
+    id: ScanId,
+    mut row: Option<&mut [u8]>,
+  ) -> Result<bool, IcError> {
+    loop {
+      let (state, error) = match self.scans.get(id.0) {
+        Some(scan) => (scan.state, scan.error),
+        None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
+      };
+      match state {
+        ScanState::Idle => return Ok(false),
+        ScanState::Done => {
+          return match error {
+            Some(e) => Err(e),
+            None => Ok(false),
+          };
+        }
+        ScanState::Running => {
+          self.hand_back_read_batches(id)?;
+          if let Some(place) = self.first_merged(id)? {
+            self.take_merged(id, place, row.as_deref_mut())?;
+            return Ok(true);
+          }
+        }
+        // Starting, or closing: nothing to merge until it is done.
+        _ => {}
+      }
+      self.wait_for_scan(id)?;
+    }
+  }
+
+  /// Hand back every batch of an ordered run whose rows are all read.
+  fn hand_back_read_batches(&mut self, id: ScanId) -> Result<(), IcError> {
+    let mut place: usize = 0;
+    loop {
+      let batch = match self.scans.get(id.0) {
+        Some(scan) => {
+          if place >= scan.used as usize {
+            return Ok(());
+          }
+          let receiver = &scan.receivers[place];
+          let used_up =
+            receiver.state == ReceiverState::Ready && !receiver.has_row();
+          if used_up {
+            Some(ScanBatchId {
+              scan: id,
+              receiver: receiver.id,
+            })
+          } else {
+            None
+          }
+        }
+        None => return Ok(()),
+      };
+      if let Some(read) = batch {
+        self.release_scan_batch(read)?;
+      }
+      place += 1;
+    }
+  }
+
+  /// The place of the receiver whose next row comes first, once every
+  /// receiver of the run has a row or has ended; none while one waits
+  /// for its batch, or when every one has ended. Each receiver's next
+  /// row is unpacked once, with its order key.
+  fn first_merged(&mut self, id: ScanId) -> Result<Option<u32>, IcError> {
+    let scan = match self.scans.get_mut(id.0) {
+      Some(scan) => scan,
+      None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
+    };
+    let order = match &scan.index {
+      Some(index) => match &index.order {
+        Ok(order) => order,
+        Err(e) => return Err(*e),
+      },
+      None => return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED)),
+    };
+    let single_no = match &scan.index {
+      Some(index) => index.run.first_no,
+      None => 0,
+    };
+    let mut first: Option<u32> = None;
+    let mut place: usize = 0;
+    while place < scan.used as usize {
+      let receiver = &mut scan.receivers[place];
+      match receiver.state {
+        ReceiverState::Ready => {}
+        ReceiverState::Done => {
+          place += 1;
+          continue;
+        }
+        // Its batch is still coming.
+        _ => return Ok(None),
+      }
+      if !receiver.has_row() {
+        return Ok(None);
+      }
+      fill_head(&scan.rec, order, scan.reads_range_no, single_no, receiver)?;
+      let before = match first {
+        Some(best) => comes_before(
+          &scan.receivers[place],
+          &scan.receivers[best as usize],
+          scan.descending,
+        ),
+        None => true,
+      };
+      if before {
+        first = Some(place as u32);
+      }
+      place += 1;
+    }
+    Ok(first)
+  }
+
+  /// Take the merged row of the receiver at `place` into `row`, or the
+  /// scan's row.
+  fn take_merged(
+    &mut self,
+    id: ScanId,
+    place: u32,
+    row: Option<&mut [u8]>,
+  ) -> Result<(), IcError> {
+    let scan = match self.scans.get_mut(id.0) {
+      Some(scan) => scan,
+      None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
+    };
+    let size = scan.rec.row_size() as usize;
+    let receiver = &mut scan.receivers[place as usize];
+    match row {
+      Some(into) => {
+        if into.len() < size {
+          return Err(IcError::new(err::IC_ERROR_RECORD_SIZE_TOO_BIG));
+        }
+        into[..size].copy_from_slice(&receiver.head_row);
+      }
+      None => scan.row.copy_from_slice(&receiver.head_row),
+    }
+    receiver.next_row += 1;
+    scan.range_no = receiver.head_range;
+    scan.rows_read += 1;
+    scan.last_read = Some((place, receiver.id));
+    Ok(())
   }
 
   /// The oldest batch of this scan on the ready list, taken off it;
@@ -1963,13 +2412,19 @@ impl ApidConnection {
   }
 
   /// A complete batch onto the ready list, or to the scan's callback.
+  /// An ordered run's batch goes to neither: `next_row` merges it.
   fn deliver(&mut self, id: ScanId, place: u32) {
     let (receiver, callback, user_ref) = match self.scans.get(id.0) {
-      Some(scan) => (
-        scan.receivers[place as usize].id,
-        scan.callback,
-        scan.user_ref,
-      ),
+      Some(scan) => {
+        if scan.ordered {
+          return;
+        }
+        (
+          scan.receivers[place as usize].id,
+          scan.callback,
+          scan.user_ref,
+        )
+      }
       None => return,
     };
     let batch = ScanBatchId { scan: id, receiver };
@@ -2004,6 +2459,10 @@ impl ApidConnection {
     if code == IC_NDB_ERROR_SCHEMA_CHANGED || code == IC_NDB_ERROR_UNKNOWN_TABLE
     {
       let table = self.scans.get(id.0).map(|scan| Arc::clone(&scan.table));
+      let index = self.scans.get(id.0).and_then(|scan| scan.index().cloned());
+      if let Some(index) = index {
+        self.index_changed(&index);
+      }
       if let Some(table) = table {
         self.table_changed(&table);
       }
@@ -2217,23 +2676,68 @@ mod tests {
   #[test]
   fn parallelism_is_the_fragments_unless_asked_for_or_pruned() {
     let all = ScanArgs::default();
-    assert_eq!(parallelism_of(&all, 8), 8);
-    assert_eq!(parallelism_of(&all, 0), 1);
+    assert_eq!(parallelism_of(&all, 8, false), 8);
+    assert_eq!(parallelism_of(&all, 0, false), 1);
     let two = ScanArgs {
       parallelism: 2,
       ..ScanArgs::default()
     };
-    assert_eq!(parallelism_of(&two, 8), 2);
+    assert_eq!(parallelism_of(&two, 8, false), 2);
     let too_many = ScanArgs {
       parallelism: 100,
       ..ScanArgs::default()
     };
-    assert_eq!(parallelism_of(&too_many, 8), 8);
-    let one = ScanArgs {
-      partition: Some(3),
+    assert_eq!(parallelism_of(&too_many, 8, false), 8);
+    assert_eq!(parallelism_of(&two, 8, true), 1);
+    // An ordered run merges every fragment, whatever it asks for.
+    let ordered = ScanArgs {
+      parallelism: 2,
+      ordered: true,
       ..ScanArgs::default()
     };
-    assert_eq!(parallelism_of(&one, 8), 1);
+    assert_eq!(parallelism_of(&ordered, 8, false), 8);
+    assert_eq!(parallelism_of(&ordered, 8, true), 1);
+  }
+
+  #[test]
+  fn a_row_of_a_run_of_several_ranges_starts_with_its_number() {
+    let header = column_header::column_header(scans::IC_COL_RANGE_NO, 4);
+    let words = [header, 7, 0xAAAA, 0xBBBB];
+    let (range_no, rest) = split_range_no(&words, true, 0).expect("split");
+    assert_eq!(range_no, 7);
+    assert_eq!(rest, &[0xAAAA, 0xBBBB]);
+    // A run of one range gives that range's number, the words whole.
+    let (range_no, rest) = split_range_no(&words, false, 3).expect("whole");
+    assert_eq!(range_no, 3);
+    assert_eq!(rest.len(), 4);
+    // A row without its number is refused.
+    assert!(split_range_no(&words[2..], true, 0).is_err());
+    assert!(split_range_no(&[header], true, 0).is_err());
+  }
+
+  fn head(range: u32, key: &[u8]) -> Receiver {
+    Receiver {
+      head_range: range,
+      head_key: key.to_vec(),
+      ..Receiver::default()
+    }
+  }
+
+  #[test]
+  fn the_merge_orders_by_range_then_by_key() {
+    let a = head(0, &[1, 5]);
+    let b = head(0, &[1, 6]);
+    let c = head(1, &[0]);
+    assert!(comes_before(&a, &b, false));
+    assert!(!comes_before(&b, &a, false));
+    // From the high end the keys turn round, the ranges do not.
+    assert!(comes_before(&b, &a, true));
+    assert!(comes_before(&a, &c, false));
+    assert!(comes_before(&a, &c, true));
+    // A key that is the start of another comes first.
+    assert!(comes_before(&head(0, &[1]), &a, false));
+    // Equals: neither comes before, so the lower place is kept.
+    assert!(!comes_before(&a, &head(0, &[1, 5]), false));
   }
 
   #[test]
@@ -2249,7 +2753,9 @@ mod tests {
       ..Receiver::default()
     };
     let capacity = receiver.rows.capacity();
+    receiver.head_at = 0;
     receiver.clear_batch();
+    assert_eq!(receiver.head_at, IC_NO_HEAD);
     assert!(!receiver.confirmed);
     assert_eq!(receiver.words, 0);
     assert!(receiver.rows.is_empty() && receiver.row_ends.is_empty());

@@ -18,7 +18,7 @@ use std::fmt;
 /// First iClaustron error code.
 pub const IC_FIRST_ERROR: i32 = 7000;
 /// Last iClaustron error code.
-pub const IC_LAST_ERROR: i32 = 7162;
+pub const IC_LAST_ERROR: i32 = 7163;
 
 /// Line was too long.
 pub const IC_ERROR_LINE_TOO_LONG: i32 = 7000;
@@ -377,6 +377,10 @@ pub const IC_ERROR_SCAN_ACTIVE: i32 = 7161;
 /// A takeover found no row of the scan to act on: none read yet, or the
 /// batch it was read from handed back.
 pub const IC_ERROR_NO_SCAN_ROW: i32 = 7162;
+/// A range of an index scan that cannot be sent: its number above
+/// 4095, more bound columns than the index has, bounds too long, or in
+/// an ordered scan of several ranges a number not above the last.
+pub const IC_ERROR_BAD_RANGE: i32 = 7163;
 
 /// What kind of thing went wrong (`IC_ERROR_CATEGORY`), in the header's
 /// order.
@@ -868,6 +872,7 @@ pub fn message(code: i32) -> &'static str {
     IC_ERROR_NO_SCAN_ROW => {
       "No scanned row to take over: none read, or its batch handed back"
     }
+    IC_ERROR_BAD_RANGE => "The range is not one this index scan can send",
     _ => "Unknown error code",
   }
 }

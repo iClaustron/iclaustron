@@ -239,9 +239,61 @@ impl CollationMap {
     }
   }
 
-  /// 64-bit FNV-1a over the weights of the characters, level by level,
-  /// a zero weight between levels, zero weights within a level skipped.
-  fn weight_hash(&self, points: &[u32]) -> Result<u64, IcError> {
+  /// Append to `out` a key of a value whose bytes compare, byte by
+  /// byte and the shorter first, as the collation orders values: what
+  /// the merge of an ordered index scan needs (chapter 06 §8.7).
+  /// `value`, `max_len` and `fixed` are as for
+  /// [`key_part`](Self::key_part).
+  ///
+  /// - pad space: the sort key padded with the space's, as `key_part`
+  ///   makes it, so that trailing spaces make no difference;
+  /// - no pad, utf8mb4_0900_bin aside: the 16-bit weights level by
+  ///   level, each big-endian, a zero weight between levels, a CHAR's
+  ///   trailing spaces stripped first, so that a string that is the
+  ///   start of another comes first;
+  /// - utf8mb4_0900_bin: the bytes, a CHAR's trailing spaces stripped.
+  pub fn sort_key(
+    &self,
+    value: &[u8],
+    max_len: usize,
+    fixed: bool,
+    out: &mut Vec<u8>,
+  ) -> Result<(), IcError> {
+    match self.transform {
+      KeyTransform::SortKey => self.key_part(value, max_len, fixed, out),
+      KeyTransform::WeightHash => {
+        let mut chars = value;
+        if fixed {
+          chars = self.strip_spaces(value);
+        }
+        let points = self.decode(chars)?;
+        let by_level = self.weights_by_level(&points)?;
+        for (level, weights) in by_level.iter().enumerate() {
+          if level > 0 {
+            out.extend_from_slice(&[0, 0]);
+          }
+          for weight in weights {
+            out.extend_from_slice(&weight.to_be_bytes());
+          }
+        }
+        Ok(())
+      }
+      KeyTransform::ByteFold => {
+        let mut bytes = value;
+        if fixed {
+          bytes = self.strip_spaces(value);
+        }
+        out.extend_from_slice(bytes);
+        Ok(())
+      }
+    }
+  }
+
+  /// The weights of the characters, a list for each level the
+  /// collation compares: a character's weight string holds its levels
+  /// one after another with a zero weight between them, and zero
+  /// weights are not kept.
+  fn weights_by_level(&self, points: &[u32]) -> Result<Vec<Vec<u16>>, IcError> {
     let levels = self.levels as usize;
     let mut by_level: Vec<Vec<u16>> = vec![Vec::new(); levels];
     self.weights_of(points, &mut |weights| {
@@ -258,6 +310,13 @@ impl CollationMap {
         }
       }
     })?;
+    Ok(by_level)
+  }
+
+  /// 64-bit FNV-1a over the weights of the characters, level by level,
+  /// a zero weight between levels, zero weights within a level skipped.
+  fn weight_hash(&self, points: &[u32]) -> Result<u64, IcError> {
+    let by_level = self.weights_by_level(points)?;
     let mut hash = IC_FNV_OFFSET_BASIS;
     for (level, weights) in by_level.iter().enumerate() {
       if level >= IC_LEVELS_ALWAYS_HASHED && weights.is_empty() {
@@ -673,6 +732,45 @@ mod tests {
     // multiplies (0 + 3).
     assert_eq!(byte_fold(b"a"), 0);
     assert_eq!(byte_fold(b"ab"), 3 * 0x62);
+  }
+
+  fn sort(map: &CollationMap, value: &[u8], fixed: bool) -> Vec<u8> {
+    let mut out: Vec<u8> = Vec::new();
+    map
+      .sort_key(value, 20, fixed, &mut out)
+      .expect("a sort key");
+    out
+  }
+
+  #[test]
+  fn sort_keys_compare_as_the_collation_orders() {
+    // Pad space: case and trailing spaces make no difference, and a
+    // shorter string is compared as if padded with spaces, so a tab,
+    // which weighs less than a space, comes before nothing.
+    let map = CollationMap::new(&simple()).expect("a map");
+    assert_eq!(sort(&map, b"Ab ", false), sort(&map, b"aB", false));
+    assert!(sort(&map, b"ab", false) < sort(&map, b"abc", false));
+    assert!(sort(&map, b"a\t", false) < sort(&map, b"a", false));
+    // No pad: level by level, so capitals first only where the first
+    // level ties; a CHAR's trailing spaces go, a VARCHAR's count; the
+    // contraction "ch" weighs above every letter.
+    let map = CollationMap::new(&two_levels(0)).expect("a map");
+    assert!(sort(&map, b"AB", false) < sort(&map, b"ab", false));
+    assert!(sort(&map, b"ab", false) < sort(&map, b"AC", false));
+    assert!(sort(&map, b"ab", false) < sort(&map, b"abc", false));
+    assert_eq!(sort(&map, b"ab  ", true), sort(&map, b"ab", true));
+    assert!(sort(&map, b"ab", false) < sort(&map, b"ab ", false));
+    assert!(sort(&map, b"cz", false) < sort(&map, b"ch", false));
+    assert_eq!(
+      sort(&map, b"ab", false),
+      vec![0x00, 0x41, 0x00, 0x42, 0, 0, 0x00, 0x02, 0x00, 0x02]
+    );
+    // utf8mb4_0900_bin: the bytes, a CHAR's trailing spaces gone.
+    let map =
+      CollationMap::new(&two_levels(collation_desc::IC_COLLATION_BINARY))
+        .expect("a map");
+    assert_eq!(sort(&map, b"aB  ", true), b"aB".to_vec());
+    assert_eq!(sort(&map, b"aB ", false), b"aB ".to_vec());
   }
 
   #[test]
