@@ -152,7 +152,13 @@ and rustfmt cannot:
   (`impl Trait`, `where `, `async `, `Rc<`, `RefCell<`, `.iter().map(`,
   `macro_rules!`, `.unwrap()`), skipped inside `#[cfg(test)]` modules,
   with `xtask/style-allow.txt` listing the few sanctioned places and the
-  reason for each.
+  reason for each. Only code is searched: comments and what string and
+  character literals hold are left out, a string followed over the
+  lines it spans. A pattern that starts with a name, such as `Cell<`,
+  is not matched as the end of a longer one, such as `RefCell<`; one
+  that starts with a dot, such as `.unwrap()`, is matched wherever it
+  is (until 2026-10-17 it was missed after a name, as in
+  `x.unwrap()`).
 
 ## Editor navigation: `cargo xtask tags`
 

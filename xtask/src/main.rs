@@ -166,30 +166,96 @@ const FORBIDDEN: &[(&str, &str)] = &[
 /// is skipped when looking for forbidden constructs.
 const SELF_PATH: &str = "xtask/src/main.rs";
 
-/// The part of a line that is code: everything before a `//` comment.
-fn code_part(line: &str) -> &str {
-  match line.find("//") {
-    Some(pos) => &line[..pos],
-    None => line,
+/// The part of a line that is code: everything before a `//` comment,
+/// with what string and character literals hold blanked out, so that
+/// prose may say anything, in a string as in a comment. `in_string`
+/// says whether the line starts inside a string an earlier line opened,
+/// and is left saying whether the next line does. Raw strings are
+/// taken as plain ones; the code has none.
+fn code_part(line: &str, in_string: &mut bool) -> String {
+  let chars: Vec<char> = line.chars().collect();
+  let mut code = String::with_capacity(line.len());
+  let mut i: usize = 0;
+  while i < chars.len() {
+    let c = chars[i];
+    if *in_string {
+      if c == '\\' {
+        // The escaped character, or the line break, goes with it.
+        i += 2;
+        continue;
+      }
+      if c == '"' {
+        *in_string = false;
+        code.push(c);
+      }
+      i += 1;
+      continue;
+    }
+    if c == '/' && i + 1 < chars.len() && chars[i + 1] == '/' {
+      break;
+    }
+    if c == '"' {
+      *in_string = true;
+      code.push(c);
+      i += 1;
+      continue;
+    }
+    if c == '\'' {
+      let len = char_literal_len(&chars[i..]);
+      if len > 0 {
+        code.push_str("' '");
+        i += len;
+        continue;
+      }
+    }
+    code.push(c);
+    i += 1;
   }
+  code
 }
 
-/// True if `text` contains `pattern` other than as the tail of a longer
-/// identifier, so that `Cell<` does not match inside `RefCell<`.
+/// The length of the character literal `chars` starts with, such as
+/// `'x'`, `'\n'` or `'\''`; 0 for a lifetime such as `'a`.
+fn char_literal_len(chars: &[char]) -> usize {
+  if chars.len() >= 4 && chars[1] == '\\' {
+    // Past the backslash and the character it escapes, to the quote.
+    let mut end: usize = 3;
+    while end < chars.len() {
+      if chars[end] == '\'' {
+        return end + 1;
+      }
+      end += 1;
+    }
+    return 0;
+  }
+  if chars.len() >= 3 && chars[2] == '\'' {
+    return 3;
+  }
+  0
+}
+
+/// True for a character that can be part of a name.
+fn is_name_char(c: u8) -> bool {
+  c.is_ascii_alphanumeric() || c == b'_'
+}
+
+/// True if `text` contains `pattern`. A pattern that starts with a name,
+/// such as `Cell<`, does not match as the tail of a longer name, such as
+/// `RefCell<`; one that starts otherwise, such as `.unwrap()`, matches
+/// wherever it is, a name before it or not.
 fn contains_token(text: &str, pattern: &str) -> bool {
   let bytes = text.as_bytes();
+  let named = match pattern.as_bytes().first() {
+    Some(first) => is_name_char(*first),
+    None => return false,
+  };
   let mut from: usize = 0;
   loop {
     let found = match text[from..].find(pattern) {
       Some(pos) => from + pos,
       None => return false,
     };
-    if found == 0 {
-      return true;
-    }
-    let prev = bytes[found - 1];
-    let part_of_name = prev.is_ascii_alphanumeric() || prev == b'_';
-    if !part_of_name {
+    if !named || found == 0 || !is_name_char(bytes[found - 1]) {
       return true;
     }
     from = found + 1;
@@ -212,6 +278,7 @@ fn run_style() -> i32 {
     };
     let is_self = file.ends_with(SELF_PATH);
     let mut in_tests = false;
+    let mut in_string = false;
     let mut line_no: u32 = 0;
     for line in text.lines() {
       line_no += 1;
@@ -230,10 +297,11 @@ fn run_style() -> i32 {
       if in_tests || is_self {
         continue;
       }
-      // Only code counts; prose in comments may say anything.
-      let code = code_part(line);
+      // Only code counts; prose in comments and strings may say
+      // anything.
+      let code = code_part(line, &mut in_string);
       for (pattern, why) in FORBIDDEN {
-        if !contains_token(code, pattern) {
+        if !contains_token(&code, pattern) {
           continue;
         }
         if is_allowed(&allow, file, pattern) {
@@ -560,5 +628,64 @@ fn run_tags(rest: &[String]) -> i32 {
       eprintln!("tags: ctags failed: {}", e);
       1
     }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn code_of(lines: &[&str]) -> Vec<String> {
+    let mut in_string = false;
+    let mut out: Vec<String> = Vec::new();
+    for line in lines {
+      out.push(code_part(line, &mut in_string));
+    }
+    out
+  }
+
+  #[test]
+  fn comments_and_what_literals_hold_are_not_code() {
+    let code = code_of(&[
+      "let x = y.len(); // y.unwrap() in a comment",
+      "let s = \"a null pointer where a handle was\"; s.len()",
+      "let u = \"http://x\"; u.unwrap()",
+      "let q = '\"'; let e = '\\''; let n = '\\n'; v.unwrap()",
+      "fn f<'a>(x: &'a [u8]) -> &'a [u8] { x }",
+    ]);
+    assert_eq!(code[0], "let x = y.len(); ");
+    assert!(!code[1].contains(" where "));
+    assert!(code[1].contains("s.len()"));
+    // A `//` in a string is no comment.
+    assert!(code[2].contains("u.unwrap()"));
+    // A quote in a character literal opens no string.
+    assert!(code[3].contains("v.unwrap()"));
+    // A lifetime is no character literal.
+    assert_eq!(code[4], "fn f<'a>(x: &'a [u8]) -> &'a [u8] { x }");
+  }
+
+  #[test]
+  fn a_string_may_go_on_over_several_lines() {
+    let code = code_of(&[
+      "let sql = \"SELECT a",
+      "  FROM t where a > 0 \\\"quoted\\\"",
+      "  ORDER BY a\"; rows.unwrap()",
+    ]);
+    assert!(!code[1].contains(" where "));
+    assert!(code[2].contains("rows.unwrap()"));
+    assert!(!code[2].contains("ORDER"));
+  }
+
+  #[test]
+  fn a_pattern_that_starts_with_a_name_is_not_a_tail() {
+    assert!(contains_token("x: RefCell<u8>", "RefCell<"));
+    assert!(!contains_token("x: RefCell<u8>", "Cell<"));
+    assert!(!contains_token("x: MyRc<u8>", "Rc<"));
+    assert!(contains_token("x: Rc<u8>", "Rc<"));
+    // One that starts with a dot matches after a name too.
+    assert!(contains_token("v.iter().map(f)", ".iter().map("));
+    assert!(contains_token("value.unwrap()", ".unwrap()"));
+    assert!(contains_token("f().unwrap()", ".unwrap()"));
+    assert!(!contains_token("value.unwrap_or(0)", ".unwrap()"));
   }
 }

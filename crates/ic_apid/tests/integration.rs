@@ -1089,7 +1089,10 @@ fn read_through(
   index: &Arc<IndexDef>,
   values: &[(&str, &str)],
 ) -> Result<Option<Vec<u8>>, IcError> {
-  let columns: Vec<&str> = values.iter().map(|(column, _)| *column).collect();
+  let mut columns: Vec<&str> = Vec::new();
+  for (column, _) in values {
+    columns.push(*column);
+  }
   let key_rec = record_over(t, &columns);
   let mut key = vec![0; key_rec.row_size() as usize];
   for (column, value) in values {
