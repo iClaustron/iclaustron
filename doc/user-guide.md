@@ -360,6 +360,59 @@ thread does asynchronously, two million a second: a blocking call
 costs a thread's sleep and wake-up, about 10 µs of CPU, however it
 reaches the cluster.
 
+### Scans
+
+A scan reads a whole table, or one partition of it, in batches: one
+receiver per fragment scanned at once, each bringing a batch of rows
+at a time. A receiver is asked for its next batch only once the
+program has handed back the last, so the program sets the pace, and a
+locking scan's rows stay locked until their batch is handed back.
+
+- Make a scan once over a table and a record (`create_scan`,
+  `ic_apid_scan_create`), and start a run of it as often as you like
+  (`start_scan`, `ic_apid_conn_start_scan`), with its arguments
+  (`ScanArgs`, `ic_scan_args_init`): the lock (committed, shared or
+  exclusive), the batch size, one partition, a deadline.
+- **Row by row**: `next_row` (`ic_apid_conn_next_row`) reads the next
+  row into the scan's row, handing each batch back as it goes and
+  polling while it waits; it says false at the end, or gives the
+  scan's error. Other queries and scans of the connection are served
+  meanwhile.
+- **A batch at a time**: complete batches go on the ready list
+  (`get_next_scan_batch`), or to the scan's callback; read a batch's
+  rows with `next_scan_row` and hand it back with `release_scan_batch`.
+- **Through an executor**: a thread with no connection describes the
+  scan as a shape (`ScanShape::new`, `ic_scan_shape_create`), makes a
+  reader of it (`ScanReader::new`, `ic_scan_reader_create`), runs it
+  with `submitter.scan` (`ic_apid_submitter_scan`) and reads the rows
+  with the reader's `next_row` (`ic_scan_reader_next_row`). A slow
+  reader stalls only its own scan. A committed read may set
+  `read_ahead`, so that a receiver fetches its next batch while the
+  reader reads the last, at the cost of twice the memory.
+
+```c
+IC_SCAN_ARGS args;
+bool more;
+size_t len;
+
+ic_scan_args_init(&args, sizeof args);
+if ((ret = ic_apid_conn_start_scan(conn, scan, &args)) != 0)
+  goto error;
+while ((ret = ic_apid_conn_next_row(conn, scan, &more)) == 0 && more)
+{
+  const uint8_t *row = ic_apid_scan_row(conn, scan, &len);
+  /* ... use the row ... */
+}
+if (ret != 0)
+  goto error;
+```
+
+Close a run early with `close_scan` (`ic_apid_conn_close_scan`), or a
+reader's with `close` (`ic_scan_reader_close`). A batch kept too long
+ends the scan with 296; a lock waited for too long with 274 or 266;
+the failure of the coordinator's node with 4028. All are temporary:
+start the scan again.
+
 ## 6. Callbacks
 
 A query defined with a callback has it called when it completes:
@@ -506,10 +559,11 @@ transaction that goes to a cluster with no started node fails with
 - **Measure release builds.** The library's checks in a debug build
   cost time a release build does not spend.
 
-## 10. What 0.1 does not do
+## 10. What is not done yet
 
-- No scans: rows are read and written by primary key and unique key
-  only. Scans, with conditions run on the data nodes, are next.
+- Scans read whole tables or one partition, with no conditions run on
+  the data nodes yet, no ordered index scans, and no updating or
+  deleting the rows a scan has locked; those come next.
 - No blob columns (BLOB, TEXT, JSON, GEOMETRY): records leave them out,
   and deletes on their tables are refused.
 - No schema changes: tables and indexes are made through a MySQL

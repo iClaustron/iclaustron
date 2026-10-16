@@ -318,7 +318,165 @@ while !conn.scan_done(scan) {
   when the coordinator's node fails.
 
 The synchronous form, scans through an executor, and the C ABI are
-phase 8.4.
+phase 8.4, below.
+
+### Consuming scans (phase 8.4; built 2026-10-16)
+
+Three ways to read a scan, all over the batches above.
+
+**Synchronous, on a connection.** `next_row` reads a scan as a
+stream of rows, and hands each batch back once its rows are read:
+
+```rust
+conn.start_scan(scan, &ScanArgs::default())?;
+while conn.next_row(scan)? {           // Ok(false): read to the end
+  let row = conn.scan_row(scan);
+}
+```
+
+- `next_row(scan)` unpacks the next row into the scan's row, and
+  `next_row_into(scan, row)` into a buffer of the caller's. When the
+  batch it reads from is used up, it hands it back, so that receiver
+  goes on, and takes the scan's next complete batch. While none is
+  complete it sends what is due and polls. Every other scan and
+  query of the connection is served meanwhile: their callbacks run,
+  and their batches go on the ready list. It gives `Ok(false)` once
+  the run is done with no error, and the run's error once it has
+  failed. Rows of batches not yet read are then dropped, as for any
+  failed run.
+- `next_batch(scan)` gives the scan's next complete batch, waiting as
+  `next_row` does, or `None` at the end. The application reads it
+  with `next_scan_row` and hands it back itself, so it may hold
+  several at once.
+- **Where the batches come from**: a scan with no callback puts its
+  batches on the connection's ready list, as in 8.3. `next_row` and
+  `next_batch` take the oldest of that scan's batches and leave the
+  other scans' batches there. A thread with one scan at a time finds
+  its batch first in the list.
+- A scan with a callback is refused (`IC_ERROR_NOT_SUPPORTED`). So is
+  a wait inside a callback, where a poll does nothing; a batch that is
+  already complete can still be read there.
+- The wait lasts as long as the run goes on. The run's `timeout_ms`,
+  the coordinator's own timers and node failure handling bound it
+  (8.3).
+- An ordered scan (8.7) is read only this way, `next_row` merging the
+  rows of its receivers.
+
+**Through an executor.** A thread with no connection of its own runs
+a scan on an executor and reads the rows with a reader:
+
+```rust
+let shape = ScanShape::new(&table, &rec)?;            // made once, shared
+let mut reader = ScanReader::new(&shape);
+submitter.scan(&mut reader, &ScanArgs::default())?;   // to the executor
+while reader.next_row()? {
+  let row = reader.row();                             // laid out by the record
+}
+```
+
+- **A shape** (`ScanShape`) is a table and the record its rows are
+  read into, as an `OpShape` is for key operations. The executor
+  keeps scans of each shape it has run, made once on its connection,
+  and lets them go once nobody holds the shape. A run after the first
+  allocates nothing there.
+- **A reader** (`ScanReader`) is the application thread's end of the
+  scan: the row, laid out by the record, and the batches given to it
+  and not yet handed back. A reader is used again and again.
+  `submitter.scan` on a reader whose run is not over is refused with
+  `IC_ERROR_SCAN_ACTIVE`.
+- **Credit**: when a receiver's batch is complete, the executor moves
+  its buffer to the reader without copying a row, and wakes the reader
+  if it waits. The reader reads the batch's rows and, when it moves on
+  to the next batch, hands the buffer back.
+- **When a receiver goes on**: only once the reader has handed back
+  the buffer its batch is in, whatever the lock (the author,
+  2026-10-16). A locking scan's rows thus stay locked while the
+  application reads them, as on a connection, and one rule serves
+  every scan. A receiver has at most one batch with the reader, so
+  memory stays within the receivers times the batch bytes. A slow
+  reader stalls only its own receivers: the executor's loop goes on
+  with everything else.
+- **Reading ahead** (the author, 2026-10-16): a committed read is made
+  faster by the continuous scan, which keeps fetching a fragment's
+  rows ahead (chapter 05 §7.2, phase 10). Short of that, a flag of
+  iClaustron's own, `ScanArgs::read_ahead`, lets a committed read's
+  receiver go on as soon as its batch has moved to the reader, so a
+  receiver has up to two batches out, one with the reader and one
+  coming, and memory doubles. It is off by default, since a scan that
+  is closed early will have read ahead for nothing. A locking scan
+  with it is refused (`IC_ERROR_NOT_SUPPORTED`), since its locks would
+  go before its rows were read. The flag is for scans through an
+  executor, and refused on a connection, where the application already
+  holds each batch and hands it back itself.
+- **Waking**: the reader sleeps on a condition of its own while it has
+  no batch. A buffer handed back wakes the executor through its inbox,
+  on a list of its own, which neither the in-flight limit nor a full
+  request list holds back.
+- **Arguments**: the `ScanArgs` of a connection's scan. `trans` and
+  `callback` are refused with `IC_ERROR_NOT_SUPPORTED`: a scan on an
+  executor is in no transaction of the application's, and its batches
+  go to the reader. `timeout_ms` counts from the submit.
+- **Limits**: at most `ExecutorOptions::scans` scans run at once
+  (64 by default), and scans wait in a queue of their own. A scan
+  waiting for room then never holds a transaction back, nor the
+  reverse. A parked scan counts against `scans`, not against
+  `in_flight`.
+- **The end**: `next_row` gives `Ok(false)` once the scan has read to
+  the end, and its error once it has failed. `reader.close()` ends a
+  run early and waits for the executor to finish it, so that the
+  reader can run again. Dropping a reader ends its run without
+  waiting. A stopping executor closes its scans with
+  `IC_ERROR_EXECUTOR_STOPPED`.
+- A Rust stream comes later, over the same reader.
+
+**The C ABI**, by the rules below:
+
+- `IC_SCAN_ID` (`uint32_t`) names a scan in its connection, and
+  `IC_SCAN_BATCH_ID` (`uint64_t`) a batch: the scan and its
+  receiver's id in the run.
+- `ic_scan_args_init(&args, sizeof args)` fills an `IC_SCAN_ARGS`:
+  `lock` (`IC_SCAN_LOCK_COMMITTED`, `IC_SCAN_LOCK_SHARED`,
+  `IC_SCAN_LOCK_EXCLUSIVE`), `trans` (`IC_NO_TRANS` for none),
+  `parallelism`, `batch_rows`, `batch_bytes`, `partition`
+  (`IC_NO_PARTITION` for none), `timeout_ms`, `read_ahead`,
+  `callback` and `user_ref`.
+- On a connection: `ic_apid_scan_create(conn, def, rec, &scan)`;
+  `ic_apid_scan_free(conn, scan)`;
+  `ic_apid_conn_start_scan(conn, scan, &args)`;
+  `ic_apid_conn_close_scan(conn, scan)`; `ic_apid_scan_state`,
+  `_is_done`, `_error`, `_rows_read`; and
+  `ic_apid_scan_row(conn, scan, &len)`, the scan's row, valid until
+  the scan is freed.
+- Batches: `ic_apid_conn_get_next_scan_batch(conn, &batch)`;
+  `ic_apid_scan_batch_rows(conn, batch)`; `ic_scan_batch_scan(batch)`,
+  the scan a batch is of;
+  `ic_apid_conn_next_scan_row(conn, batch, &more)` and
+  `_next_scan_row_into(conn, batch, row, len, &more)`;
+  `ic_apid_conn_release_scan_batch(conn, batch)`.
+- Synchronous: `ic_apid_conn_next_row(conn, scan, &more)`,
+  `_next_row_into(conn, scan, row, len, &more)` and
+  `ic_apid_conn_next_batch(conn, scan, &batch, &more)`.
+- The callback is `void (*IC_SCAN_CALLBACK)(IC_APID_CONNECTION *conn,
+  IC_SCAN_BATCH_ID batch, void *user_ref)`, called through a
+  trampoline as a query's is.
+- Through an executor: `ic_scan_shape_create(def, rec, &shape)` and
+  `ic_scan_shape_free(shape)`;
+  `ic_scan_reader_create(shape, &reader)` and
+  `ic_scan_reader_free(reader)`;
+  `ic_apid_submitter_scan(sub, reader, &args)`;
+  `ic_scan_reader_next_row(reader, &more)`, `_next_row_into`,
+  `ic_scan_reader_row(reader, &len)`, `_rows_read`, `_error`,
+  `_is_done`, and `ic_scan_reader_close(reader)`.
+- `IC_EXECUTOR_OPTIONS` gains `scans` and `IC_EXECUTOR_STATS` gains
+  `scans`, at the end. A program built against 0.1's header passes the
+  shorter structs, and gets the fields it knows: the first structs to
+  grow since 0.1, so the library now reads and writes only the fields
+  a struct's size holds.
+- The scan errors become C constants: `IC_ERROR_SCAN_ACTIVE` (7161),
+  and NDB's `IC_NDB_ERROR_TOO_MANY_SCANS` (245),
+  `IC_NDB_ERROR_LOCK_TIMEOUT` (266, there already),
+  `IC_NDB_ERROR_SCAN_LOCK_TIMEOUT` (274), `IC_NDB_ERROR_SCAN_IDLE`
+  (296) and `IC_NDB_ERROR_SCAN_NODE_FAILURE` (4028).
 
 ### Errors
 
@@ -418,11 +576,15 @@ node), no events.
 | `IC_APID_SUBMITTER*` | `Submitter` | `ic_apid_executor_submitter` | `ic_apid_submitter_free` |
 | `IC_OP_SHAPE*` | `Arc<OpShape>` | `ic_op_shape_create`, `ic_op_shape_create_unique` | `ic_op_shape_free` |
 | `IC_REQUEST*` | `Request` | `ic_request_create` | `ic_request_free` |
+| `IC_SCAN_ID` | `ScanId` | `ic_apid_scan_create` | `ic_apid_scan_free` |
+| `IC_SCAN_SHAPE*` | `Arc<ScanShape>` | `ic_scan_shape_create` | `ic_scan_shape_free` |
+| `IC_SCAN_READER*` | `ScanReader` | `ic_scan_reader_create` | `ic_scan_reader_free` |
 
-A connection, and an executor, is freed before its global, a query or
-transaction with its connection. A table, index or record handle may
-outlive the connection that bound it; a request keeps what it needs of
-its shapes. A submitter outlives its executor harmlessly: it refuses.
+A connection, and an executor, is freed before its global, a query,
+transaction or scan with its connection. A table, index or record
+handle may outlive the connection that bound it; a request, or a scan
+reader, keeps what it needs of its shapes. A submitter outlives its
+executor harmlessly: it refuses.
 
 ### Functions
 
@@ -509,6 +671,9 @@ Executors:
 `_error`, `_error_data`, `_gci`; and the blocking call,
 `ic_apid_submitter_execute(sub, req)`. A request's rows stay where they
 are across runs, as a query's do.
+
+Scans, on a connection and through an executor: as "Consuming scans"
+above lists them.
 
 Errors and version: `ic_error_category`, `ic_error_severity`,
 `ic_error_is_temporary`, `ic_error_message`, `ic_api_version`.

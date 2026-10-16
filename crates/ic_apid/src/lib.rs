@@ -81,8 +81,12 @@
 //!   used many times.
 //! - [`transaction`]: defining queries on a transaction, sending them,
 //!   and completing them as their replies come.
-//! - [`executor`]: a user thread that runs key operations for any
-//!   number of application threads, and the blocking calls over it.
+//! - [`scan`]: scans, a table read fragment by fragment in batches,
+//!   on a connection.
+//! - [`executor`]: a user thread that runs key operations and scans for
+//!   any number of application threads, and the blocking calls over it.
+//! - [`scan_reader`]: an application thread's end of a scan an
+//!   executor runs.
 //! - [`text_row`]: values as text, in and out of a row, for the tools.
 //! - [`fragments`]: putting a fragmented signal back together.
 //! - [`handshake`]: becoming a transporter connection to a data node.
@@ -114,6 +118,7 @@ pub mod rec_thread;
 pub mod record;
 pub mod row_codec;
 pub mod scan;
+pub mod scan_reader;
 pub mod send_pool;
 pub mod signal_page;
 pub mod signal_reader;

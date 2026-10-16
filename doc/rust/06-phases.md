@@ -1357,13 +1357,30 @@ failure.
   that receiver go on.
 - **Synchronous**: `next_row` and `next_batch` with a wait, built on
   `poll`; a thread may have scans and queries in flight together.
-- **Through an executor**: a scan request carries a consumer with a
-  bounded number of batch buffers, and the executor asks for more only
-  for buffers the consumer has handed back (credit). A slow consumer
-  parks only its own scan, never the executor's loop. The application
-  thread's synchronous `next_row` waits on its consumer's slot; a Rust
-  stream comes later over the same.
-- Chapter 04 gets the scan API's design first, for the author's review.
+- **Through an executor**: a scan goes to the executor with a reader,
+  the application thread's end. A complete batch's buffer moves to the
+  reader, and its receiver is asked for more only once the reader has
+  handed that buffer back, whatever the lock (the author, 2026-10-16):
+  a locking scan's rows stay locked while they are read, and memory
+  stays within the receivers times the batch bytes. A flag of our own,
+  `read_ahead`, off by default, lets a committed read's receiver go on
+  at once instead, as the continuous scan of phase 10 would do at the
+  data nodes. A slow reader parks only its own scan, never the
+  executor's loop. The reader's
+  synchronous `next_row` waits on a condition of its own; a Rust stream
+  comes later over the same.
+- Chapter 04, "Consuming scans", has the design, and the C ABI for
+  scans on a connection and through an executor.
+- **Built 2026-10-16**; the `scan_` integration group passes against
+  `rondb_1107_cte_test`: the 7 tests of 8.3 and 5 new ones (`next_row`
+  on a connection; a scan read row by row beside another; readers on an
+  executor in every lock mode and with `read_ahead`; readers closed
+  early, dropped and refused; a slow reader), and the C ABI's test.
+  While one reader held a batch, five other readers on the same
+  executor each read the whole table, in 7 ms together.
+- Left for later: a Rust stream over the reader; scans whose
+  coordinator stays up but never answers still wait for the run's own
+  `timeout_ms` or the coordinator's timers (from 8.3).
 
 ### 8.5 Updating and deleting what a scan locked (3 days)
 

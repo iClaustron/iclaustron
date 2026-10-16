@@ -49,6 +49,15 @@
 //! most [`ExecutorOptions::in_flight`] requests out; the rest wait in
 //! its own queue, in order.
 //!
+//! **Scans** ([`Submitter::scan`]) run here too, read on the
+//! application thread through a [`ScanReader`]
+//! ([`scan_reader`](crate::scan_reader)). The executor moves each
+//! complete batch to the reader, and asks its receiver for more once
+//! the reader hands the batch back, which reaches the loop as a nudge
+//! (step 1). A slow reader stalls only its own scan. Scans have a limit
+//! of their own, [`ExecutorOptions::scans`], and a queue of their own,
+//! so that neither scans nor transactions hold the other back.
+//!
 //! **Nothing is lost silently.** A request whose deadline has passed
 //! when its turn comes fails with `IC_ERROR_TIMEOUT`, unsent. One with
 //! no data node to go to fails with that error. A node failure fails
@@ -88,6 +97,13 @@ use crate::query::TransId;
 use crate::query::WriteKeyArgs;
 use crate::query::WriteKind;
 use crate::record::Record;
+use crate::scan::ScanArgs;
+use crate::scan::ScanId;
+use crate::scan::ScanLock;
+use crate::scan_reader::FeedBatch;
+use crate::scan_reader::ScanReader;
+use crate::scan_reader::ScanShape;
+use crate::scan_reader::ScanWork;
 use crate::thread_conn::ThreadConnection;
 use crate::transaction::CommitState;
 use crate::transaction::TransactionHint;
@@ -99,6 +115,9 @@ pub const IC_EXECUTOR_IN_FLIGHT: u32 = 400;
 /// Requests an executor's inbox holds at most, by default, before a
 /// submit refuses or waits.
 pub const IC_EXECUTOR_QUEUE: u32 = 4000;
+/// Scans an executor runs at once at most, by default, each with a
+/// record of its own at its coordinator.
+pub const IC_EXECUTOR_SCANS: u32 = 64;
 /// How long an executor with nothing to do sleeps at a time, in
 /// milliseconds. A request or a reply wakes it at once; this is how
 /// often it looks at its stop flag and its pools otherwise.
@@ -109,6 +128,11 @@ const IC_EXECUTOR_SWEEP_NANOS: u64 = 1_000_000_000;
 
 /// Where the next shape's id comes from.
 static NEXT_SHAPE_ID: AtomicU64 = AtomicU64::new(1);
+
+/// A new shape's id, of a key operation's shape or a scan's.
+pub(crate) fn next_shape_id() -> u64 {
+  NEXT_SHAPE_ID.fetch_add(1, Ordering::Relaxed)
+}
 
 // ---- Shapes and operations ----
 
@@ -147,7 +171,7 @@ impl OpShape {
   ) -> Result<Arc<OpShape>, IcError> {
     query::check_records(table, key_rec, attr_rec)?;
     Ok(Arc::new(OpShape {
-      id: NEXT_SHAPE_ID.fetch_add(1, Ordering::Relaxed),
+      id: next_shape_id(),
       table: Arc::clone(table),
       index: None,
       key_rec: key_rec.clone(),
@@ -164,7 +188,7 @@ impl OpShape {
   ) -> Result<Arc<OpShape>, IcError> {
     query::check_unique_records(index, key_rec, attr_rec)?;
     Ok(Arc::new(OpShape {
-      id: NEXT_SHAPE_ID.fetch_add(1, Ordering::Relaxed),
+      id: next_shape_id(),
       table: Arc::clone(index.table()),
       index: Some(Arc::clone(index)),
       key_rec: key_rec.clone(),
@@ -577,6 +601,8 @@ pub(crate) enum Work {
   /// Bind a table or an index on the executor's connection, which an
   /// application thread holding only a submitter has no other way to.
   Bind(BindRequest),
+  /// A scan, read through a reader.
+  Scan(ScanWork),
 }
 
 impl std::fmt::Debug for Work {
@@ -588,6 +614,7 @@ impl std::fmt::Debug for Work {
       Work::Bind(bind) => {
         write!(f, "Work::Bind({}.{})", bind.database, bind.table)
       }
+      Work::Scan(scan) => write!(f, "Work::Scan({:?})", scan),
     }
   }
 }
@@ -677,6 +704,10 @@ pub struct ExecutorOptions {
   /// Requests the inbox holds at most before a submit refuses, or
   /// waits for room.
   pub queue: u32,
+  /// Scans run at once at most; more wait their turn. A scan holds a
+  /// record at its coordinator for as long as it runs, however slowly
+  /// its reader reads.
+  pub scans: u32,
 }
 
 impl Default for ExecutorOptions {
@@ -684,6 +715,7 @@ impl Default for ExecutorOptions {
     ExecutorOptions {
       in_flight: IC_EXECUTOR_IN_FLIGHT,
       queue: IC_EXECUTOR_QUEUE,
+      scans: IC_EXECUTOR_SCANS,
     }
   }
 }
@@ -706,6 +738,8 @@ pub struct ExecutorStats {
   pub sends: u64,
   /// Passes of the loop.
   pub passes: u64,
+  /// Scans started, each for a reader.
+  pub scans: u64,
 }
 
 /// What the executor's thread, its handle and its submitters share.
@@ -723,6 +757,7 @@ struct ExecutorShared {
   expired: AtomicU64,
   sends: AtomicU64,
   passes: AtomicU64,
+  scans: AtomicU64,
 }
 
 impl ExecutorShared {
@@ -742,6 +777,7 @@ impl ExecutorShared {
       expired: self.expired.load(Ordering::Relaxed),
       sends: self.sends.load(Ordering::Relaxed),
       passes: self.passes.load(Ordering::Relaxed),
+      scans: self.scans.load(Ordering::Relaxed),
     }
   }
 }
@@ -791,9 +827,14 @@ impl Executor {
       expired: AtomicU64::new(0),
       sends: AtomicU64::new(0),
       passes: AtomicU64::new(0),
+      scans: AtomicU64::new(0),
     });
-    let mut runner =
-      Runner::new(conn, Arc::clone(&shared), options.in_flight.max(1) as usize);
+    let mut runner = Runner::new(
+      conn,
+      Arc::clone(&shared),
+      options.in_flight.max(1) as usize,
+      options.scans.max(1) as usize,
+    );
     let name = format!("ic_executor_{}", shared.user_thread);
     let spawned = std::thread::Builder::new()
       .name(name)
@@ -924,7 +965,7 @@ impl Submitter {
     let mut back = match work {
       Work::Transaction(back) => back,
       // Only a transaction was submitted.
-      Work::Bind(_) => Request::new(),
+      _ => Request::new(),
     };
     // Never used: not a slot to tell, nor a function to call.
     back.done = None;
@@ -957,6 +998,45 @@ impl Submitter {
     let back = self.slot.wait()?;
     *request = back;
     request.outcome()
+  }
+
+  /// Run a scan on the executor, read through `reader` (chapter 04,
+  /// "Consuming scans"). The request goes to the executor, waiting for
+  /// room in a full inbox, and the rows come with the reader's
+  /// [`next_row`](ScanReader::next_row). `args` are as for a
+  /// connection's scan; `trans` and `callback` are refused with
+  /// `IC_ERROR_NOT_SUPPORTED`, as an executor's scan is in no
+  /// transaction of the application's and its batches go to the
+  /// reader, and so is `read_ahead` for a locking scan. `timeout_ms`
+  /// counts from now. A reader whose run is not over is refused with
+  /// `IC_ERROR_SCAN_ACTIVE`, and a stopped executor with
+  /// `IC_ERROR_EXECUTOR_STOPPED`. Not to be called on the executor's own
+  /// thread, which would wait for itself (`IC_ERROR_NOT_SUPPORTED`).
+  pub fn scan(
+    &self,
+    reader: &mut ScanReader,
+    args: &ScanArgs,
+  ) -> Result<(), IcError> {
+    if self.shared.on_executor_thread() {
+      return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
+    }
+    let locking = args.lock != ScanLock::Committed;
+    if args.trans.is_some()
+      || args.callback.is_some()
+      || (args.read_ahead && locking)
+    {
+      return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
+    }
+    let work = reader.begin_run(&self.inbox, args)?;
+    match self.inbox.submit(Work::Scan(work), true) {
+      Ok(()) => Ok(()),
+      Err((work, error)) => {
+        if let Work::Scan(work) = work {
+          reader.abandon_run(work, error);
+        }
+        Err(error)
+      }
+    }
   }
 
   /// A table's description, bound on the executor's connection, for
@@ -1034,6 +1114,25 @@ struct Pool {
   idle: Vec<QueryId>,
 }
 
+/// A scan running for a reader: its run, and the connection's scan it
+/// runs on, whose `user_ref` is the flight's number.
+struct ScanFlight {
+  work: ScanWork,
+  scan: ScanId,
+  /// The connection's scan has been told to close.
+  closed: bool,
+  /// What the reader is told in place of the scan's own outcome, as
+  /// when the executor stops.
+  error: Option<IcError>,
+}
+
+/// The idle scans kept for one scan shape, while anyone holds it.
+struct ScanPool {
+  id: u64,
+  shape: Weak<ScanShape>,
+  idle: Vec<ScanId>,
+}
+
 /// The executor's thread's own state, which nothing else touches.
 struct Runner {
   conn: ApidConnection,
@@ -1054,6 +1153,21 @@ struct Runner {
   /// By shape id, the shape's place in `pools`.
   pool_of: HashMap<u64, usize>,
   next_sweep: u64,
+  /// Scans waiting for room, oldest first.
+  scan_queue: VecDeque<ScanWork>,
+  scan_limit: usize,
+  /// The scans running, by the number their nudges carry.
+  scan_flights: Vec<Option<ScanFlight>>,
+  free_scan_flights: Vec<usize>,
+  /// The numbers of the scans running.
+  running_scans: Vec<usize>,
+  scan_pools: Vec<ScanPool>,
+  /// By scan shape id, the shape's place in `scan_pools`.
+  scan_pool_of: HashMap<u64, usize>,
+  /// What the inbox hands over of the readers' nudges.
+  nudges: Vec<u32>,
+  /// Batches handed back, while they are dealt with.
+  scan_back: Vec<FeedBatch>,
 }
 
 impl Runner {
@@ -1061,6 +1175,7 @@ impl Runner {
     conn: ApidConnection,
     shared: Arc<ExecutorShared>,
     in_flight_limit: usize,
+    scan_limit: usize,
   ) -> Runner {
     Runner {
       conn,
@@ -1075,6 +1190,15 @@ impl Runner {
       pools: Vec::new(),
       pool_of: HashMap::new(),
       next_sweep: 0,
+      scan_queue: VecDeque::new(),
+      scan_limit,
+      scan_flights: Vec::new(),
+      free_scan_flights: Vec::new(),
+      running_scans: Vec::new(),
+      scan_pools: Vec::new(),
+      scan_pool_of: HashMap::new(),
+      nudges: Vec::new(),
+      scan_back: Vec::new(),
     }
   }
 
@@ -1084,31 +1208,51 @@ impl Runner {
       self.shared.passes.fetch_add(1, Ordering::Relaxed);
       let stopping = self.shared.stopping.load(Ordering::Acquire);
       let room = self.in_flight < self.in_flight_limit;
+      let scan_room = self.running_scans.len() < self.scan_limit;
       // Sleep only with nothing to admit now.
       let mut wait_ms = IC_EXECUTOR_IDLE_MS;
       if !self.waiting.is_empty() && (room || stopping) {
         wait_ms = 0;
       }
-      // 1. Replies, and requests while none wait here: a request left in
-      // the inbox keeps its place in the order, and the inbox's bound
-      // keeps holding back its application threads.
+      if !self.scan_queue.is_empty() && (scan_room || stopping) {
+        wait_ms = 0;
+      }
+      // 1. Replies, the readers' nudges, and requests while none wait
+      // here: a request left in the inbox keeps its place in the order,
+      // and the inbox's bound keeps holding back its application
+      // threads. Scans wait in a queue of their own.
       if self.waiting.is_empty() {
-        self.conn.poll_with_requests(wait_ms, Some(&mut self.taken));
+        self.conn.poll_with_requests(
+          wait_ms,
+          Some(&mut self.taken),
+          Some(&mut self.nudges),
+        );
         for work in self.taken.drain(..) {
-          self.waiting.push_back(work);
+          match work {
+            Work::Scan(scan) => self.scan_queue.push_back(scan),
+            other => self.waiting.push_back(other),
+          }
         }
       } else {
-        self.conn.poll_with_requests(wait_ms, None);
+        self
+          .conn
+          .poll_with_requests(wait_ms, None, Some(&mut self.nudges));
       }
       // 2 and 3. The operations the replies completed, and the requests
-      // they finished, handed back.
+      // they finished, handed back; the batches completed, moved to
+      // their readers, those handed back, and the scans that ended.
       self.take_completions();
+      self.take_scan_batches();
+      self.take_nudges();
+      self.finish_scans();
       // 4. New work while there is room; none once stopping.
       let mut admitted: usize = 0;
       if stopping {
         self.refuse_waiting();
+        self.stop_scans();
       } else {
         admitted = self.admit_waiting();
+        self.admit_scans();
       }
       // 5. Everything admitted in this pass: one write per node.
       if admitted > 0 {
@@ -1125,7 +1269,10 @@ impl Runner {
         self.sweep();
         self.next_sweep = now + IC_EXECUTOR_SWEEP_NANOS;
       }
-      let idle = self.waiting.is_empty() && self.in_flight == 0;
+      let idle = self.waiting.is_empty()
+        && self.in_flight == 0
+        && self.scan_queue.is_empty()
+        && self.running_scans.is_empty();
       if stopping && idle && self.conn.inbox().requests_drained() {
         return;
       }
@@ -1150,6 +1297,7 @@ impl Runner {
           }
         }
         Work::Bind(bind) => self.bind(bind),
+        Work::Scan(scan) => self.scan_queue.push_back(scan),
       }
     }
     admitted
@@ -1165,6 +1313,7 @@ impl Runner {
           self.deliver(request);
         }
         Work::Bind(mut bind) => bind.refuse(stopped),
+        Work::Scan(mut scan) => scan.finish(Some(stopped)),
       }
     }
   }
@@ -1435,6 +1584,21 @@ impl Runner {
         self.pool_of.insert(self.pools[index].id, index);
       }
     }
+    let mut index: usize = 0;
+    while index < self.scan_pools.len() {
+      if self.scan_pools[index].shape.strong_count() > 0 {
+        index += 1;
+        continue;
+      }
+      let pool = self.scan_pools.swap_remove(index);
+      self.scan_pool_of.remove(&pool.id);
+      for scan in pool.idle {
+        let _ = self.conn.free_scan(scan);
+      }
+      if index < self.scan_pools.len() {
+        self.scan_pool_of.insert(self.scan_pools[index].id, index);
+      }
+    }
   }
 
   fn take_flight(&mut self) -> usize {
@@ -1445,6 +1609,298 @@ impl Runner {
         self.flights.push(None);
         self.flights.len() - 1
       }
+    }
+  }
+
+  // ---- Scans ----
+
+  /// Start waiting scans while fewer than the limit run.
+  fn admit_scans(&mut self) {
+    while self.running_scans.len() < self.scan_limit {
+      match self.scan_queue.pop_front() {
+        Some(work) => self.admit_scan(work),
+        None => break,
+      }
+    }
+  }
+
+  /// Start a reader's run on a scan of its shape, its `user_ref` the
+  /// flight's number. A run the reader has closed or left since is
+  /// answered or dropped unstarted, and one past its deadline fails
+  /// with `IC_ERROR_TIMEOUT`.
+  fn admit_scan(&mut self, mut work: ScanWork) {
+    let (gone, closing) = {
+      let state = work.feed.state.lock();
+      (state.run != work.run || state.done, state.closing)
+    };
+    if gone {
+      work.forget();
+      return;
+    }
+    if closing {
+      work.finish(None);
+      return;
+    }
+    let mut args = work.args;
+    if work.deadline != 0 {
+      let now = ic_port::time::gethrtime();
+      if now >= work.deadline {
+        self.shared.expired.fetch_add(1, Ordering::Relaxed);
+        work.finish(Some(IcError::new(err::IC_ERROR_TIMEOUT)));
+        return;
+      }
+      let left = (work.deadline - now) / 1_000_000;
+      args.timeout_ms = left.clamp(1, u32::MAX as u64) as u32;
+    }
+    let scan = match self.scan_for(&work.shape) {
+      Ok(scan) => scan,
+      Err(e) => {
+        work.finish(Some(e));
+        return;
+      }
+    };
+    let flight = self.take_scan_flight();
+    // The executor hands batches to the reader itself.
+    args.trans = None;
+    args.callback = None;
+    args.read_ahead = false;
+    args.user_ref = flight;
+    args.binding = 0;
+    if let Err(e) = self.conn.start_scan(scan, &args) {
+      self.give_back_scan(work.shape.id(), scan);
+      self.free_scan_flights.push(flight);
+      work.finish(Some(e));
+      return;
+    }
+    self.shared.scans.fetch_add(1, Ordering::Relaxed);
+    // From here the reader may nudge. A close asked for meanwhile is
+    // seen now, as it found no flight to nudge.
+    let close_now = {
+      let mut state = work.feed.state.lock();
+      if state.run == work.run && !state.done {
+        state.flight = Some(flight as u32);
+        state.closing
+      } else {
+        true
+      }
+    };
+    self.scan_flights[flight] = Some(ScanFlight {
+      work,
+      scan,
+      closed: false,
+      error: None,
+    });
+    self.running_scans.push(flight);
+    if close_now {
+      self.close_flight(flight, None);
+    }
+  }
+
+  fn take_scan_flight(&mut self) -> usize {
+    match self.free_scan_flights.pop() {
+      Some(flight) => flight,
+      None => {
+        self.scan_flights.push(None);
+        self.scan_flights.len() - 1
+      }
+    }
+  }
+
+  /// An idle scan of the shape: one kept, or a new one.
+  fn scan_for(&mut self, shape: &Arc<ScanShape>) -> Result<ScanId, IcError> {
+    let pool = match self.scan_pool_of.get(&shape.id()) {
+      Some(index) => *index,
+      None => {
+        self.scan_pools.push(ScanPool {
+          id: shape.id(),
+          shape: Arc::downgrade(shape),
+          idle: Vec::new(),
+        });
+        let index = self.scan_pools.len() - 1;
+        self.scan_pool_of.insert(shape.id(), index);
+        index
+      }
+    };
+    if let Some(scan) = self.scan_pools[pool].idle.pop() {
+      return Ok(scan);
+    }
+    self.conn.create_scan(shape.table(), shape.record())
+  }
+
+  /// An idle scan back to its shape's pool, or let go of if the shape
+  /// has none.
+  fn give_back_scan(&mut self, shape_id: u64, scan: ScanId) {
+    match self.scan_pool_of.get(&shape_id) {
+      Some(index) => self.scan_pools[*index].idle.push(scan),
+      None => {
+        let _ = self.conn.free_scan(scan);
+      }
+    }
+  }
+
+  /// Move every complete batch to its reader, and wake the reader if it
+  /// sleeps. A batch of a run reading ahead is handed back at once; any
+  /// other stays with the executor's connection until the reader hands
+  /// it back. One whose reader is closing stays for the close to let
+  /// go of.
+  fn take_scan_batches(&mut self) {
+    while let Some(batch) = self.conn.get_next_scan_batch() {
+      let flight = match self.conn.scan(batch.scan()) {
+        Some(scan) => scan.user_ref(),
+        None => continue,
+      };
+      let (feed, run, read_ahead) =
+        match self.scan_flights.get(flight).and_then(Option::as_ref) {
+          Some(entry) if entry.scan == batch.scan() => (
+            Arc::clone(&entry.work.feed),
+            entry.work.run,
+            entry.work.args.read_ahead,
+          ),
+          _ => continue,
+        };
+      let mut state = feed.state.lock();
+      if state.run != run || state.done || state.closing {
+        continue;
+      }
+      let mut moved = state.spare.pop().unwrap_or_default();
+      if !self
+        .conn
+        .swap_scan_batch(batch, &mut moved.rows, &mut moved.row_ends)
+      {
+        state.spare.push(moved);
+        continue;
+      }
+      moved.run = run;
+      moved.batch = Some(batch);
+      state.full.push_back(moved);
+      let wake = state.reader_waiting;
+      state.reader_waiting = false;
+      drop(state);
+      if wake {
+        feed.cond.signal();
+      }
+      if read_ahead {
+        let _ = self.conn.release_scan_batch(batch);
+      }
+    }
+  }
+
+  /// Serve the readers' nudges: hand back to their receivers the
+  /// batches they have read, and close the scans they asked to close.
+  fn take_nudges(&mut self) {
+    let mut nudges = std::mem::take(&mut self.nudges);
+    for word in &nudges {
+      self.serve_nudge(*word as usize);
+    }
+    nudges.clear();
+    self.nudges = nudges;
+  }
+
+  fn serve_nudge(&mut self, flight: usize) {
+    let (feed, run, read_ahead) =
+      match self.scan_flights.get(flight).and_then(Option::as_ref) {
+        Some(entry) => (
+          Arc::clone(&entry.work.feed),
+          entry.work.run,
+          entry.work.args.read_ahead,
+        ),
+        // A nudge for a scan that has ended since.
+        None => return,
+      };
+    let mut back = std::mem::take(&mut self.scan_back);
+    let closing = {
+      let mut state = feed.state.lock();
+      if state.run != run {
+        drop(state);
+        self.scan_back = back;
+        return;
+      }
+      state.nudged = false;
+      std::mem::swap(&mut state.back, &mut back);
+      state.closing
+    };
+    for used in &mut back {
+      if !read_ahead && used.run == run {
+        if let Some(batch) = used.batch {
+          // Its receiver goes on with the next send.
+          let _ = self.conn.release_scan_batch(batch);
+        }
+      }
+      used.clear();
+    }
+    if !back.is_empty() {
+      feed.state.lock().spare.append(&mut back);
+    }
+    self.scan_back = back;
+    if closing {
+      self.close_flight(flight, None);
+    }
+  }
+
+  /// Close a running scan, once, its reader to be told `error` if it
+  /// is given, in place of the scan's own outcome.
+  fn close_flight(&mut self, flight: usize, error: Option<IcError>) {
+    let scan = match self.scan_flights.get_mut(flight).and_then(Option::as_mut)
+    {
+      Some(entry) => {
+        if entry.error.is_none() {
+          entry.error = error;
+        }
+        if entry.closed {
+          return;
+        }
+        entry.closed = true;
+        entry.scan
+      }
+      None => return,
+    };
+    let _ = self.conn.close_scan(scan);
+  }
+
+  /// Tell the reader of every scan whose run has ended how it ended,
+  /// and keep the scan for the next run of its shape.
+  fn finish_scans(&mut self) {
+    let mut at: usize = 0;
+    while at < self.running_scans.len() {
+      let flight = self.running_scans[at];
+      let scan = match self.scan_flights.get(flight).and_then(Option::as_ref) {
+        Some(entry) => entry.scan,
+        None => {
+          self.running_scans.swap_remove(at);
+          continue;
+        }
+      };
+      if !self.conn.scan_done(scan) {
+        at += 1;
+        continue;
+      }
+      self.running_scans.swap_remove(at);
+      let entry = self.scan_flights.get_mut(flight).and_then(Option::take);
+      self.free_scan_flights.push(flight);
+      if let Some(mut entry) = entry {
+        let mut error = entry.error;
+        if error.is_none() {
+          error = self.conn.scan(scan).and_then(|done| done.error());
+        }
+        entry.work.finish(error);
+        self.give_back_scan(entry.work.shape.id(), scan);
+      }
+    }
+  }
+
+  /// The executor stops: scans waiting fail with
+  /// `IC_ERROR_EXECUTOR_STOPPED`, and those running are closed, their
+  /// readers told the same.
+  fn stop_scans(&mut self) {
+    let stopped = IcError::new(err::IC_ERROR_EXECUTOR_STOPPED);
+    while let Some(mut work) = self.scan_queue.pop_front() {
+      work.finish(Some(stopped));
+    }
+    let mut at: usize = 0;
+    while at < self.running_scans.len() {
+      let flight = self.running_scans[at];
+      self.close_flight(flight, Some(stopped));
+      at += 1;
     }
   }
 

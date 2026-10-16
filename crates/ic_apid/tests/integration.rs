@@ -86,6 +86,8 @@ use ic_apid::scan::ScanArgs;
 use ic_apid::scan::ScanBatchId;
 use ic_apid::scan::ScanId;
 use ic_apid::scan::ScanLock;
+use ic_apid::scan_reader::ScanReader;
+use ic_apid::scan_reader::ScanShape;
 use ic_apid::text_row;
 use ic_apid::transaction::CommitState;
 use ic_apid::transaction::TransactionHint;
@@ -1669,7 +1671,11 @@ fn uk_transactions_start_where_the_index_row_is() {
 
 /// An executor on the cluster, with these limits.
 fn executor_with(cluster: &Cluster, in_flight: u32, queue: u32) -> Executor {
-  let options = ExecutorOptions { in_flight, queue };
+  let options = ExecutorOptions {
+    in_flight,
+    queue,
+    ..ExecutorOptions::default()
+  };
   Executor::start(&cluster.global, &options).expect("an executor")
 }
 
@@ -2870,7 +2876,7 @@ fn put_raw(
   let size = field.size() as usize;
   match attr.array_kind {
     ic_signals::table_props::IC_ARRAY_KIND_SHORT_VARSIZE => {
-      assert!(1 + bytes.len() <= size, "{} bytes do not fit", bytes.len());
+      assert!(bytes.len() < size, "{} bytes do not fit", bytes.len());
       row[at] = bytes.len() as u8;
       row[at + 1..at + 1 + bytes.len()].copy_from_slice(bytes);
     }
@@ -4510,7 +4516,8 @@ fn scan_reads_into_a_record_of_its_own() {
           .parse()
           .expect("an id");
         let name = text_row::value_text(&narrow, name_at, &row);
-        assert_eq!(name, format!("r{}", id % 10));
+        // Text as `value_text` gives it: quoted.
+        assert_eq!(name, format!("'r{}'", id % 10));
         rows += 1;
       }
       conn.release_scan_batch(batch).expect("hand back");
@@ -4566,4 +4573,371 @@ fn scan_waits_on_a_locked_row_until_the_deadlock_timeout() {
   let (ids, _, error) = scan_ids(&mut conn, &t, scan, &args);
   assert!(error.is_none(), "{:?}", error);
   assert!(every_row_once(&ids));
+}
+
+/// Every id a run of `scan` reads row by row with `next_row`, and how
+/// it ended.
+fn scan_rows(
+  conn: &mut ApidConnection,
+  t: &Table,
+  scan: ScanId,
+  args: &ScanArgs,
+) -> (Vec<i64>, Option<IcError>) {
+  conn.start_scan(scan, args).expect("start the scan");
+  let mut ids: Vec<i64> = Vec::new();
+  loop {
+    match conn.next_row(scan) {
+      Ok(true) => {
+        let id = t.get(conn.scan_row(scan), "id");
+        ids.push(id.parse().expect("an id"));
+      }
+      Ok(false) => return (ids, None),
+      Err(e) => return (ids, Some(e)),
+    }
+  }
+}
+
+#[test]
+fn scan_read_row_by_row_on_a_connection() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_scan_table().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("connection");
+  let t = bind(&mut conn, "scan");
+  let scan = conn.create_scan(&t.def, &t.rec).expect("create the scan");
+  // Not started: nothing to read.
+  assert!(!conn.next_row(scan).expect("no run"));
+  for lock in [ScanLock::Committed, ScanLock::Shared, ScanLock::Exclusive] {
+    let args = ScanArgs {
+      lock,
+      batch_rows: 100,
+      timeout_ms: IC_IT_SCAN_WAIT_MS as u32,
+      ..ScanArgs::default()
+    };
+    let (ids, error) = scan_rows(&mut conn, &t, scan, &args);
+    assert!(error.is_none(), "{:?}: {:?}", lock, error);
+    assert!(every_row_once(&ids), "{:?}: {} rows", lock, ids.len());
+    assert_eq!(
+      conn.scan(scan).expect("the scan").rows_read(),
+      ids.len() as u64
+    );
+    // Read to the end, it stays so.
+    assert!(!conn.next_row(scan).expect("the end again"));
+  }
+  // Into a buffer of the caller's.
+  conn.start_scan(scan, &ScanArgs::default()).expect("start");
+  let mut row = t.row();
+  let mut ids: Vec<i64> = Vec::new();
+  while conn.next_row_into(scan, &mut row).expect("a row") {
+    ids.push(t.get(&row, "id").parse().expect("an id"));
+  }
+  assert!(every_row_once(&ids), "{} rows", ids.len());
+  // A batch at a time, each handed back by the test.
+  conn.start_scan(scan, &ScanArgs::default()).expect("start");
+  let mut ids: Vec<i64> = Vec::new();
+  let mut batches: u32 = 0;
+  while let Some(batch) = conn.next_batch(scan).expect("a batch") {
+    batches += 1;
+    while conn.next_scan_row(batch).expect("a row") {
+      ids.push(t.get(conn.scan_row(scan), "id").parse().expect("an id"));
+    }
+    conn.release_scan_batch(batch).expect("hand back");
+  }
+  assert!(every_row_once(&ids), "{} rows", ids.len());
+  assert!(batches > 1, "{} batches", batches);
+  assert_eq!(conn.unexpected(), 0);
+}
+
+/// A scan's callback that hands each batch back unread.
+fn hand_back_at_once(conn: &mut ApidConnection, batch: ScanBatchId, _: usize) {
+  conn.release_scan_batch(batch).expect("hand back");
+}
+
+#[test]
+fn scan_row_by_row_beside_another_scan() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_scan_table().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("connection");
+  let t = bind(&mut conn, "scan");
+  let first = conn.create_scan(&t.def, &t.rec).expect("the first scan");
+  let second = conn.create_scan(&t.def, &t.rec).expect("the second scan");
+  let small = ScanArgs {
+    batch_rows: 100,
+    timeout_ms: IC_IT_SCAN_WAIT_MS as u32,
+    ..ScanArgs::default()
+  };
+  // The second's batches pile up on the ready list while the first is
+  // read row by row, which takes only its own.
+  conn.start_scan(second, &small).expect("start the second");
+  let (ids, error) = scan_rows(&mut conn, &t, first, &small);
+  assert!(error.is_none(), "{:?}", error);
+  assert!(every_row_once(&ids), "{} rows", ids.len());
+  let mut ids: Vec<i64> = Vec::new();
+  let start = time::gethrtime();
+  while !conn.scan_done(second) {
+    conn.poll(100);
+    while let Some(batch) = conn.get_next_scan_batch() {
+      assert_eq!(batch.scan(), second, "the first's batches were its own");
+      while conn.next_scan_row(batch).expect("a row") {
+        ids.push(t.get(conn.scan_row(second), "id").parse().expect("an id"));
+      }
+      conn.release_scan_batch(batch).expect("hand back");
+    }
+    let waited = time::millis_elapsed(start, time::gethrtime());
+    assert!(waited < IC_IT_SCAN_WAIT_MS, "the second did not end");
+  }
+  assert!(every_row_once(&ids), "{} rows", ids.len());
+  // A scan whose batches go to a callback is not read row by row.
+  let called = ScanArgs {
+    callback: Some(hand_back_at_once),
+    ..ScanArgs::default()
+  };
+  conn
+    .start_scan(first, &called)
+    .expect("start with a callback");
+  let e = conn.next_row(first).expect_err("refused");
+  assert_eq!(e.code, err::IC_ERROR_NOT_SUPPORTED);
+  let start = time::gethrtime();
+  while !conn.scan_done(first) {
+    conn.poll(100);
+    let waited = time::millis_elapsed(start, time::gethrtime());
+    assert!(waited < IC_IT_SCAN_WAIT_MS, "the callback scan did not end");
+  }
+  // Read ahead is for executors.
+  let ahead = ScanArgs {
+    read_ahead: true,
+    ..ScanArgs::default()
+  };
+  let e = conn.start_scan(first, &ahead).expect_err("refused");
+  assert_eq!(e.code, err::IC_ERROR_NOT_SUPPORTED);
+  assert_eq!(conn.unexpected(), 0);
+}
+
+/// The `scan` table bound through a submitter, and a scan shape over
+/// it.
+fn scan_through(submitter: &Submitter) -> (Table, Arc<ScanShape>) {
+  let def = submitter.table_bind(IC_IT_DB, "scan").expect("bind scan");
+  let rec = Record::default_for(&def, None).expect("a record");
+  let shape = ScanShape::new(&def, &rec).expect("a scan shape");
+  (Table { def, rec }, shape)
+}
+
+/// Every id a reader's run reads, and how it ended.
+fn reader_ids(
+  reader: &mut ScanReader,
+  t: &Table,
+) -> (Vec<i64>, Option<IcError>) {
+  let mut ids: Vec<i64> = Vec::new();
+  loop {
+    match reader.next_row() {
+      Ok(true) => ids.push(t.get(reader.row(), "id").parse().expect("an id")),
+      Ok(false) => return (ids, None),
+      Err(e) => return (ids, Some(e)),
+    }
+  }
+}
+
+/// A scan through an executor, closed by its deadline if it hangs.
+fn bounded(lock: ScanLock, read_ahead: bool) -> ScanArgs {
+  ScanArgs {
+    lock,
+    read_ahead,
+    batch_rows: 100,
+    timeout_ms: IC_IT_SCAN_WAIT_MS as u32,
+    ..ScanArgs::default()
+  }
+}
+
+#[test]
+fn scan_through_an_executor() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_scan_table().is_none() {
+    return;
+  }
+  let executor = executor_with(&cluster, 400, 4000);
+  let submitter = executor.submitter();
+  let (t, shape) = scan_through(&submitter);
+  let mut reader = ScanReader::new(&shape);
+  assert!(reader.is_done(), "no run yet");
+  assert!(!reader.next_row().expect("no run"));
+  let modes = [
+    (ScanLock::Committed, false),
+    (ScanLock::Committed, true),
+    (ScanLock::Shared, false),
+    (ScanLock::Exclusive, false),
+  ];
+  for (lock, read_ahead) in modes {
+    // The same reader, run after run.
+    let mut run: u32 = 0;
+    while run < 2 {
+      submitter
+        .scan(&mut reader, &bounded(lock, read_ahead))
+        .expect("submit the scan");
+      let (ids, error) = reader_ids(&mut reader, &t);
+      assert!(error.is_none(), "{:?} {}: {:?}", lock, read_ahead, error);
+      assert!(every_row_once(&ids), "{:?}: {} rows", lock, ids.len());
+      assert_eq!(reader.rows_read(), ids.len() as u64);
+      assert!(reader.is_done());
+      run += 1;
+    }
+  }
+  // Into a buffer of the caller's.
+  submitter
+    .scan(&mut reader, &bounded(ScanLock::Committed, false))
+    .expect("submit");
+  let mut row = t.row();
+  let mut ids: Vec<i64> = Vec::new();
+  while reader.next_row_into(&mut row).expect("a row") {
+    ids.push(t.get(&row, "id").parse().expect("an id"));
+  }
+  assert!(every_row_once(&ids), "{} rows", ids.len());
+  assert_eq!(executor.stats().scans, 9);
+}
+
+#[test]
+fn scan_through_an_executor_closed_early_dropped_and_refused() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_scan_table().is_none() {
+    return;
+  }
+  let executor = executor_with(&cluster, 400, 4000);
+  let submitter = executor.submitter();
+  let (t, shape) = scan_through(&submitter);
+  for lock in [ScanLock::Committed, ScanLock::Exclusive] {
+    let mut reader = ScanReader::new(&shape);
+    // A few rows, then a close, which waits for the executor.
+    submitter
+      .scan(&mut reader, &bounded(lock, false))
+      .expect("submit");
+    let mut read: u32 = 0;
+    while read < 10 {
+      assert!(reader.next_row().expect("a row"));
+      read += 1;
+    }
+    // Not over: a second run is refused.
+    let e = submitter
+      .scan(&mut reader, &bounded(lock, false))
+      .expect_err("refused");
+    assert_eq!(e.code, err::IC_ERROR_SCAN_ACTIVE);
+    reader.close();
+    assert!(reader.is_done());
+    assert!(reader.error().is_none(), "{:?}", reader.error());
+    assert!(!reader.next_row().expect("closed"));
+    // Then a whole run on the same reader.
+    submitter
+      .scan(&mut reader, &bounded(lock, false))
+      .expect("submit");
+    let (ids, error) = reader_ids(&mut reader, &t);
+    assert!(error.is_none(), "{:?}", error);
+    assert!(every_row_once(&ids), "{} rows", ids.len());
+    // A reader dropped in the middle of a run: the executor closes its
+    // scan, and the next reader reads everything.
+    let mut dropped = ScanReader::new(&shape);
+    submitter
+      .scan(&mut dropped, &bounded(lock, false))
+      .expect("submit");
+    assert!(dropped.next_row().expect("a row"));
+    drop(dropped);
+    let mut next = ScanReader::new(&shape);
+    submitter
+      .scan(&mut next, &bounded(lock, false))
+      .expect("submit");
+    let (ids, error) = reader_ids(&mut next, &t);
+    assert!(error.is_none(), "{:?}", error);
+    assert!(every_row_once(&ids), "{} rows", ids.len());
+  }
+  // What an executor's scan cannot be.
+  let mut reader = ScanReader::new(&shape);
+  let ahead = bounded(ScanLock::Shared, true);
+  let e = submitter.scan(&mut reader, &ahead).expect_err("refused");
+  assert_eq!(e.code, err::IC_ERROR_NOT_SUPPORTED);
+  let called = ScanArgs {
+    callback: Some(hand_back_at_once),
+    ..ScanArgs::default()
+  };
+  let e = submitter.scan(&mut reader, &called).expect_err("refused");
+  assert_eq!(e.code, err::IC_ERROR_NOT_SUPPORTED);
+  assert!(reader.is_done(), "a refused run never began");
+  // A stopped executor refuses, and the reader is free to try again.
+  drop(executor);
+  let e = submitter
+    .scan(&mut reader, &bounded(ScanLock::Committed, false))
+    .expect_err("stopped");
+  assert_eq!(e.code, err::IC_ERROR_EXECUTOR_STOPPED);
+  assert!(reader.is_done());
+  assert_eq!(
+    reader.next_row().expect_err("the refusal").code,
+    err::IC_ERROR_EXECUTOR_STOPPED
+  );
+}
+
+#[test]
+fn scan_a_slow_reader_stalls_only_its_own_scan() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_scan_table().is_none() {
+    return;
+  }
+  // Two scans at a time for six readers: four wait their turn.
+  let options = ExecutorOptions {
+    scans: 2,
+    ..ExecutorOptions::default()
+  };
+  let executor = Executor::start(&cluster.global, &options).expect("executor");
+  let submitter = executor.submitter();
+  let (t, shape) = scan_through(&submitter);
+  // A reader that reads one row and then holds its batch for a while.
+  let mut slow = ScanReader::new(&shape);
+  submitter
+    .scan(&mut slow, &bounded(ScanLock::Committed, false))
+    .expect("submit the slow one");
+  assert!(slow.next_row().expect("a row"));
+  let held = time::gethrtime();
+  // Meanwhile other threads' scans run to the end, one at a time on the
+  // other place.
+  std::thread::scope(|scope| {
+    let mut handles = Vec::new();
+    let mut k: u32 = 0;
+    while k < 5 {
+      let mine = executor.submitter();
+      let (t, shape) = (&t, &shape);
+      handles.push(scope.spawn(move || {
+        let mut reader = ScanReader::new(shape);
+        mine
+          .scan(&mut reader, &bounded(ScanLock::Committed, k % 2 == 1))
+          .expect("submit");
+        let (ids, error) = reader_ids(&mut reader, t);
+        assert!(error.is_none(), "{:?}", error);
+        assert!(every_row_once(&ids), "{} rows", ids.len());
+      }));
+      k += 1;
+    }
+    for handle in handles {
+      handle.join().expect("a reader thread");
+    }
+  });
+  let others = time::millis_elapsed(held, time::gethrtime());
+  println!("five scans while one was held: {} ms", others);
+  // The slow one goes on where it stopped.
+  let (ids, error) = reader_ids(&mut slow, &t);
+  assert!(error.is_none(), "{:?}", error);
+  assert_eq!(ids.len() as i64, IC_IT_SCAN_ROWS - 1);
+  assert_eq!(executor.stats().scans, 6);
 }

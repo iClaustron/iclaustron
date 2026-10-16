@@ -53,6 +53,7 @@ use ic_util::ptr_array::PtrId;
 use crate::apid_conn::coord_index_of;
 use crate::apid_conn::ApidConnection;
 use crate::apid_conn::CoordRecord;
+use crate::apid_conn::IC_CALL_SLICE_MS;
 use crate::dict_cache::TableDef;
 use crate::node_connect::SignalView;
 use crate::query::TransId;
@@ -70,6 +71,15 @@ pub(crate) const IC_RECEIVER_TAG: u32 = 0x0080_0000;
 
 /// NDB's error for a scan whose coordinator's node failed.
 pub const IC_NDB_ERROR_SCAN_NODE_FAILURE: i32 = 4028;
+/// NDB's error for a scan the coordinator has no room for: too many
+/// scans run at once. Temporary.
+pub const IC_NDB_ERROR_TOO_MANY_SCANS: i32 = 245;
+/// NDB's error for a scan that waited too long for a lock, probably in
+/// a deadlock. Temporary.
+pub const IC_NDB_ERROR_SCAN_LOCK_TIMEOUT: i32 = 274;
+/// NDB's error for a scan left too long without asking for more, as
+/// when a batch is not handed back (chapter 05 §7.2). Temporary.
+pub const IC_NDB_ERROR_SCAN_IDLE: i32 = 296;
 
 /// True if an object map id fits below the receiver tag, as a query's
 /// and a receiver's must.
@@ -107,6 +117,22 @@ impl ScanBatchId {
   /// The scan the batch is of.
   pub fn scan(&self) -> ScanId {
     self.scan
+  }
+
+  /// The batch as one word, for a language binding: the scan's id in
+  /// the high half and the receiver's in the low.
+  pub fn as_u64(&self) -> u64 {
+    ((self.scan.as_u32() as u64) << 32) | self.receiver as u64
+  }
+
+  /// A batch from its word, as a language binding hands it back.
+  /// Whether it is still with the application is for the connection to
+  /// say.
+  pub fn from_u64(word: u64) -> ScanBatchId {
+    ScanBatchId {
+      scan: ScanId::from_u32((word >> 32) as u32),
+      receiver: word as u32,
+    }
   }
 }
 
@@ -151,6 +177,12 @@ pub struct ScanArgs {
   /// Close the scan with `IC_ERROR_TIMEOUT` if it is still running this
   /// long after it was started, in milliseconds; 0 for no limit.
   pub timeout_ms: u32,
+  /// For a committed read through an executor: let a receiver go on as
+  /// soon as its batch has moved to the reader, rather than once the
+  /// reader hands it back (chapter 04, "Consuming scans"). Refused for
+  /// a locking scan, and on a connection, where the application hands
+  /// each batch back itself.
+  pub read_ahead: bool,
   /// Anything, given back to the callback.
   pub user_ref: usize,
   /// Called with each batch as it completes, in place of the ready
@@ -293,6 +325,8 @@ pub struct Scan {
   deadline: u64,
   /// Rows read from the batches of the run so far.
   rows_read: u64,
+  /// The batch [`next_row`](ApidConnection::next_row) reads from.
+  reading: Option<ScanBatchId>,
 }
 
 impl std::fmt::Debug for Scan {
@@ -315,11 +349,7 @@ impl Scan {
   /// A scan of `table` reading the columns of `rec`, which must be over
   /// this version of it.
   pub fn new(table: &Arc<TableDef>, rec: &Record) -> Result<Scan, IcError> {
-    let over = rec.table().table_id() == table.table_id()
-      && rec.table().table_version() == table.table_version();
-    if !over {
-      return Err(IcError::new(err::IC_ERROR_KEY_RECORD));
-    }
+    check_scan_record(table, rec)?;
     let mut read_part: Vec<u32> = Vec::new();
     row_codec::read_attr_info_into(rec, &mut read_part);
     Ok(Scan {
@@ -349,6 +379,7 @@ impl Scan {
       coord_done: false,
       deadline: 0,
       rows_read: 0,
+      reading: None,
     })
   }
 
@@ -479,6 +510,19 @@ impl Scan {
   }
 }
 
+/// Refuse a record that is not over this version of the table.
+pub(crate) fn check_scan_record(
+  table: &TableDef,
+  rec: &Record,
+) -> Result<(), IcError> {
+  let over = rec.table().table_id() == table.table_id()
+    && rec.table().table_version() == table.table_version();
+  if !over {
+    return Err(IcError::new(err::IC_ERROR_KEY_RECORD));
+  }
+  Ok(())
+}
+
 /// The rows and bytes a receiver's batch may hold: the run's own, or
 /// the configuration's, the bytes kept within the total for every
 /// receiver together, and the rows within what the lock allows
@@ -590,6 +634,10 @@ impl ApidConnection {
       }
       None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
     };
+    if args.read_ahead {
+      // The application holds each batch and hands it back itself.
+      return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
+    }
     // Where the run goes, and under which id: the transaction's
     // coordinator and id when its rows may be taken over, else a node
     // chosen as for a transaction and an id of its own.
@@ -698,6 +746,7 @@ impl ApidConnection {
       scan.coord_done = false;
       scan.deadline = deadline;
       scan.rows_read = 0;
+      scan.reading = None;
     }
     self.scan_receiver_ids = ids;
     self.scans_live.push(id);
@@ -916,6 +965,31 @@ impl ApidConnection {
     Ok(true)
   }
 
+  /// Trade a batch's rows and their ends for the buffers given, which
+  /// must be empty: an executor moves a batch to its reader so, without
+  /// copying a row. The batch stays with the application until it is
+  /// handed back. False if the batch is not with the application.
+  pub(crate) fn swap_scan_batch(
+    &mut self,
+    batch: ScanBatchId,
+    rows: &mut Vec<u32>,
+    row_ends: &mut Vec<u32>,
+  ) -> bool {
+    let place = match self.ready_receiver(batch) {
+      Some(place) => place,
+      None => return false,
+    };
+    match self.scans.get_mut(batch.scan.0) {
+      Some(scan) => {
+        let receiver = &mut scan.receivers[place as usize];
+        std::mem::swap(&mut receiver.rows, rows);
+        std::mem::swap(&mut receiver.row_ends, row_ends);
+        true
+      }
+      None => false,
+    }
+  }
+
   /// Hand a batch back: its receiver is asked for more with the next
   /// send, or gives no more if that was its last. A batch of a run that
   /// is closing is let go of, and one of a run that has ended is passed
@@ -989,6 +1063,135 @@ impl ApidConnection {
     }
     self.close_when_settled(id);
     Ok(())
+  }
+
+  // ---- Reading row by row ----
+
+  /// Read the scan's next row into its row (`Scan::row`): the scan as a
+  /// stream of rows (chapter 04, "Consuming scans"). When the batch
+  /// being read is used up it is handed back, so that its receiver goes
+  /// on, and the scan's next complete batch is taken, polling while
+  /// none is; every other scan and query of the connection is served
+  /// meanwhile. False once the run has read to the end or was closed,
+  /// or for a scan not started; the run's error once it has failed.
+  /// Refused for a scan with a callback, and inside a callback once it
+  /// would have to wait (`IC_ERROR_NOT_SUPPORTED`).
+  pub fn next_row(&mut self, id: ScanId) -> Result<bool, IcError> {
+    self.next_row_with(id, None)
+  }
+
+  /// As [`next_row`](Self::next_row), into `row`, a buffer of the
+  /// caller's laid out by the scan's record, a copy less.
+  pub fn next_row_into(
+    &mut self,
+    id: ScanId,
+    row: &mut [u8],
+  ) -> Result<bool, IcError> {
+    self.next_row_with(id, Some(row))
+  }
+
+  fn next_row_with(
+    &mut self,
+    id: ScanId,
+    mut row: Option<&mut [u8]>,
+  ) -> Result<bool, IcError> {
+    loop {
+      let reading = match self.scans.get(id.0) {
+        Some(scan) => scan.reading,
+        None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
+      };
+      if let Some(batch) = reading {
+        // A batch let go of meanwhile, by a close or a failure, is
+        // passed over.
+        if self.ready_receiver(batch).is_some() {
+          let more = match row.as_deref_mut() {
+            Some(into) => self.next_scan_row_into(batch, into)?,
+            None => self.next_scan_row(batch)?,
+          };
+          if more {
+            return Ok(true);
+          }
+          self.release_scan_batch(batch)?;
+        }
+        if let Some(scan) = self.scans.get_mut(id.0) {
+          scan.reading = None;
+        }
+      }
+      match self.wait_scan_batch(id)? {
+        Some(batch) => {
+          if let Some(scan) = self.scans.get_mut(id.0) {
+            scan.reading = Some(batch);
+          }
+        }
+        None => return Ok(false),
+      }
+    }
+  }
+
+  /// The scan's next complete batch, waiting as
+  /// [`next_row`](Self::next_row) does; none once the run is over with
+  /// no error. The application reads its rows with
+  /// [`next_scan_row`](Self::next_scan_row) and hands it back itself.
+  pub fn next_batch(
+    &mut self,
+    id: ScanId,
+  ) -> Result<Option<ScanBatchId>, IcError> {
+    self.wait_scan_batch(id)
+  }
+
+  /// Wait for a batch of this scan, polling.
+  fn wait_scan_batch(
+    &mut self,
+    id: ScanId,
+  ) -> Result<Option<ScanBatchId>, IcError> {
+    loop {
+      let (state, error) = match self.scans.get(id.0) {
+        Some(scan) => {
+          if scan.callback.is_some() {
+            return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
+          }
+          (scan.state, scan.error)
+        }
+        None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
+      };
+      if let Some(batch) = self.take_ready_batch_of(id) {
+        return Ok(Some(batch));
+      }
+      match state {
+        ScanState::Idle => return Ok(None),
+        ScanState::Done => {
+          return match error {
+            Some(e) => Err(e),
+            None => Ok(None),
+          };
+        }
+        _ => {}
+      }
+      if self.in_callback > 0 {
+        // A poll does nothing inside a callback.
+        return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
+      }
+      self.poll(IC_CALL_SLICE_MS);
+    }
+  }
+
+  /// The oldest batch of this scan on the ready list, taken off it;
+  /// the other scans' batches stay. A batch of the scan no longer with
+  /// the application is dropped from the list on the way.
+  fn take_ready_batch_of(&mut self, id: ScanId) -> Option<ScanBatchId> {
+    let mut at: usize = 0;
+    while at < self.ready_batches.len() {
+      let batch = self.ready_batches[at];
+      if batch.scan != id {
+        at += 1;
+        continue;
+      }
+      let _ = self.ready_batches.remove(at);
+      if self.ready_receiver(batch).is_some() {
+        return Some(batch);
+      }
+    }
+    None
   }
 
   // ---- Sending ----
@@ -1657,6 +1860,17 @@ mod tests {
     let receiver = (1 << 24) | 5 | IC_RECEIVER_TAG;
     assert_ne!(receiver, (1 << 24) | 5);
     assert_eq!(receiver & !IC_RECEIVER_TAG, (1 << 24) | 5);
+  }
+
+  #[test]
+  fn a_batch_id_crosses_as_one_word_and_back() {
+    let batch = ScanBatchId {
+      scan: ScanId::from_u32((3 << 24) | 17),
+      receiver: (5 << 24) | 2 | IC_RECEIVER_TAG,
+    };
+    let back = ScanBatchId::from_u64(batch.as_u64());
+    assert_eq!(back, batch);
+    assert_eq!(back.scan(), batch.scan());
   }
 
   #[test]

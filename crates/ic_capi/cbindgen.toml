@@ -35,17 +35,20 @@ after_includes = """
  *
  * Handles. IC_APID_GLOBAL, IC_APID_CONNECTION, IC_TABLE_DEF,
  * IC_INDEX_DEF, IC_RECORD, IC_APID_EXECUTOR, IC_APID_SUBMITTER,
- * IC_OP_SHAPE and IC_REQUEST are made by one function and given back to
- * their _free; the caller owns each until then. A connection, and an
- * executor, is freed before its global; a table, index or record handle
- * may outlive the connection that made it, a query keeps what it needs
- * of its records, and a request what it needs of its shapes. A NULL
+ * IC_OP_SHAPE, IC_REQUEST, IC_SCAN_SHAPE and IC_SCAN_READER are made by
+ * one function and given back to their _free; the caller owns each
+ * until then. A connection, and an executor, is freed before its
+ * global; a table, index or record handle may outlive the connection
+ * that made it, a query or scan keeps what it needs of its records, and
+ * a request or reader what it needs of its shapes. A NULL
  * handle or out pointer gives IC_ERROR_NULL_POINTER; a handle freed, or
  * never made, is undefined behaviour.
  *
- * Ids. A query (IC_QUERY_ID) and a transaction (IC_TRANS_ID) are named
- * by an id in their connection. An id that names nothing any more,
- * freed or closed, is refused with an error, never followed.
+ * Ids. A query (IC_QUERY_ID), a transaction (IC_TRANS_ID) and a scan
+ * (IC_SCAN_ID) are named by an id in their connection, and a scan's
+ * batch by an IC_SCAN_BATCH_ID. An id that names nothing any more,
+ * freed, closed or handed back, is refused with an error or passed
+ * over, never followed.
  *
  * Rows. A query owns its rows: ic_apid_query_key_row() and
  * ic_apid_query_attr_row() give pointers valid until the query is
@@ -55,6 +58,9 @@ after_includes = """
  * they are the library's. A request's operations own their rows the
  * same way (ic_request_key_row(), ic_request_attr_row()), valid until
  * the request is freed or cleared, and the library's while it runs.
+ * A scan, and a scan reader, owns its row (ic_apid_scan_row(),
+ * ic_scan_reader_row()), valid until it is freed and overwritten by
+ * each row read; the _into calls read into the program's row instead.
  * The synchronous calls take the program's own rows, and copy.
  *
  * Strings. Strings in are NUL-terminated UTF-8, and copied. A string
@@ -62,10 +68,12 @@ after_includes = """
  * from; an error's text is copied into the caller's buffer.
  *
  * Structs with a size. IC_GLOBAL_OPTIONS, IC_EXECUTOR_OPTIONS,
- * IC_READ_KEY_ARGS and IC_WRITE_KEY_ARGS are filled by their
- * _init(&s, sizeof s) before the program sets what it wants;
+ * IC_READ_KEY_ARGS, IC_WRITE_KEY_ARGS and IC_SCAN_ARGS are filled by
+ * their _init(&s, sizeof s) before the program sets what it wants;
  * IC_FIELD_INFO and IC_EXECUTOR_STATS are given with their size. A
- * later release adds fields at the end.
+ * later release adds fields at the end, and a program built against an
+ * older header gets the fields it knows: IC_EXECUTOR_OPTIONS and
+ * IC_EXECUTOR_STATS gained `scans` after 0.1.
  *
  * Threads. The functions that take no handle (ic_api_version,
  * ic_error_*, ic_field_type_name, the _init functions) may be called
@@ -86,6 +94,19 @@ after_includes = """
  * ended. An executor, its shapes and its stats may be used from any
  * thread; a submitter and a request by one at a time.
  *
+ * Scans. A scan reads a table in batches, one receiver per fragment
+ * scanned at once. On a connection: ic_apid_scan_create() once,
+ * ic_apid_conn_start_scan() for each run, and the rows read either
+ * row by row with ic_apid_conn_next_row(), which polls while it waits,
+ * or a batch at a time, from the ready list or a callback, each batch
+ * handed back with ic_apid_conn_release_scan_batch(). A receiver is
+ * asked for more only once its batch is handed back, so the program
+ * sets the pace, and a locking scan's rows stay locked until then.
+ * Through an executor: a scan shape (ic_scan_shape_create()), a reader
+ * of it (ic_scan_reader_create()), ic_apid_submitter_scan() to run it,
+ * and ic_scan_reader_next_row(), which waits for the executor. A slow
+ * reader stalls only its own scan.
+ *
  * Panics. A panic inside the library returns IC_ERROR_INTERNAL_PANIC;
  * the connection it went through is unusable from then on, and every
  * call on it but its _free returns the same.
@@ -98,8 +119,8 @@ after_includes = """
 
 [export]
 prefix = ""
-# Named in the argument structs only by its shape; exported by name too.
-include = ["IcApidCallback"]
+# Named in the argument structs only by their shape; exported by name too.
+include = ["IcApidCallback", "IcScanCallback"]
 
 # The Rust names are CamelCase; the C ones are the header's.
 [export.rename]
@@ -123,6 +144,12 @@ include = ["IcApidCallback"]
 "IcRequest" = "IC_REQUEST"
 "IcExecutorOptions" = "IC_EXECUTOR_OPTIONS"
 "IcExecutorStats" = "IC_EXECUTOR_STATS"
+"IcScanId" = "IC_SCAN_ID"
+"IcScanBatchId" = "IC_SCAN_BATCH_ID"
+"IcScanCallback" = "IC_SCAN_CALLBACK"
+"IcScanArgs" = "IC_SCAN_ARGS"
+"IcScanShape" = "IC_SCAN_SHAPE"
+"IcScanReader" = "IC_SCAN_READER"
 
 [enum]
 prefix_with_name = false

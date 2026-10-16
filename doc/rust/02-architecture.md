@@ -496,6 +496,36 @@ The protocol is chapter 05 §7; this is how the connection runs it.
   link. A reading node's failure comes from the coordinator, as
   `SCAN_REF` 270.
 
+### Reading a scan, on a connection and on an executor (phase 8.4)
+
+- **Row by row on a connection.** `next_row` takes its own scan's
+  batches off the ready list, the oldest first, and hands each back
+  when its rows are read; while none is complete it polls, and the poll
+  serves everything else on the connection.
+- **On an executor**, the scan runs on the executor's connection, one
+  of the scans it keeps per scan shape, and the application thread
+  reads it through a `ScanReader`. Between the two is a feed, under a
+  mutex of its own: the batches for the reader, those handed back, the
+  empty buffers, and how the run stands.
+- **A batch** complete at the executor moves to the feed without a
+  copy: its receiver's row buffers change places with an empty pair.
+  The reader reads it on its own thread, and when it moves on, puts
+  it on the feed's hand-back list and leaves a nudge on the executor's
+  inbox: a word naming the scan, on a list of its own that neither a
+  full request list nor the in-flight limit holds back, and that wakes
+  the executor whenever it sleeps. One nudge waits per scan at most.
+  The executor, served the nudge, hands the batch back to its receiver,
+  which then asks for more (the author, 2026-10-16), and puts the
+  buffers among the spares. A committed read with `read_ahead` hands a
+  batch back as soon as it has moved.
+- **The end** of the run at the executor is written into the feed,
+  with its error, and wakes the reader if it waits. A failed run's
+  unread batches are dropped; a close drops them at once, and the
+  executor closes the scan when served the close's nudge. A reader
+  dropped closes its run without waiting for it. Buffers circulate,
+  receivers to reader to spares, and a run allocates nothing once they
+  have grown.
+
 ## Node failure flow
 
 1. **The link goes.** The node's socket closes, a send to it fails, or

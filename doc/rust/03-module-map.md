@@ -178,8 +178,9 @@ functions; explicit shifts and masks, no bit-field macros.
 | — | `hash.rs` | New | distribution key, hash choice per table, hash map → partition → node, with the data nodes' dynamic primary rule; location domain and host proximity still to come. The digests themselves are `ic_util::md5` and `ic_util::xxh3`, written from the public algorithms |
 | — | `row_codec.rs` | New | `ROW_DATA_REP` ↔ record row; COLUMN_DATA_ORD/KEY_DATA_ORD from record rows; first cut built: key, packed read request, packed row unpacked |
 | — | `key_op.rs` | New | the first key operation, a committed read waited for; a stepping stone to `transaction.rs` |
-| — | `scan.rs` | New | phase 8.3: scans on a connection, a coordinator record of their own from a pool per node and instance, receivers with ids apart from queries', batches copied out of the receive pages and handed back to go on, closes and failures (chapter 02, "Data flow for a scan"); takeover is 8.5 |
-| — | `executor.rs` | New | built in phase 8.1: a user thread running key operations for any number of application threads, which submit requests through `thread_conn.rs`'s second list; shapes, requests, completion slots and callbacks, the blocking `Submitter::execute` |
+| — | `scan.rs` | New | phase 8.3: scans on a connection, a coordinator record of their own from a pool per node and instance, receivers with ids apart from queries', batches copied out of the receive pages and handed back to go on, closes and failures (chapter 02, "Data flow for a scan"); phase 8.4: `next_row` and `next_batch`, reading a scan row by row; takeover is 8.5 |
+| — | `executor.rs` | New | built in phase 8.1: a user thread running key operations for any number of application threads, which submit requests through `thread_conn.rs`'s second list; shapes, requests, completion slots and callbacks, the blocking `Submitter::execute`; phase 8.4: scans for readers, with a limit and a queue of their own, served by nudges |
+| — | `scan_reader.rs` | New | phase 8.4: scan shapes, and the reader, an application thread's end of a scan an executor runs; the feed between the two, batches moved without a copy and handed back (chapter 02, "Reading a scan") |
 | `ic_apid_range.ic`, `ic_apid_tablespace.ic` | `range.rs`, `tablespace.rs` | later releases | |
 
 ## Crate `ic_capi` — New

@@ -40,6 +40,19 @@ The C code had no counterpart: its header was the API itself, with the
   request owns its operations' rows, and its handle stays the same box
   while `ic_apid_submitter_execute` moves the request to the executor
   and back, so the row pointers C holds stay valid across runs.
+- A scan crosses as its `u32` id, and a batch as a `u64`: the scan's id
+  high, its receiver's low (`ScanBatchId::as_u64`). A scan's C callback
+  goes through a trampoline of its own, the C function in the scan's
+  binding word. A scan shape and a reader are boxes of `Arc<ScanShape>`
+  and `ScanReader`; the reader's row pointer stays valid until it is
+  freed.
+- `IC_EXECUTOR_OPTIONS` and `IC_EXECUTOR_STATS` grew after 0.1. Their
+  fields are read and written through byte offsets (`offset_of!`,
+  `get_sized`, `put_sized`), each only if the size the caller gave
+  holds it, so that a program built against 0.1's header, whose
+  structs are shorter, is never read or written past their end. A
+  `&IcExecutorOptions` made from such a pointer would itself be wrong:
+  Rust takes a reference to promise the whole struct is there.
 
 ## Deviations from the C code
 

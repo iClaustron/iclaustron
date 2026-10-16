@@ -34,17 +34,20 @@
  *
  * Handles. IC_APID_GLOBAL, IC_APID_CONNECTION, IC_TABLE_DEF,
  * IC_INDEX_DEF, IC_RECORD, IC_APID_EXECUTOR, IC_APID_SUBMITTER,
- * IC_OP_SHAPE and IC_REQUEST are made by one function and given back to
- * their _free; the caller owns each until then. A connection, and an
- * executor, is freed before its global; a table, index or record handle
- * may outlive the connection that made it, a query keeps what it needs
- * of its records, and a request what it needs of its shapes. A NULL
+ * IC_OP_SHAPE, IC_REQUEST, IC_SCAN_SHAPE and IC_SCAN_READER are made by
+ * one function and given back to their _free; the caller owns each
+ * until then. A connection, and an executor, is freed before its
+ * global; a table, index or record handle may outlive the connection
+ * that made it, a query or scan keeps what it needs of its records, and
+ * a request or reader what it needs of its shapes. A NULL
  * handle or out pointer gives IC_ERROR_NULL_POINTER; a handle freed, or
  * never made, is undefined behaviour.
  *
- * Ids. A query (IC_QUERY_ID) and a transaction (IC_TRANS_ID) are named
- * by an id in their connection. An id that names nothing any more,
- * freed or closed, is refused with an error, never followed.
+ * Ids. A query (IC_QUERY_ID), a transaction (IC_TRANS_ID) and a scan
+ * (IC_SCAN_ID) are named by an id in their connection, and a scan's
+ * batch by an IC_SCAN_BATCH_ID. An id that names nothing any more,
+ * freed, closed or handed back, is refused with an error or passed
+ * over, never followed.
  *
  * Rows. A query owns its rows: ic_apid_query_key_row() and
  * ic_apid_query_attr_row() give pointers valid until the query is
@@ -54,6 +57,9 @@
  * they are the library's. A request's operations own their rows the
  * same way (ic_request_key_row(), ic_request_attr_row()), valid until
  * the request is freed or cleared, and the library's while it runs.
+ * A scan, and a scan reader, owns its row (ic_apid_scan_row(),
+ * ic_scan_reader_row()), valid until it is freed and overwritten by
+ * each row read; the _into calls read into the program's row instead.
  * The synchronous calls take the program's own rows, and copy.
  *
  * Strings. Strings in are NUL-terminated UTF-8, and copied. A string
@@ -61,10 +67,12 @@
  * from; an error's text is copied into the caller's buffer.
  *
  * Structs with a size. IC_GLOBAL_OPTIONS, IC_EXECUTOR_OPTIONS,
- * IC_READ_KEY_ARGS and IC_WRITE_KEY_ARGS are filled by their
- * _init(&s, sizeof s) before the program sets what it wants;
+ * IC_READ_KEY_ARGS, IC_WRITE_KEY_ARGS and IC_SCAN_ARGS are filled by
+ * their _init(&s, sizeof s) before the program sets what it wants;
  * IC_FIELD_INFO and IC_EXECUTOR_STATS are given with their size. A
- * later release adds fields at the end.
+ * later release adds fields at the end, and a program built against an
+ * older header gets the fields it knows: IC_EXECUTOR_OPTIONS and
+ * IC_EXECUTOR_STATS gained `scans` after 0.1.
  *
  * Threads. The functions that take no handle (ic_api_version,
  * ic_error_*, ic_field_type_name, the _init functions) may be called
@@ -84,6 +92,19 @@
  * ic_apid_submitter_execute(), which blocks until the transaction has
  * ended. An executor, its shapes and its stats may be used from any
  * thread; a submitter and a request by one at a time.
+ *
+ * Scans. A scan reads a table in batches, one receiver per fragment
+ * scanned at once. On a connection: ic_apid_scan_create() once,
+ * ic_apid_conn_start_scan() for each run, and the rows read either
+ * row by row with ic_apid_conn_next_row(), which polls while it waits,
+ * or a batch at a time, from the ready list or a callback, each batch
+ * handed back with ic_apid_conn_release_scan_batch(). A receiver is
+ * asked for more only once its batch is handed back, so the program
+ * sets the pace, and a locking scan's rows stay locked until then.
+ * Through an executor: a scan shape (ic_scan_shape_create()), a reader
+ * of it (ic_scan_reader_create()), ic_apid_submitter_scan() to run it,
+ * and ic_scan_reader_next_row(), which waits for the executor. A slow
+ * reader stalls only its own scan.
  *
  * Panics. A panic inside the library returns IC_ERROR_INTERNAL_PANIC;
  * the connection it went through is unusable from then on, and every
@@ -256,6 +277,63 @@
 #define IC_HINT_PARTITION 2
 
 /*
+ A scan reads the last committed value of each row, with no lock.
+ */
+#define IC_SCAN_LOCK_COMMITTED 0
+
+/*
+ A scan locks each row of a batch shared, until the batch is handed
+ back.
+ */
+#define IC_SCAN_LOCK_SHARED 1
+
+/*
+ A scan locks each row of a batch exclusively, until the batch is
+ handed back.
+ */
+#define IC_SCAN_LOCK_EXCLUSIVE 2
+
+/*
+ The scan is ready to be started.
+ */
+#define IC_SCAN_IDLE 0
+
+/*
+ Started, waiting for a record at its coordinator.
+ */
+#define IC_SCAN_STARTING 1
+
+/*
+ Its request has gone; batches come.
+ */
+#define IC_SCAN_RUNNING 2
+
+/*
+ Closing: waiting for what was asked for, then for the coordinator.
+ */
+#define IC_SCAN_CLOSING 3
+
+/*
+ The run is over: read to the end, closed, or failed.
+ */
+#define IC_SCAN_DONE 4
+
+/*
+ The id names no scan.
+ */
+#define IC_SCAN_UNKNOWN 4294967295
+
+/*
+ No transaction, in `IC_SCAN_ARGS`.
+ */
+#define IC_NO_TRANS 4294967295
+
+/*
+ No partition: every partition is scanned, in `IC_SCAN_ARGS`.
+ */
+#define IC_NO_PARTITION 4294967295
+
+/*
  Nothing went wrong.
  */
 #define IC_ERROR_CATEGORY_NONE 0
@@ -357,6 +435,29 @@
  A node failure aborted the transaction; temporary (an NDB error).
  */
 #define IC_NDB_ERROR_NODE_FAILURE_ABORT 4010
+
+/*
+ A scan's coordinator's node failed; temporary (an NDB error).
+ */
+#define IC_NDB_ERROR_SCAN_NODE_FAILURE 4028
+
+/*
+ Too many scans run at once at the coordinator; temporary (an NDB
+ error).
+ */
+#define IC_NDB_ERROR_TOO_MANY_SCANS 245
+
+/*
+ A scan waited too long for a lock, probably in a deadlock; temporary
+ (an NDB error).
+ */
+#define IC_NDB_ERROR_SCAN_LOCK_TIMEOUT 274
+
+/*
+ A scan was left too long without asking for more, as when a batch is
+ not handed back; temporary (an NDB error).
+ */
+#define IC_NDB_ERROR_SCAN_IDLE 296
 
 /*
  A text that is not a connectstring.
@@ -506,6 +607,12 @@
 #define IC_ERROR_EXECUTOR_STOPPED 7160
 
 /*
+ The scan, or the scan reader, is running, and cannot be started or
+ freed until its run is over.
+ */
+#define IC_ERROR_SCAN_ACTIVE 7161
+
+/*
  One thread's connection to the cluster (`IC_APID_CONNECTION`).
  Opaque.
  */
@@ -548,6 +655,18 @@ typedef struct IC_RECORD IC_RECORD;
  (`IC_REQUEST`). Opaque.
  */
 typedef struct IC_REQUEST IC_REQUEST;
+
+/*
+ A thread's end of a scan an executor runs, with its row
+ (`IC_SCAN_READER`). Opaque.
+ */
+typedef struct IC_SCAN_READER IC_SCAN_READER;
+
+/*
+ The shape of a scan for executors: a table, and the record its rows
+ are read into (`IC_SCAN_SHAPE`). Opaque.
+ */
+typedef struct IC_SCAN_SHAPE IC_SCAN_SHAPE;
 
 /*
  A table's description (`IC_TABLE_DEF`). Opaque.
@@ -745,6 +864,73 @@ typedef struct {
 } IC_TRANSACTION_HINT;
 
 /*
+ A batch of a scan's rows (`IC_SCAN_BATCH_ID`): the scan's id in the
+ high half and its receiver's in the low.
+ */
+typedef uint64_t IC_SCAN_BATCH_ID;
+
+/*
+ What a scan asks for when it is started (`IC_SCAN_ARGS`).
+ */
+typedef struct {
+  /*
+   The struct's size, as `ic_scan_args_init` was given it.
+   */
+  uint32_t size;
+  /*
+   One of the `IC_SCAN_LOCK_*` values.
+   */
+  uint32_t lock;
+  /*
+   For a locking scan whose rows may be taken over, the transaction
+   they are taken over into; `IC_NO_TRANS` for none.
+   */
+  IC_TRANS_ID trans;
+  /*
+   Fragments scanned at once; 0 for every fragment.
+   */
+  uint32_t parallelism;
+  /*
+   Rows a batch may hold; 0 for the configuration's.
+   */
+  uint32_t batch_rows;
+  /*
+   Bytes a batch may hold; 0 for the configuration's.
+   */
+  uint32_t batch_bytes;
+  /*
+   Scan this partition only; `IC_NO_PARTITION` for every partition.
+   */
+  uint32_t partition;
+  /*
+   Close the scan with `IC_ERROR_TIMEOUT` if it is still running
+   this long after it was started, in milliseconds; 0 for no limit.
+   */
+  uint32_t timeout_ms;
+  /*
+   For a committed read through an executor: let a receiver go on as
+   soon as its batch has moved to the reader.
+   */
+  bool read_ahead;
+  /*
+   Called with each batch as it completes, or NULL for the ready
+   list: an `IC_SCAN_CALLBACK`.
+   */
+  void (*callback)(IC_APID_CONNECTION *conn,
+                   IC_SCAN_BATCH_ID batch,
+                   void *user_ref);
+  /*
+   Given back to the callback.
+   */
+  void *user_ref;
+} IC_SCAN_ARGS;
+
+/*
+ A scan's id in its connection (`IC_SCAN_ID`).
+ */
+typedef uint32_t IC_SCAN_ID;
+
+/*
  Choices an executor is started with (`IC_EXECUTOR_OPTIONS`).
  */
 typedef struct {
@@ -762,6 +948,11 @@ typedef struct {
    4 000 by default.
    */
   uint32_t queue;
+  /*
+   Scans run at once at most; 64 by default. Added after 0.1: a
+   program built against 0.1 gets the default.
+   */
+  uint32_t scans;
 } IC_EXECUTOR_OPTIONS;
 
 /*
@@ -800,6 +991,11 @@ typedef struct {
    Passes of the executor's loop.
    */
   uint64_t passes;
+  /*
+   Scans started, each for a reader. Added after 0.1: left out for a
+   program built against 0.1.
+   */
+  uint64_t scans;
 } IC_EXECUTOR_STATS;
 
 /*
@@ -809,6 +1005,15 @@ typedef struct {
  */
 typedef void (*IC_APID_CALLBACK)(IC_APID_CONNECTION *conn,
                                  IC_QUERY_ID query,
+                                 void *user_ref);
+
+/*
+ What is called when a batch of a scan is complete
+ (`IC_SCAN_CALLBACK`): on the thread that polls, with the connection,
+ the batch and the `user_ref` the scan was started with.
+ */
+typedef void (*IC_SCAN_CALLBACK)(IC_APID_CONNECTION *conn,
+                                 IC_SCAN_BATCH_ID batch,
                                  void *user_ref);
 
 #ifdef __cplusplus
@@ -1746,9 +1951,276 @@ int32_t ic_apid_conn_write(IC_APID_CONNECTION *conn,
                            size_t attr_len);
 
 /*
- Fill `options`, `size` bytes, with the defaults.
+ Fill `args`, `size` bytes, with the defaults: a committed read of
+ every fragment, batches as the configuration says, no transaction,
+ no partition, no limit, no callback.
 
- Leaves `options` as it is when `size` is smaller than this header's
+ Leaves `args` as it is when `size` is smaller than this header's
+ `IC_SCAN_ARGS`.
+
+ # Safety
+
+ A non-null `args` points to `size` writable bytes.
+ */
+void ic_scan_args_init(IC_SCAN_ARGS *args, size_t size);
+
+/*
+ A scan of a table, reading the fields of `rec` into its row. Made
+ once and run again and again (`ic_apid_conn_start_scan`).
+
+ Errors: `IC_ERROR_KEY_RECORD` when the record is over another table,
+ or another version of it. The scan lives in the connection until
+ `ic_apid_scan_free` or the connection's free.
+
+ # Safety
+
+ `conn`, `def` and `rec` are handles not yet freed; `scan` points to a
+ writable `IC_SCAN_ID`.
+ */
+int32_t ic_apid_scan_create(IC_APID_CONNECTION *conn,
+                            const IC_TABLE_DEF *def,
+                            const IC_RECORD *rec,
+                            IC_SCAN_ID *scan);
+
+/*
+ Free a scan that is not running.
+
+ Errors: `IC_ERROR_SCAN_ACTIVE` while it runs; `IC_ERROR_NO_SUCH_FIELD`
+ for an id that names no scan.
+
+ # Safety
+
+ `conn` is a connection handle not yet freed.
+ */
+int32_t ic_apid_scan_free(IC_APID_CONNECTION *conn, IC_SCAN_ID scan);
+
+/*
+ Start a run of the scan, as `args` says (`ic_scan_args_init`). The
+ request goes with the next send, or with the poll that brings its
+ record at the coordinator; batches come in later polls, to the
+ callback or onto the ready list (`ic_apid_conn_get_next_scan_batch`),
+ or are read row by row with `ic_apid_conn_next_row`.
+
+ Errors: `IC_ERROR_SCAN_ACTIVE` while a run is not over;
+ `IC_ERROR_NOT_SUPPORTED` for an unknown lock, for `read_ahead`, which
+ is for executors, and for a committed read given a transaction;
+ `IC_ERROR_TRANSACTION_ACTIVE` for a transaction not started or not
+ open; `IC_ERROR_INCONSISTENT_DATA` for `args` not filled by
+ `ic_scan_args_init`.
+
+ # Safety
+
+ `conn` is a connection handle not yet freed; `args` was filled by
+ `ic_scan_args_init`.
+ */
+int32_t ic_apid_conn_start_scan(IC_APID_CONNECTION *conn,
+                                IC_SCAN_ID scan,
+                                const IC_SCAN_ARGS *args);
+
+/*
+ End a run before it reads to the end: the batches asked for are
+ waited for, then the coordinator is told to stop, and the run is
+ done when it confirms, in later polls. Batches with the program are
+ let go of.
+
+ Errors: `IC_ERROR_NO_SUCH_FIELD` for an id that names no scan.
+
+ # Safety
+
+ `conn` is a connection handle not yet freed.
+ */
+int32_t ic_apid_conn_close_scan(IC_APID_CONNECTION *conn, IC_SCAN_ID scan);
+
+/*
+ Where the scan is: one of the `IC_SCAN_*` states, `IC_SCAN_UNKNOWN`
+ for an id that names no scan.
+
+ # Safety
+
+ `conn` is a connection handle not yet freed.
+ */
+uint32_t ic_apid_scan_state(IC_APID_CONNECTION *conn, IC_SCAN_ID scan);
+
+/*
+ True once the scan's run is over, read to the end, closed or failed;
+ true too for an id that names no scan, so that a loop waiting for it
+ ends.
+
+ # Safety
+
+ `conn` is a connection handle not yet freed.
+ */
+bool ic_apid_scan_is_done(IC_APID_CONNECTION *conn, IC_SCAN_ID scan);
+
+/*
+ Why the scan's run failed, or 0 if it read to the end, was closed,
+ or is still going.
+
+ `IC_ERROR_NO_SUCH_FIELD` for an id that names no scan.
+
+ # Safety
+
+ `conn` is a connection handle not yet freed.
+ */
+int32_t ic_apid_scan_error(IC_APID_CONNECTION *conn, IC_SCAN_ID scan);
+
+/*
+ Rows read from the run's batches so far; 0 for an id that names no
+ scan.
+
+ # Safety
+
+ `conn` is a connection handle not yet freed.
+ */
+uint64_t ic_apid_scan_rows_read(IC_APID_CONNECTION *conn, IC_SCAN_ID scan);
+
+/*
+ The scan's row and its length: the row last read from one of its
+ batches, laid out by its record. Valid until the scan is freed; NULL
+ for an id that names no scan.
+
+ # Safety
+
+ `conn` is a connection handle not yet freed; a non-null `len` points
+ to a writable `size_t`.
+ */
+const uint8_t *ic_apid_scan_row(IC_APID_CONNECTION *conn,
+                                IC_SCAN_ID scan,
+                                size_t *len);
+
+/*
+ The scan a batch is of.
+ */
+IC_SCAN_ID ic_scan_batch_scan(IC_SCAN_BATCH_ID batch);
+
+/*
+ Take the batch completed longest ago, of a scan with no callback,
+ into `batch`. False when there is none.
+
+ # Safety
+
+ `conn` is a connection handle not yet freed; `batch` points to a
+ writable `IC_SCAN_BATCH_ID`.
+ */
+bool ic_apid_conn_get_next_scan_batch(IC_APID_CONNECTION *conn,
+                                      IC_SCAN_BATCH_ID *batch);
+
+/*
+ Rows in a batch; 0 for one no longer with the program.
+
+ # Safety
+
+ `conn` is a connection handle not yet freed.
+ */
+uint32_t ic_apid_scan_batch_rows(IC_APID_CONNECTION *conn,
+                                 IC_SCAN_BATCH_ID batch);
+
+/*
+ Unpack the batch's next row into the scan's row
+ (`ic_apid_scan_row`); `more` says whether there was one.
+
+ Errors: `IC_ERROR_NO_SUCH_FIELD` for a batch no longer with the
+ program.
+
+ # Safety
+
+ `conn` is a connection handle not yet freed; `more` points to a
+ writable `bool`.
+ */
+int32_t ic_apid_conn_next_scan_row(IC_APID_CONNECTION *conn,
+                                   IC_SCAN_BATCH_ID batch,
+                                   bool *more);
+
+/*
+ As `ic_apid_conn_next_scan_row`, into `row`, `len` bytes of the
+ program's laid out by the scan's record, a copy less.
+
+ Errors: as `ic_apid_conn_next_scan_row`; `IC_ERROR_RECORD_SIZE_TOO_BIG`
+ for a row shorter than the record's.
+
+ # Safety
+
+ `conn` is a connection handle not yet freed; `row` points to `len`
+ writable bytes; `more` points to a writable `bool`.
+ */
+int32_t ic_apid_conn_next_scan_row_into(IC_APID_CONNECTION *conn,
+                                        IC_SCAN_BATCH_ID batch,
+                                        uint8_t *row,
+                                        size_t len,
+                                        bool *more);
+
+/*
+ Hand a batch back: its receiver is asked for more with the next send
+ or poll. A batch of a run that has ended is passed over.
+
+ # Safety
+
+ `conn` is a connection handle not yet freed.
+ */
+int32_t ic_apid_conn_release_scan_batch(IC_APID_CONNECTION *conn,
+                                        IC_SCAN_BATCH_ID batch);
+
+/*
+ Read the scan's next row into its row (`ic_apid_scan_row`), as a
+ stream of rows: a batch is handed back once its rows are read, and
+ the next waited for in polls, which serve every other scan and query
+ of the connection meanwhile. `more` is false once the run has read
+ to the end or was closed, or for a scan not started.
+
+ Errors: the run's error once it has failed; `IC_ERROR_NOT_SUPPORTED`
+ for a scan with a callback, and inside a callback once it would have
+ to wait; `IC_ERROR_NO_SUCH_FIELD` for an id that names no scan.
+
+ # Safety
+
+ `conn` is a connection handle not yet freed; `more` points to a
+ writable `bool`.
+ */
+int32_t ic_apid_conn_next_row(IC_APID_CONNECTION *conn,
+                              IC_SCAN_ID scan,
+                              bool *more);
+
+/*
+ As `ic_apid_conn_next_row`, into `row`, `len` bytes of the program's
+ laid out by the scan's record, a copy less.
+
+ Errors: as `ic_apid_conn_next_row`; `IC_ERROR_RECORD_SIZE_TOO_BIG` for
+ a row shorter than the record's.
+
+ # Safety
+
+ `conn` is a connection handle not yet freed; `row` points to `len`
+ writable bytes; `more` points to a writable `bool`.
+ */
+int32_t ic_apid_conn_next_row_into(IC_APID_CONNECTION *conn,
+                                   IC_SCAN_ID scan,
+                                   uint8_t *row,
+                                   size_t len,
+                                   bool *more);
+
+/*
+ The scan's next complete batch into `batch`, waiting as
+ `ic_apid_conn_next_row` does; `more` is false, and `batch` left as
+ it is, once the run is over with no error. The program reads the
+ batch with `ic_apid_conn_next_scan_row` and hands it back itself.
+
+ Errors: as `ic_apid_conn_next_row`.
+
+ # Safety
+
+ `conn` is a connection handle not yet freed; `batch` points to a
+ writable `IC_SCAN_BATCH_ID` and `more` to a writable `bool`.
+ */
+int32_t ic_apid_conn_next_batch(IC_APID_CONNECTION *conn,
+                                IC_SCAN_ID scan,
+                                IC_SCAN_BATCH_ID *batch,
+                                bool *more);
+
+/*
+ Fill `options`, `size` bytes, with the defaults: the fields that fit,
+ so that a program built against an older header gets those it knows.
+
+ Leaves `options` as it is when `size` is smaller than release 0.1's
  `IC_EXECUTOR_OPTIONS`.
 
  # Safety
@@ -1799,10 +2271,11 @@ void ic_apid_executor_free(IC_APID_EXECUTOR *executor);
 
 /*
  What the executor has done since it started, into `stats`, `size`
- bytes.
+ bytes: the fields that fit, so that a program built against an older
+ header gets those it knows.
 
- Errors: `IC_ERROR_INCONSISTENT_DATA` when `size` is smaller than this
- header's `IC_EXECUTOR_STATS`. Any thread may call it.
+ Errors: `IC_ERROR_INCONSISTENT_DATA` when `size` is smaller than
+ release 0.1's `IC_EXECUTOR_STATS`. Any thread may call it.
 
  # Safety
 
@@ -2162,6 +2635,164 @@ uint64_t ic_request_gci(const IC_REQUEST *request);
  */
 int32_t ic_apid_submitter_execute(IC_APID_SUBMITTER *submitter,
                                   IC_REQUEST *request);
+
+/*
+ The shape of scans for executors: a table, and the record its rows
+ are read into. Made once, and shared by every reader that uses it.
+
+ Errors: `IC_ERROR_KEY_RECORD` when the record is over another table,
+ or another version of it. The shape is the caller's, freed with
+ `ic_scan_shape_free`; any thread may use it, and a reader keeps what
+ it needs of it.
+
+ # Safety
+
+ `def` and `rec` are handles not yet freed; `shape` points to
+ writable storage for a pointer.
+ */
+int32_t ic_scan_shape_create(const IC_TABLE_DEF *def,
+                             const IC_RECORD *rec,
+                             IC_SCAN_SHAPE **shape);
+
+/*
+ Free a scan shape handle. Readers of it keep what they need.
+
+ # Safety
+
+ A non-null `shape` is a scan shape handle not yet freed, freed here.
+ */
+void ic_scan_shape_free(IC_SCAN_SHAPE *shape);
+
+/*
+ A reader of scans of `shape`: a thread's end of a scan an executor
+ runs, with its row. Made once and run again and again
+ (`ic_apid_submitter_scan`).
+
+ The reader is the caller's, freed with `ic_scan_reader_free`; one
+ thread uses it at a time.
+
+ # Safety
+
+ `shape` is a scan shape handle not yet freed; `reader` points to
+ writable storage for a pointer.
+ */
+int32_t ic_scan_reader_create(const IC_SCAN_SHAPE *shape,
+                              IC_SCAN_READER **reader);
+
+/*
+ Free a reader. A run not over is ended without waiting: the executor
+ closes its scan.
+
+ # Safety
+
+ A non-null `reader` is a reader handle not yet freed, freed here,
+ with no call on it under way.
+ */
+void ic_scan_reader_free(IC_SCAN_READER *reader);
+
+/*
+ Run a scan on the executor, read through `reader`: the request goes
+ to the executor, waiting for room in a full list, and the rows come
+ with `ic_scan_reader_next_row`. Each batch is handed back to its
+ receiver once the reader has read it, whatever the lock, unless a
+ committed read asks for `read_ahead`.
+
+ Errors: `IC_ERROR_SCAN_ACTIVE` while the reader's last run is not
+ over; `IC_ERROR_NOT_SUPPORTED` for a transaction or a callback in
+ `args`, for `read_ahead` with a lock, and on the executor's own
+ thread; `IC_ERROR_EXECUTOR_STOPPED`; `IC_ERROR_INCONSISTENT_DATA` for
+ `args` not filled by `ic_scan_args_init`.
+
+ # Safety
+
+ `submitter` and `reader` are handles not yet freed, each used by this
+ thread alone meanwhile; `args` was filled by `ic_scan_args_init`.
+ */
+int32_t ic_apid_submitter_scan(IC_APID_SUBMITTER *submitter,
+                               IC_SCAN_READER *reader,
+                               const IC_SCAN_ARGS *args);
+
+/*
+ Read the next row into the reader's row (`ic_scan_reader_row`),
+ waiting for the executor while no batch is there; `more` is false
+ once the run has read to the end or was closed, or before any run.
+
+ Errors: the run's error once it has failed, its unread rows dropped.
+
+ # Safety
+
+ `reader` is a reader handle not yet freed, used by this thread alone;
+ `more` points to a writable `bool`.
+ */
+int32_t ic_scan_reader_next_row(IC_SCAN_READER *reader, bool *more);
+
+/*
+ As `ic_scan_reader_next_row`, into `row`, `len` bytes of the
+ program's laid out by the shape's record, a copy less.
+
+ Errors: as `ic_scan_reader_next_row`; `IC_ERROR_RECORD_SIZE_TOO_BIG`
+ for a row shorter than the record's.
+
+ # Safety
+
+ As `ic_scan_reader_next_row`; `row` points to `len` writable bytes.
+ */
+int32_t ic_scan_reader_next_row_into(IC_SCAN_READER *reader,
+                                     uint8_t *row,
+                                     size_t len,
+                                     bool *more);
+
+/*
+ The reader's row and its length: the row last read, laid out by the
+ shape's record. Valid until the reader is freed; NULL for a null
+ reader.
+
+ # Safety
+
+ A non-null `reader` is a reader handle not yet freed; a non-null
+ `len` points to a writable `size_t`.
+ */
+const uint8_t *ic_scan_reader_row(const IC_SCAN_READER *reader, size_t *len);
+
+/*
+ Rows read in the reader's run so far; 0 for a null reader.
+
+ # Safety
+
+ A non-null `reader` is a reader handle not yet freed.
+ */
+uint64_t ic_scan_reader_rows_read(const IC_SCAN_READER *reader);
+
+/*
+ Why the reader's run failed, or 0 if it read to the end, was closed,
+ or is still going.
+
+ # Safety
+
+ A non-null `reader` is a reader handle not yet freed.
+ */
+int32_t ic_scan_reader_error(const IC_SCAN_READER *reader);
+
+/*
+ True once the reader's run is over, and before any run; true too for
+ a null reader.
+
+ # Safety
+
+ A non-null `reader` is a reader handle not yet freed.
+ */
+bool ic_scan_reader_is_done(const IC_SCAN_READER *reader);
+
+/*
+ End the reader's run before it reads to the end, and wait for the
+ executor to finish it, so that the reader can run again. The rows
+ not read are dropped.
+
+ # Safety
+
+ `reader` is a reader handle not yet freed, used by this thread alone.
+ */
+int32_t ic_scan_reader_close(IC_SCAN_READER *reader);
 
 #ifdef __cplusplus
 }  // extern "C"

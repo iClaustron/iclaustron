@@ -21,7 +21,8 @@
 //! - Option and argument structs begin with their own size, filled by
 //!   their `..._init(&s, sizeof s)`, so that a later release can add
 //!   fields at the end.
-//! - The query owns its rows; C gets pointers to them (Q10).
+//! - The query owns its rows; C gets pointers to them (Q10). So does a
+//!   scan, and a scan reader.
 
 use std::ffi::c_char;
 use std::ffi::c_void;
@@ -55,6 +56,13 @@ use ic_apid::query::WriteKeyArgs;
 use ic_apid::query::WriteKind;
 use ic_apid::record::FieldSpec;
 use ic_apid::record::Record;
+use ic_apid::scan::ScanArgs;
+use ic_apid::scan::ScanBatchId;
+use ic_apid::scan::ScanId;
+use ic_apid::scan::ScanLock;
+use ic_apid::scan::ScanState;
+use ic_apid::scan_reader::ScanReader;
+use ic_apid::scan_reader::ScanShape;
 use ic_apid::text_row;
 use ic_apid::transaction::CommitState;
 use ic_apid::transaction::TransactionHint;
@@ -137,6 +145,33 @@ pub const IC_HINT_NODE: u32 = 1;
 /// A node holding the partition the hint's value names.
 pub const IC_HINT_PARTITION: u32 = 2;
 
+/// A scan reads the last committed value of each row, with no lock.
+pub const IC_SCAN_LOCK_COMMITTED: u32 = 0;
+/// A scan locks each row of a batch shared, until the batch is handed
+/// back.
+pub const IC_SCAN_LOCK_SHARED: u32 = 1;
+/// A scan locks each row of a batch exclusively, until the batch is
+/// handed back.
+pub const IC_SCAN_LOCK_EXCLUSIVE: u32 = 2;
+
+/// The scan is ready to be started.
+pub const IC_SCAN_IDLE: u32 = 0;
+/// Started, waiting for a record at its coordinator.
+pub const IC_SCAN_STARTING: u32 = 1;
+/// Its request has gone; batches come.
+pub const IC_SCAN_RUNNING: u32 = 2;
+/// Closing: waiting for what was asked for, then for the coordinator.
+pub const IC_SCAN_CLOSING: u32 = 3;
+/// The run is over: read to the end, closed, or failed.
+pub const IC_SCAN_DONE: u32 = 4;
+/// The id names no scan.
+pub const IC_SCAN_UNKNOWN: u32 = 0xFFFF_FFFF;
+
+/// No transaction, in `IC_SCAN_ARGS`.
+pub const IC_NO_TRANS: u32 = 0xFFFF_FFFF;
+/// No partition: every partition is scanned, in `IC_SCAN_ARGS`.
+pub const IC_NO_PARTITION: u32 = 0xFFFF_FFFF;
+
 /// Nothing went wrong.
 pub const IC_ERROR_CATEGORY_NONE: u32 = 0;
 /// The application asked for something wrong.
@@ -183,6 +218,17 @@ pub const IC_NDB_ERROR_UNIQUE_DUPLICATE: i32 = 893;
 pub const IC_NDB_ERROR_LOCK_TIMEOUT: i32 = 266;
 /// A node failure aborted the transaction; temporary (an NDB error).
 pub const IC_NDB_ERROR_NODE_FAILURE_ABORT: i32 = 4010;
+/// A scan's coordinator's node failed; temporary (an NDB error).
+pub const IC_NDB_ERROR_SCAN_NODE_FAILURE: i32 = 4028;
+/// Too many scans run at once at the coordinator; temporary (an NDB
+/// error).
+pub const IC_NDB_ERROR_TOO_MANY_SCANS: i32 = 245;
+/// A scan waited too long for a lock, probably in a deadlock; temporary
+/// (an NDB error).
+pub const IC_NDB_ERROR_SCAN_LOCK_TIMEOUT: i32 = 274;
+/// A scan was left too long without asking for more, as when a batch is
+/// not handed back; temporary (an NDB error).
+pub const IC_NDB_ERROR_SCAN_IDLE: i32 = 296;
 
 /// A text that is not a connectstring.
 pub const IC_ERROR_PARSE_CONNECTSTRING: i32 = 7056;
@@ -247,6 +293,9 @@ pub const IC_ERROR_EXECUTOR_BUSY: i32 = 7159;
 /// The executor has stopped and takes no requests; the request was not
 /// run.
 pub const IC_ERROR_EXECUTOR_STOPPED: i32 = 7160;
+/// The scan, or the scan reader, is running, and cannot be started or
+/// freed until its run is over.
+pub const IC_ERROR_SCAN_ACTIVE: i32 = 7161;
 
 // ---- Types ----
 
@@ -299,11 +348,39 @@ pub struct IcRequest {
   _private: [u8; 0],
 }
 
+/// The shape of a scan for executors: a table, and the record its rows
+/// are read into (`IC_SCAN_SHAPE`). Opaque.
+pub struct IcScanShape {
+  _private: [u8; 0],
+}
+
+/// A thread's end of a scan an executor runs, with its row
+/// (`IC_SCAN_READER`). Opaque.
+pub struct IcScanReader {
+  _private: [u8; 0],
+}
+
 /// A query's id in its connection (`IC_QUERY_ID`).
 pub type IcQueryId = u32;
 
 /// A transaction's id in its connection (`IC_TRANS_ID`).
 pub type IcTransId = u32;
+
+/// A scan's id in its connection (`IC_SCAN_ID`).
+pub type IcScanId = u32;
+
+/// A batch of a scan's rows (`IC_SCAN_BATCH_ID`): the scan's id in the
+/// high half and its receiver's in the low.
+pub type IcScanBatchId = u64;
+
+/// What is called when a batch of a scan is complete
+/// (`IC_SCAN_CALLBACK`): on the thread that polls, with the connection,
+/// the batch and the `user_ref` the scan was started with.
+pub type IcScanCallback = unsafe extern "C" fn(
+  conn: *mut IcApidConnection,
+  batch: IcScanBatchId,
+  user_ref: *mut c_void,
+);
 
 /// What is called when a query completes (`IC_APID_CALLBACK`): on the
 /// thread that polls, with the connection, the query and the
@@ -437,6 +514,9 @@ pub struct IcExecutorOptions {
   /// Requests waiting at most before a submit is refused or waits;
   /// 4 000 by default.
   pub queue: u32,
+  /// Scans run at once at most; 64 by default. Added after 0.1: a
+  /// program built against 0.1 gets the default.
+  pub scans: u32,
 }
 
 /// What an executor has done since it started (`IC_EXECUTOR_STATS`).
@@ -459,6 +539,47 @@ pub struct IcExecutorStats {
   pub sends: u64,
   /// Passes of the executor's loop.
   pub passes: u64,
+  /// Scans started, each for a reader. Added after 0.1: left out for a
+  /// program built against 0.1.
+  pub scans: u64,
+}
+
+/// What a scan asks for when it is started (`IC_SCAN_ARGS`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct IcScanArgs {
+  /// The struct's size, as `ic_scan_args_init` was given it.
+  pub size: u32,
+  /// One of the `IC_SCAN_LOCK_*` values.
+  pub lock: u32,
+  /// For a locking scan whose rows may be taken over, the transaction
+  /// they are taken over into; `IC_NO_TRANS` for none.
+  pub trans: IcTransId,
+  /// Fragments scanned at once; 0 for every fragment.
+  pub parallelism: u32,
+  /// Rows a batch may hold; 0 for the configuration's.
+  pub batch_rows: u32,
+  /// Bytes a batch may hold; 0 for the configuration's.
+  pub batch_bytes: u32,
+  /// Scan this partition only; `IC_NO_PARTITION` for every partition.
+  pub partition: u32,
+  /// Close the scan with `IC_ERROR_TIMEOUT` if it is still running
+  /// this long after it was started, in milliseconds; 0 for no limit.
+  pub timeout_ms: u32,
+  /// For a committed read through an executor: let a receiver go on as
+  /// soon as its batch has moved to the reader.
+  pub read_ahead: bool,
+  /// Called with each batch as it completes, or NULL for the ready
+  /// list: an `IC_SCAN_CALLBACK`.
+  pub callback: Option<
+    unsafe extern "C" fn(
+      conn: *mut IcApidConnection,
+      batch: IcScanBatchId,
+      user_ref: *mut c_void,
+    ),
+  >,
+  /// Given back to the callback.
+  pub user_ref: *mut c_void,
 }
 
 /// Which node should coordinate a transaction
@@ -2796,6 +2917,597 @@ pub unsafe extern "C" fn ic_apid_conn_write(
   }
 }
 
+// ---- Scans ----
+
+fn scan_lock_from_c(value: u32) -> Option<ScanLock> {
+  match value {
+    IC_SCAN_LOCK_COMMITTED => Some(ScanLock::Committed),
+    IC_SCAN_LOCK_SHARED => Some(ScanLock::Shared),
+    IC_SCAN_LOCK_EXCLUSIVE => Some(ScanLock::Exclusive),
+    _ => None,
+  }
+}
+
+fn scan_state_to_c(state: ScanState) -> u32 {
+  match state {
+    ScanState::Idle => IC_SCAN_IDLE,
+    ScanState::Starting => IC_SCAN_STARTING,
+    ScanState::Running => IC_SCAN_RUNNING,
+    ScanState::Closing => IC_SCAN_CLOSING,
+    ScanState::Done => IC_SCAN_DONE,
+  }
+}
+
+/// A scan's C callback as Rust sees it: the C function is in the scan's
+/// binding word.
+fn scan_trampoline(
+  conn: &mut ApidConnection,
+  batch: ScanBatchId,
+  user_ref: usize,
+) {
+  let binding = match conn.scan(batch.scan()) {
+    Some(scan) => scan.binding(),
+    None => return,
+  };
+  if binding == 0 {
+    return;
+  }
+  // SAFETY: the binding word was set by `ic_apid_conn_start_scan` from a
+  // non-null `IcScanCallback`, and a function pointer fits a usize and
+  // back.
+  let callback =
+    unsafe { std::mem::transmute::<usize, IcScanCallback>(binding) };
+  let handle = conn as *mut ApidConnection as *mut IcApidConnection;
+  // SAFETY: the handle is the connection the poll runs on; the callback
+  // may call back into the library with it, which reborrows it from
+  // this pointer while `conn` waits.
+  unsafe { callback(handle, batch.as_u64(), user_ref as *mut c_void) };
+}
+
+/// A scan's arguments from C.
+///
+/// # Safety
+///
+/// A non-null `args` was filled by `ic_scan_args_init`.
+unsafe fn scan_args_from_c(args: *const IcScanArgs) -> Result<ScanArgs, i32> {
+  // SAFETY: the caller's promise.
+  let given = match unsafe { args.as_ref() } {
+    Some(given) => *given,
+    None => return Err(err::IC_ERROR_NULL_POINTER),
+  };
+  if (given.size as usize) < std::mem::size_of::<IcScanArgs>() {
+    return Err(err::IC_ERROR_INCONSISTENT_DATA);
+  }
+  let lock = match scan_lock_from_c(given.lock) {
+    Some(lock) => lock,
+    None => return Err(err::IC_ERROR_NOT_SUPPORTED),
+  };
+  let mut rust_args = ScanArgs {
+    lock,
+    parallelism: given.parallelism,
+    batch_rows: given.batch_rows,
+    batch_bytes: given.batch_bytes,
+    timeout_ms: given.timeout_ms,
+    read_ahead: given.read_ahead,
+    user_ref: given.user_ref as usize,
+    ..ScanArgs::default()
+  };
+  if given.trans != IC_NO_TRANS {
+    rust_args.trans = Some(TransId::from_u32(given.trans));
+  }
+  if given.partition != IC_NO_PARTITION {
+    rust_args.partition = Some(given.partition);
+  }
+  if let Some(callback) = given.callback {
+    rust_args.callback = Some(scan_trampoline);
+    rust_args.binding = callback as usize;
+  }
+  Ok(rust_args)
+}
+
+/// Fill `args`, `size` bytes, with the defaults: a committed read of
+/// every fragment, batches as the configuration says, no transaction,
+/// no partition, no limit, no callback.
+///
+/// Leaves `args` as it is when `size` is smaller than this header's
+/// `IC_SCAN_ARGS`.
+///
+/// # Safety
+///
+/// A non-null `args` points to `size` writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn ic_scan_args_init(args: *mut IcScanArgs, size: usize) {
+  if args.is_null() || size < std::mem::size_of::<IcScanArgs>() {
+    return;
+  }
+  let value = IcScanArgs {
+    size: size as u32,
+    lock: IC_SCAN_LOCK_COMMITTED,
+    trans: IC_NO_TRANS,
+    parallelism: 0,
+    batch_rows: 0,
+    batch_bytes: 0,
+    partition: IC_NO_PARTITION,
+    timeout_ms: 0,
+    read_ahead: false,
+    callback: None,
+    user_ref: std::ptr::null_mut(),
+  };
+  // SAFETY: the caller's promise; the struct fits.
+  unsafe { args.write(value) };
+}
+
+/// A scan of a table, reading the fields of `rec` into its row. Made
+/// once and run again and again (`ic_apid_conn_start_scan`).
+///
+/// Errors: `IC_ERROR_KEY_RECORD` when the record is over another table,
+/// or another version of it. The scan lives in the connection until
+/// `ic_apid_scan_free` or the connection's free.
+///
+/// # Safety
+///
+/// `conn`, `def` and `rec` are handles not yet freed; `scan` points to a
+/// writable `IC_SCAN_ID`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_scan_create(
+  conn: *mut IcApidConnection,
+  def: *const IcTableDef,
+  rec: *const IcRecord,
+  scan: *mut IcScanId,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let (table, rec) = match unsafe { (table_of(def), record_of(rec)) } {
+    (Some(table), Some(rec)) => (table, rec),
+    _ => return err::IC_ERROR_NULL_POINTER,
+  };
+  if scan.is_null() {
+    return err::IC_ERROR_NULL_POINTER;
+  }
+  // SAFETY: the caller's promise.
+  match unsafe { on_conn(conn, |c| c.create_scan(&table.def, rec)) } {
+    Ok(Ok(id)) => {
+      // SAFETY: checked non-null above; the caller's promise.
+      unsafe { scan.write(id.as_u32()) };
+      0
+    }
+    Ok(Err(e)) => e.code,
+    Err(code) => code,
+  }
+}
+
+/// Free a scan that is not running.
+///
+/// Errors: `IC_ERROR_SCAN_ACTIVE` while it runs; `IC_ERROR_NO_SUCH_FIELD`
+/// for an id that names no scan.
+///
+/// # Safety
+///
+/// `conn` is a connection handle not yet freed.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_scan_free(
+  conn: *mut IcApidConnection,
+  scan: IcScanId,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  unsafe { conn_code(conn, |c| c.free_scan(ScanId::from_u32(scan))) }
+}
+
+/// Start a run of the scan, as `args` says (`ic_scan_args_init`). The
+/// request goes with the next send, or with the poll that brings its
+/// record at the coordinator; batches come in later polls, to the
+/// callback or onto the ready list (`ic_apid_conn_get_next_scan_batch`),
+/// or are read row by row with `ic_apid_conn_next_row`.
+///
+/// Errors: `IC_ERROR_SCAN_ACTIVE` while a run is not over;
+/// `IC_ERROR_NOT_SUPPORTED` for an unknown lock, for `read_ahead`, which
+/// is for executors, and for a committed read given a transaction;
+/// `IC_ERROR_TRANSACTION_ACTIVE` for a transaction not started or not
+/// open; `IC_ERROR_INCONSISTENT_DATA` for `args` not filled by
+/// `ic_scan_args_init`.
+///
+/// # Safety
+///
+/// `conn` is a connection handle not yet freed; `args` was filled by
+/// `ic_scan_args_init`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_conn_start_scan(
+  conn: *mut IcApidConnection,
+  scan: IcScanId,
+  args: *const IcScanArgs,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let rust_args = match unsafe { scan_args_from_c(args) } {
+    Ok(rust_args) => rust_args,
+    Err(code) => return code,
+  };
+  // SAFETY: the caller's promise.
+  unsafe {
+    conn_code(conn, |c| c.start_scan(ScanId::from_u32(scan), &rust_args))
+  }
+}
+
+/// End a run before it reads to the end: the batches asked for are
+/// waited for, then the coordinator is told to stop, and the run is
+/// done when it confirms, in later polls. Batches with the program are
+/// let go of.
+///
+/// Errors: `IC_ERROR_NO_SUCH_FIELD` for an id that names no scan.
+///
+/// # Safety
+///
+/// `conn` is a connection handle not yet freed.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_conn_close_scan(
+  conn: *mut IcApidConnection,
+  scan: IcScanId,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  unsafe { conn_code(conn, |c| c.close_scan(ScanId::from_u32(scan))) }
+}
+
+/// Where the scan is: one of the `IC_SCAN_*` states, `IC_SCAN_UNKNOWN`
+/// for an id that names no scan.
+///
+/// # Safety
+///
+/// `conn` is a connection handle not yet freed.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_scan_state(
+  conn: *mut IcApidConnection,
+  scan: IcScanId,
+) -> u32 {
+  // SAFETY: the caller's promise.
+  let found = unsafe {
+    on_conn(conn, |c| match c.scan(ScanId::from_u32(scan)) {
+      Some(s) => scan_state_to_c(s.state()),
+      None => IC_SCAN_UNKNOWN,
+    })
+  };
+  found.unwrap_or(IC_SCAN_UNKNOWN)
+}
+
+/// True once the scan's run is over, read to the end, closed or failed;
+/// true too for an id that names no scan, so that a loop waiting for it
+/// ends.
+///
+/// # Safety
+///
+/// `conn` is a connection handle not yet freed.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_scan_is_done(
+  conn: *mut IcApidConnection,
+  scan: IcScanId,
+) -> bool {
+  // SAFETY: the caller's promise.
+  let found = unsafe { on_conn(conn, |c| c.scan_done(ScanId::from_u32(scan))) };
+  found.unwrap_or(true)
+}
+
+/// Why the scan's run failed, or 0 if it read to the end, was closed,
+/// or is still going.
+///
+/// `IC_ERROR_NO_SUCH_FIELD` for an id that names no scan.
+///
+/// # Safety
+///
+/// `conn` is a connection handle not yet freed.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_scan_error(
+  conn: *mut IcApidConnection,
+  scan: IcScanId,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let found = unsafe {
+    on_conn(conn, |c| match c.scan(ScanId::from_u32(scan)) {
+      Some(s) => match s.error() {
+        Some(e) => e.code,
+        None => 0,
+      },
+      None => err::IC_ERROR_NO_SUCH_FIELD,
+    })
+  };
+  match found {
+    Ok(code) => code,
+    Err(code) => code,
+  }
+}
+
+/// Rows read from the run's batches so far; 0 for an id that names no
+/// scan.
+///
+/// # Safety
+///
+/// `conn` is a connection handle not yet freed.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_scan_rows_read(
+  conn: *mut IcApidConnection,
+  scan: IcScanId,
+) -> u64 {
+  // SAFETY: the caller's promise.
+  let found = unsafe {
+    on_conn(conn, |c| match c.scan(ScanId::from_u32(scan)) {
+      Some(s) => s.rows_read(),
+      None => 0,
+    })
+  };
+  found.unwrap_or(0)
+}
+
+/// The scan's row and its length: the row last read from one of its
+/// batches, laid out by its record. Valid until the scan is freed; NULL
+/// for an id that names no scan.
+///
+/// # Safety
+///
+/// `conn` is a connection handle not yet freed; a non-null `len` points
+/// to a writable `size_t`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_scan_row(
+  conn: *mut IcApidConnection,
+  scan: IcScanId,
+  len: *mut usize,
+) -> *const u8 {
+  // SAFETY: the caller's promise.
+  let found = unsafe {
+    on_conn(conn, |c| {
+      let row = c.scan_row(ScanId::from_u32(scan));
+      if row.is_empty() {
+        return (std::ptr::null(), 0);
+      }
+      (row.as_ptr(), row.len())
+    })
+  };
+  let (row, row_len) = found.unwrap_or((std::ptr::null(), 0));
+  if !len.is_null() {
+    // SAFETY: the caller's promise.
+    unsafe { len.write(row_len) };
+  }
+  row
+}
+
+/// The scan a batch is of.
+#[no_mangle]
+pub extern "C" fn ic_scan_batch_scan(batch: IcScanBatchId) -> IcScanId {
+  ScanBatchId::from_u64(batch).scan().as_u32()
+}
+
+/// Take the batch completed longest ago, of a scan with no callback,
+/// into `batch`. False when there is none.
+///
+/// # Safety
+///
+/// `conn` is a connection handle not yet freed; `batch` points to a
+/// writable `IC_SCAN_BATCH_ID`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_conn_get_next_scan_batch(
+  conn: *mut IcApidConnection,
+  batch: *mut IcScanBatchId,
+) -> bool {
+  if batch.is_null() {
+    return false;
+  }
+  // SAFETY: the caller's promise.
+  match unsafe { on_conn(conn, |c| c.get_next_scan_batch()) } {
+    Ok(Some(next)) => {
+      // SAFETY: checked non-null above; the caller's promise.
+      unsafe { batch.write(next.as_u64()) };
+      true
+    }
+    _ => false,
+  }
+}
+
+/// Rows in a batch; 0 for one no longer with the program.
+///
+/// # Safety
+///
+/// `conn` is a connection handle not yet freed.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_scan_batch_rows(
+  conn: *mut IcApidConnection,
+  batch: IcScanBatchId,
+) -> u32 {
+  // SAFETY: the caller's promise.
+  let found = unsafe {
+    on_conn(conn, |c| c.scan_batch_rows(ScanBatchId::from_u64(batch)))
+  };
+  found.unwrap_or(0)
+}
+
+/// What a call that reads a row gives C: the code, and whether a row
+/// was read into `more`.
+///
+/// # Safety
+///
+/// `more` points to a writable `bool`.
+unsafe fn row_read(
+  found: Result<Result<bool, IcError>, i32>,
+  more: *mut bool,
+) -> i32 {
+  let (code, read) = match found {
+    Ok(Ok(read)) => (0, read),
+    Ok(Err(e)) => (e.code, false),
+    Err(code) => (code, false),
+  };
+  // SAFETY: the caller's promise.
+  unsafe { more.write(read) };
+  code
+}
+
+/// Unpack the batch's next row into the scan's row
+/// (`ic_apid_scan_row`); `more` says whether there was one.
+///
+/// Errors: `IC_ERROR_NO_SUCH_FIELD` for a batch no longer with the
+/// program.
+///
+/// # Safety
+///
+/// `conn` is a connection handle not yet freed; `more` points to a
+/// writable `bool`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_conn_next_scan_row(
+  conn: *mut IcApidConnection,
+  batch: IcScanBatchId,
+  more: *mut bool,
+) -> i32 {
+  if more.is_null() {
+    return err::IC_ERROR_NULL_POINTER;
+  }
+  // SAFETY: the caller's promise.
+  let found =
+    unsafe { on_conn(conn, |c| c.next_scan_row(ScanBatchId::from_u64(batch))) };
+  // SAFETY: checked non-null above; the caller's promise.
+  unsafe { row_read(found, more) }
+}
+
+/// As `ic_apid_conn_next_scan_row`, into `row`, `len` bytes of the
+/// program's laid out by the scan's record, a copy less.
+///
+/// Errors: as `ic_apid_conn_next_scan_row`; `IC_ERROR_RECORD_SIZE_TOO_BIG`
+/// for a row shorter than the record's.
+///
+/// # Safety
+///
+/// `conn` is a connection handle not yet freed; `row` points to `len`
+/// writable bytes; `more` points to a writable `bool`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_conn_next_scan_row_into(
+  conn: *mut IcApidConnection,
+  batch: IcScanBatchId,
+  row: *mut u8,
+  len: usize,
+  more: *mut bool,
+) -> i32 {
+  if more.is_null() || row.is_null() {
+    return err::IC_ERROR_NULL_POINTER;
+  }
+  // SAFETY: the caller's promise.
+  let into = unsafe { row_arg_mut(row, len) };
+  // SAFETY: the caller's promise.
+  let found = unsafe {
+    on_conn(conn, |c| {
+      c.next_scan_row_into(ScanBatchId::from_u64(batch), into)
+    })
+  };
+  // SAFETY: checked non-null above; the caller's promise.
+  unsafe { row_read(found, more) }
+}
+
+/// Hand a batch back: its receiver is asked for more with the next send
+/// or poll. A batch of a run that has ended is passed over.
+///
+/// # Safety
+///
+/// `conn` is a connection handle not yet freed.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_conn_release_scan_batch(
+  conn: *mut IcApidConnection,
+  batch: IcScanBatchId,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  unsafe {
+    conn_code(conn, |c| c.release_scan_batch(ScanBatchId::from_u64(batch)))
+  }
+}
+
+/// Read the scan's next row into its row (`ic_apid_scan_row`), as a
+/// stream of rows: a batch is handed back once its rows are read, and
+/// the next waited for in polls, which serve every other scan and query
+/// of the connection meanwhile. `more` is false once the run has read
+/// to the end or was closed, or for a scan not started.
+///
+/// Errors: the run's error once it has failed; `IC_ERROR_NOT_SUPPORTED`
+/// for a scan with a callback, and inside a callback once it would have
+/// to wait; `IC_ERROR_NO_SUCH_FIELD` for an id that names no scan.
+///
+/// # Safety
+///
+/// `conn` is a connection handle not yet freed; `more` points to a
+/// writable `bool`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_conn_next_row(
+  conn: *mut IcApidConnection,
+  scan: IcScanId,
+  more: *mut bool,
+) -> i32 {
+  if more.is_null() {
+    return err::IC_ERROR_NULL_POINTER;
+  }
+  // SAFETY: the caller's promise.
+  let found = unsafe { on_conn(conn, |c| c.next_row(ScanId::from_u32(scan))) };
+  // SAFETY: checked non-null above; the caller's promise.
+  unsafe { row_read(found, more) }
+}
+
+/// As `ic_apid_conn_next_row`, into `row`, `len` bytes of the program's
+/// laid out by the scan's record, a copy less.
+///
+/// Errors: as `ic_apid_conn_next_row`; `IC_ERROR_RECORD_SIZE_TOO_BIG` for
+/// a row shorter than the record's.
+///
+/// # Safety
+///
+/// `conn` is a connection handle not yet freed; `row` points to `len`
+/// writable bytes; `more` points to a writable `bool`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_conn_next_row_into(
+  conn: *mut IcApidConnection,
+  scan: IcScanId,
+  row: *mut u8,
+  len: usize,
+  more: *mut bool,
+) -> i32 {
+  if more.is_null() || row.is_null() {
+    return err::IC_ERROR_NULL_POINTER;
+  }
+  // SAFETY: the caller's promise.
+  let into = unsafe { row_arg_mut(row, len) };
+  // SAFETY: the caller's promise.
+  let found =
+    unsafe { on_conn(conn, |c| c.next_row_into(ScanId::from_u32(scan), into)) };
+  // SAFETY: checked non-null above; the caller's promise.
+  unsafe { row_read(found, more) }
+}
+
+/// The scan's next complete batch into `batch`, waiting as
+/// `ic_apid_conn_next_row` does; `more` is false, and `batch` left as
+/// it is, once the run is over with no error. The program reads the
+/// batch with `ic_apid_conn_next_scan_row` and hands it back itself.
+///
+/// Errors: as `ic_apid_conn_next_row`.
+///
+/// # Safety
+///
+/// `conn` is a connection handle not yet freed; `batch` points to a
+/// writable `IC_SCAN_BATCH_ID` and `more` to a writable `bool`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_conn_next_batch(
+  conn: *mut IcApidConnection,
+  scan: IcScanId,
+  batch: *mut IcScanBatchId,
+  more: *mut bool,
+) -> i32 {
+  if more.is_null() || batch.is_null() {
+    return err::IC_ERROR_NULL_POINTER;
+  }
+  // SAFETY: the caller's promise.
+  let found =
+    unsafe { on_conn(conn, |c| c.next_batch(ScanId::from_u32(scan))) };
+  let (code, next) = match found {
+    Ok(Ok(next)) => (0, next),
+    Ok(Err(e)) => (e.code, None),
+    Err(code) => (code, None),
+  };
+  // SAFETY: checked non-null above; the caller's promise.
+  unsafe {
+    more.write(next.is_some());
+    if let Some(next) = next {
+      batch.write(next.as_u64());
+    }
+  }
+  code
+}
+
 // ---- Executors ----
 
 /// The executor behind a handle.
@@ -2865,9 +3577,53 @@ unsafe fn op_ref<'a>(request: *const IcRequest, op: u32) -> Option<&'a KeyOp> {
   found.ops().get(op as usize)
 }
 
-/// Fill `options`, `size` bytes, with the defaults.
+/// Bytes of `IC_EXECUTOR_OPTIONS` in release 0.1, before `scans`.
+fn executor_options_0_1() -> usize {
+  std::mem::offset_of!(IcExecutorOptions, scans)
+}
+
+/// Bytes of `IC_EXECUTOR_STATS` in release 0.1, before `scans`.
+fn executor_stats_0_1() -> usize {
+  std::mem::offset_of!(IcExecutorStats, scans)
+}
+
+/// Write a field of a struct with a size at `offset` in it, if the
+/// caller's struct, `size` bytes, holds it: one built against an older
+/// header is shorter, and gets only the fields it knows.
 ///
-/// Leaves `options` as it is when `size` is smaller than this header's
+/// # Safety
+///
+/// `base` points to `size` writable bytes.
+unsafe fn put_sized<T: Copy>(base: *mut u8, size: usize, offset: usize, v: T) {
+  if offset + std::mem::size_of::<T>() > size {
+    return;
+  }
+  // SAFETY: the caller's promise; the field lies within `size` bytes.
+  unsafe { base.add(offset).cast::<T>().write_unaligned(v) };
+}
+
+/// Read a field of a struct with a size, as [`put_sized`] writes one:
+/// `None` if the caller's struct is too short to hold it.
+///
+/// # Safety
+///
+/// `base` points to `size` readable bytes.
+unsafe fn get_sized<T: Copy>(
+  base: *const u8,
+  size: usize,
+  offset: usize,
+) -> Option<T> {
+  if offset + std::mem::size_of::<T>() > size {
+    return None;
+  }
+  // SAFETY: the caller's promise; the field lies within `size` bytes.
+  Some(unsafe { base.add(offset).cast::<T>().read_unaligned() })
+}
+
+/// Fill `options`, `size` bytes, with the defaults: the fields that fit,
+/// so that a program built against an older header gets those it knows.
+///
+/// Leaves `options` as it is when `size` is smaller than release 0.1's
 /// `IC_EXECUTOR_OPTIONS`.
 ///
 /// # Safety
@@ -2878,17 +3634,39 @@ pub unsafe extern "C" fn ic_executor_options_init(
   options: *mut IcExecutorOptions,
   size: usize,
 ) {
-  if options.is_null() || size < std::mem::size_of::<IcExecutorOptions>() {
+  if options.is_null() || size < executor_options_0_1() {
     return;
   }
   let defaults = ExecutorOptions::default();
-  let value = IcExecutorOptions {
-    size: size as u32,
-    in_flight: defaults.in_flight,
-    queue: defaults.queue,
-  };
-  // SAFETY: the caller's promise; the struct fits.
-  unsafe { options.write(value) };
+  let base = options as *mut u8;
+  // SAFETY: the caller's promise; each field is written only if it
+  // lies within `size` bytes.
+  unsafe {
+    put_sized(
+      base,
+      size,
+      std::mem::offset_of!(IcExecutorOptions, size),
+      size as u32,
+    );
+    put_sized(
+      base,
+      size,
+      std::mem::offset_of!(IcExecutorOptions, in_flight),
+      defaults.in_flight,
+    );
+    put_sized(
+      base,
+      size,
+      std::mem::offset_of!(IcExecutorOptions, queue),
+      defaults.queue,
+    );
+    put_sized(
+      base,
+      size,
+      std::mem::offset_of!(IcExecutorOptions, scans),
+      defaults.scans,
+    );
+  }
 }
 
 /// Start an executor: a thread of the library's, with a connection of
@@ -2924,13 +3702,29 @@ pub unsafe extern "C" fn ic_apid_executor_start(
     None => return err::IC_ERROR_NULL_POINTER,
   };
   let mut opts = ExecutorOptions::default();
-  // SAFETY: the caller's promise.
-  if let Some(given) = unsafe { options.as_ref() } {
-    if (given.size as usize) < std::mem::size_of::<IcExecutorOptions>() {
-      return err::IC_ERROR_INCONSISTENT_DATA;
+  if !options.is_null() {
+    let base = options as *const u8;
+    // SAFETY: the caller's promise: the struct was filled by
+    // `ic_executor_options_init`, which wrote its size first. Each later
+    // field is read only if that size holds it.
+    unsafe {
+      let size = get_sized::<u32>(base, 4, 0).unwrap_or(0) as usize;
+      if size < executor_options_0_1() {
+        return err::IC_ERROR_INCONSISTENT_DATA;
+      }
+      let in_flight = std::mem::offset_of!(IcExecutorOptions, in_flight);
+      if let Some(value) = get_sized::<u32>(base, size, in_flight) {
+        opts.in_flight = value;
+      }
+      let queue = std::mem::offset_of!(IcExecutorOptions, queue);
+      if let Some(value) = get_sized::<u32>(base, size, queue) {
+        opts.queue = value;
+      }
+      let scans = std::mem::offset_of!(IcExecutorOptions, scans);
+      if let Some(value) = get_sized::<u32>(base, size, scans) {
+        opts.scans = value;
+      }
     }
-    opts.in_flight = given.in_flight;
-    opts.queue = given.queue;
   }
   guarded(|| match Executor::start(g, &opts) {
     Ok(started) => {
@@ -2970,10 +3764,11 @@ pub unsafe extern "C" fn ic_apid_executor_free(executor: *mut IcApidExecutor) {
 }
 
 /// What the executor has done since it started, into `stats`, `size`
-/// bytes.
+/// bytes: the fields that fit, so that a program built against an older
+/// header gets those it knows.
 ///
-/// Errors: `IC_ERROR_INCONSISTENT_DATA` when `size` is smaller than this
-/// header's `IC_EXECUTOR_STATS`. Any thread may call it.
+/// Errors: `IC_ERROR_INCONSISTENT_DATA` when `size` is smaller than
+/// release 0.1's `IC_EXECUTOR_STATS`. Any thread may call it.
 ///
 /// # Safety
 ///
@@ -2993,22 +3788,43 @@ pub unsafe extern "C" fn ic_apid_executor_stats(
   if stats.is_null() {
     return err::IC_ERROR_NULL_POINTER;
   }
-  if size < std::mem::size_of::<IcExecutorStats>() {
+  if size < executor_stats_0_1() {
     return err::IC_ERROR_INCONSISTENT_DATA;
   }
   let now = e.stats();
-  let value = IcExecutorStats {
-    size: size as u32,
-    submitted: now.submitted,
-    refused: now.refused,
-    admitted: now.admitted,
-    completed: now.completed,
-    expired: now.expired,
-    sends: now.sends,
-    passes: now.passes,
-  };
-  // SAFETY: the caller's promise; the struct fits.
-  unsafe { stats.write(value) };
+  let base = stats as *mut u8;
+  let counts: [(usize, u64); 8] = [
+    (
+      std::mem::offset_of!(IcExecutorStats, submitted),
+      now.submitted,
+    ),
+    (std::mem::offset_of!(IcExecutorStats, refused), now.refused),
+    (
+      std::mem::offset_of!(IcExecutorStats, admitted),
+      now.admitted,
+    ),
+    (
+      std::mem::offset_of!(IcExecutorStats, completed),
+      now.completed,
+    ),
+    (std::mem::offset_of!(IcExecutorStats, expired), now.expired),
+    (std::mem::offset_of!(IcExecutorStats, sends), now.sends),
+    (std::mem::offset_of!(IcExecutorStats, passes), now.passes),
+    (std::mem::offset_of!(IcExecutorStats, scans), now.scans),
+  ];
+  // SAFETY: the caller's promise; each field is written only if it lies
+  // within `size` bytes.
+  unsafe {
+    put_sized(
+      base,
+      size,
+      std::mem::offset_of!(IcExecutorStats, size),
+      size as u32,
+    );
+    for (offset, count) in counts {
+      put_sized(base, size, offset, count);
+    }
+  }
   0
 }
 
@@ -3701,6 +4517,342 @@ pub unsafe extern "C" fn ic_apid_submitter_execute(
   guarded(|| code_of(s.execute(r)))
 }
 
+// ---- Scans through an executor ----
+
+/// The scan shape behind a handle.
+///
+/// # Safety
+///
+/// A non-null `shape` is a scan shape handle not yet freed.
+unsafe fn scan_shape_of<'a>(
+  shape: *const IcScanShape,
+) -> Option<&'a Arc<ScanShape>> {
+  // SAFETY: the caller's promise.
+  unsafe { (shape as *const Arc<ScanShape>).as_ref() }
+}
+
+/// The reader behind a handle.
+///
+/// # Safety
+///
+/// A non-null `reader` is a reader handle not yet freed, used by one
+/// thread at a time.
+unsafe fn reader_of<'a>(
+  reader: *mut IcScanReader,
+) -> Option<&'a mut ScanReader> {
+  // SAFETY: the caller's promise.
+  unsafe { (reader as *mut ScanReader).as_mut() }
+}
+
+/// The shape of scans for executors: a table, and the record its rows
+/// are read into. Made once, and shared by every reader that uses it.
+///
+/// Errors: `IC_ERROR_KEY_RECORD` when the record is over another table,
+/// or another version of it. The shape is the caller's, freed with
+/// `ic_scan_shape_free`; any thread may use it, and a reader keeps what
+/// it needs of it.
+///
+/// # Safety
+///
+/// `def` and `rec` are handles not yet freed; `shape` points to
+/// writable storage for a pointer.
+#[no_mangle]
+pub unsafe extern "C" fn ic_scan_shape_create(
+  def: *const IcTableDef,
+  rec: *const IcRecord,
+  shape: *mut *mut IcScanShape,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let (table, rec) = match unsafe { (table_of(def), record_of(rec)) } {
+    (Some(table), Some(rec)) => (table, rec),
+    _ => return err::IC_ERROR_NULL_POINTER,
+  };
+  if shape.is_null() {
+    return err::IC_ERROR_NULL_POINTER;
+  }
+  guarded(|| match ScanShape::new(&table.def, rec) {
+    Ok(made) => {
+      let handle = Box::into_raw(Box::new(made)) as *mut IcScanShape;
+      // SAFETY: checked non-null above; the caller's promise.
+      unsafe { shape.write(handle) };
+      0
+    }
+    Err(e) => e.code,
+  })
+}
+
+/// Free a scan shape handle. Readers of it keep what they need.
+///
+/// # Safety
+///
+/// A non-null `shape` is a scan shape handle not yet freed, freed here.
+#[no_mangle]
+pub unsafe extern "C" fn ic_scan_shape_free(shape: *mut IcScanShape) {
+  if shape.is_null() {
+    return;
+  }
+  // SAFETY: the caller's promise; the handle is the box made for it.
+  let owned = unsafe { Box::from_raw(shape as *mut Arc<ScanShape>) };
+  let _ = guarded(move || {
+    drop(owned);
+    0
+  });
+}
+
+/// A reader of scans of `shape`: a thread's end of a scan an executor
+/// runs, with its row. Made once and run again and again
+/// (`ic_apid_submitter_scan`).
+///
+/// The reader is the caller's, freed with `ic_scan_reader_free`; one
+/// thread uses it at a time.
+///
+/// # Safety
+///
+/// `shape` is a scan shape handle not yet freed; `reader` points to
+/// writable storage for a pointer.
+#[no_mangle]
+pub unsafe extern "C" fn ic_scan_reader_create(
+  shape: *const IcScanShape,
+  reader: *mut *mut IcScanReader,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let shape = match unsafe { scan_shape_of(shape) } {
+    Some(shape) => shape,
+    None => return err::IC_ERROR_NULL_POINTER,
+  };
+  if reader.is_null() {
+    return err::IC_ERROR_NULL_POINTER;
+  }
+  guarded(|| {
+    let made = ScanReader::new(shape);
+    let handle = Box::into_raw(Box::new(made)) as *mut IcScanReader;
+    // SAFETY: checked non-null above; the caller's promise.
+    unsafe { reader.write(handle) };
+    0
+  })
+}
+
+/// Free a reader. A run not over is ended without waiting: the executor
+/// closes its scan.
+///
+/// # Safety
+///
+/// A non-null `reader` is a reader handle not yet freed, freed here,
+/// with no call on it under way.
+#[no_mangle]
+pub unsafe extern "C" fn ic_scan_reader_free(reader: *mut IcScanReader) {
+  if reader.is_null() {
+    return;
+  }
+  // SAFETY: the caller's promise; the handle is the box made for it.
+  let owned = unsafe { Box::from_raw(reader as *mut ScanReader) };
+  let _ = guarded(move || {
+    drop(owned);
+    0
+  });
+}
+
+/// Run a scan on the executor, read through `reader`: the request goes
+/// to the executor, waiting for room in a full list, and the rows come
+/// with `ic_scan_reader_next_row`. Each batch is handed back to its
+/// receiver once the reader has read it, whatever the lock, unless a
+/// committed read asks for `read_ahead`.
+///
+/// Errors: `IC_ERROR_SCAN_ACTIVE` while the reader's last run is not
+/// over; `IC_ERROR_NOT_SUPPORTED` for a transaction or a callback in
+/// `args`, for `read_ahead` with a lock, and on the executor's own
+/// thread; `IC_ERROR_EXECUTOR_STOPPED`; `IC_ERROR_INCONSISTENT_DATA` for
+/// `args` not filled by `ic_scan_args_init`.
+///
+/// # Safety
+///
+/// `submitter` and `reader` are handles not yet freed, each used by this
+/// thread alone meanwhile; `args` was filled by `ic_scan_args_init`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_submitter_scan(
+  submitter: *mut IcApidSubmitter,
+  reader: *mut IcScanReader,
+  args: *const IcScanArgs,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let (s, r) = match unsafe { (submitter_of(submitter), reader_of(reader)) } {
+    (Some(s), Some(r)) => (s, r),
+    _ => return err::IC_ERROR_NULL_POINTER,
+  };
+  // SAFETY: the caller's promise.
+  let rust_args = match unsafe { scan_args_from_c(args) } {
+    Ok(rust_args) => rust_args,
+    Err(code) => return code,
+  };
+  guarded(|| code_of(s.scan(r, &rust_args)))
+}
+
+/// Read the next row into the reader's row (`ic_scan_reader_row`),
+/// waiting for the executor while no batch is there; `more` is false
+/// once the run has read to the end or was closed, or before any run.
+///
+/// Errors: the run's error once it has failed, its unread rows dropped.
+///
+/// # Safety
+///
+/// `reader` is a reader handle not yet freed, used by this thread alone;
+/// `more` points to a writable `bool`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_scan_reader_next_row(
+  reader: *mut IcScanReader,
+  more: *mut bool,
+) -> i32 {
+  if more.is_null() {
+    return err::IC_ERROR_NULL_POINTER;
+  }
+  // SAFETY: the caller's promise.
+  let r = match unsafe { reader_of(reader) } {
+    Some(r) => r,
+    None => return err::IC_ERROR_NULL_POINTER,
+  };
+  let found = match catch_unwind(AssertUnwindSafe(|| r.next_row())) {
+    Ok(result) => Ok(result),
+    Err(_) => Err(err::IC_ERROR_INTERNAL_PANIC),
+  };
+  // SAFETY: checked non-null above; the caller's promise.
+  unsafe { row_read(found, more) }
+}
+
+/// As `ic_scan_reader_next_row`, into `row`, `len` bytes of the
+/// program's laid out by the shape's record, a copy less.
+///
+/// Errors: as `ic_scan_reader_next_row`; `IC_ERROR_RECORD_SIZE_TOO_BIG`
+/// for a row shorter than the record's.
+///
+/// # Safety
+///
+/// As `ic_scan_reader_next_row`; `row` points to `len` writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn ic_scan_reader_next_row_into(
+  reader: *mut IcScanReader,
+  row: *mut u8,
+  len: usize,
+  more: *mut bool,
+) -> i32 {
+  if more.is_null() || row.is_null() {
+    return err::IC_ERROR_NULL_POINTER;
+  }
+  // SAFETY: the caller's promise.
+  let r = match unsafe { reader_of(reader) } {
+    Some(r) => r,
+    None => return err::IC_ERROR_NULL_POINTER,
+  };
+  // SAFETY: the caller's promise.
+  let into = unsafe { row_arg_mut(row, len) };
+  let found = match catch_unwind(AssertUnwindSafe(|| r.next_row_into(into))) {
+    Ok(result) => Ok(result),
+    Err(_) => Err(err::IC_ERROR_INTERNAL_PANIC),
+  };
+  // SAFETY: checked non-null above; the caller's promise.
+  unsafe { row_read(found, more) }
+}
+
+/// The reader's row and its length: the row last read, laid out by the
+/// shape's record. Valid until the reader is freed; NULL for a null
+/// reader.
+///
+/// # Safety
+///
+/// A non-null `reader` is a reader handle not yet freed; a non-null
+/// `len` points to a writable `size_t`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_scan_reader_row(
+  reader: *const IcScanReader,
+  len: *mut usize,
+) -> *const u8 {
+  // SAFETY: the caller's promise.
+  let found = unsafe { (reader as *const ScanReader).as_ref() };
+  let (row, row_len) = match found {
+    Some(r) => (r.row().as_ptr(), r.row().len()),
+    None => (std::ptr::null(), 0),
+  };
+  if !len.is_null() {
+    // SAFETY: the caller's promise.
+    unsafe { len.write(row_len) };
+  }
+  row
+}
+
+/// Rows read in the reader's run so far; 0 for a null reader.
+///
+/// # Safety
+///
+/// A non-null `reader` is a reader handle not yet freed.
+#[no_mangle]
+pub unsafe extern "C" fn ic_scan_reader_rows_read(
+  reader: *const IcScanReader,
+) -> u64 {
+  // SAFETY: the caller's promise.
+  match unsafe { (reader as *const ScanReader).as_ref() } {
+    Some(r) => r.rows_read(),
+    None => 0,
+  }
+}
+
+/// Why the reader's run failed, or 0 if it read to the end, was closed,
+/// or is still going.
+///
+/// # Safety
+///
+/// A non-null `reader` is a reader handle not yet freed.
+#[no_mangle]
+pub unsafe extern "C" fn ic_scan_reader_error(
+  reader: *const IcScanReader,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  match unsafe { (reader as *const ScanReader).as_ref() } {
+    Some(r) => match r.error() {
+      Some(e) => e.code,
+      None => 0,
+    },
+    None => err::IC_ERROR_NULL_POINTER,
+  }
+}
+
+/// True once the reader's run is over, and before any run; true too for
+/// a null reader.
+///
+/// # Safety
+///
+/// A non-null `reader` is a reader handle not yet freed.
+#[no_mangle]
+pub unsafe extern "C" fn ic_scan_reader_is_done(
+  reader: *const IcScanReader,
+) -> bool {
+  // SAFETY: the caller's promise.
+  match unsafe { (reader as *const ScanReader).as_ref() } {
+    Some(r) => r.is_done(),
+    None => true,
+  }
+}
+
+/// End the reader's run before it reads to the end, and wait for the
+/// executor to finish it, so that the reader can run again. The rows
+/// not read are dropped.
+///
+/// # Safety
+///
+/// `reader` is a reader handle not yet freed, used by this thread alone.
+#[no_mangle]
+pub unsafe extern "C" fn ic_scan_reader_close(
+  reader: *mut IcScanReader,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let r = match unsafe { reader_of(reader) } {
+    Some(r) => r,
+    None => return err::IC_ERROR_NULL_POINTER,
+  };
+  guarded(|| {
+    r.close();
+    0
+  })
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -3770,6 +4922,36 @@ mod tests {
     );
     assert_eq!(IC_ERROR_EXECUTOR_BUSY, err::IC_ERROR_EXECUTOR_BUSY);
     assert_eq!(IC_ERROR_EXECUTOR_STOPPED, err::IC_ERROR_EXECUTOR_STOPPED);
+    assert_eq!(IC_ERROR_SCAN_ACTIVE, err::IC_ERROR_SCAN_ACTIVE);
+    let scan_errors: [(i32, i32); 4] = [
+      (
+        IC_NDB_ERROR_SCAN_NODE_FAILURE,
+        ic_apid::scan::IC_NDB_ERROR_SCAN_NODE_FAILURE,
+      ),
+      (
+        IC_NDB_ERROR_TOO_MANY_SCANS,
+        ic_apid::scan::IC_NDB_ERROR_TOO_MANY_SCANS,
+      ),
+      (
+        IC_NDB_ERROR_SCAN_LOCK_TIMEOUT,
+        ic_apid::scan::IC_NDB_ERROR_SCAN_LOCK_TIMEOUT,
+      ),
+      (
+        IC_NDB_ERROR_SCAN_IDLE,
+        ic_apid::scan::IC_NDB_ERROR_SCAN_IDLE,
+      ),
+    ];
+    for (ours, theirs) in scan_errors {
+      assert_eq!(ours, theirs);
+      assert!(IcError::new(ours).is_ndb_error(), "{} is NDB's", ours);
+      assert!(IcError::new(ours).is_temporary(), "{} is temporary", ours);
+    }
+    assert_eq!(
+      scan_lock_from_c(IC_SCAN_LOCK_SHARED),
+      Some(ScanLock::Shared)
+    );
+    assert_eq!(scan_lock_from_c(3), None);
+    assert_eq!(scan_state_to_c(ScanState::Done), IC_SCAN_DONE);
     assert!(IcError::new(IC_ERROR_EXECUTOR_BUSY).is_temporary());
     assert_eq!(
       IC_NDB_ERROR_NULL_KEY,
@@ -3851,7 +5033,104 @@ mod tests {
       ic_apid_submitter_free(std::ptr::null_mut());
       ic_op_shape_free(std::ptr::null_mut());
       ic_request_free(std::ptr::null_mut());
+      let mut more = true;
+      let mut batch: IcScanBatchId = 0;
+      assert_eq!(
+        ic_apid_scan_free(std::ptr::null_mut(), 1),
+        IC_ERROR_NULL_POINTER
+      );
+      assert!(ic_apid_scan_is_done(std::ptr::null_mut(), 1));
+      assert_eq!(ic_apid_scan_state(std::ptr::null_mut(), 1), IC_SCAN_UNKNOWN);
+      assert!(ic_apid_scan_row(std::ptr::null_mut(), 1, &mut len).is_null());
+      assert_eq!(len, 0);
+      assert!(!ic_apid_conn_get_next_scan_batch(
+        std::ptr::null_mut(),
+        &mut batch
+      ));
+      assert_eq!(
+        ic_apid_conn_next_row(std::ptr::null_mut(), 1, &mut more),
+        IC_ERROR_NULL_POINTER
+      );
+      assert!(!more);
+      assert_eq!(
+        ic_apid_conn_next_row(std::ptr::null_mut(), 1, std::ptr::null_mut()),
+        IC_ERROR_NULL_POINTER
+      );
+      assert_eq!(
+        ic_apid_conn_start_scan(std::ptr::null_mut(), 1, std::ptr::null()),
+        IC_ERROR_NULL_POINTER
+      );
+      assert_eq!(
+        ic_scan_reader_create(std::ptr::null(), std::ptr::null_mut()),
+        IC_ERROR_NULL_POINTER
+      );
+      assert_eq!(
+        ic_scan_reader_next_row(std::ptr::null_mut(), &mut more),
+        IC_ERROR_NULL_POINTER
+      );
+      assert!(ic_scan_reader_row(std::ptr::null(), &mut len).is_null());
+      assert!(ic_scan_reader_is_done(std::ptr::null()));
+      assert_eq!(
+        ic_scan_reader_close(std::ptr::null_mut()),
+        IC_ERROR_NULL_POINTER
+      );
+      assert_eq!(
+        ic_apid_submitter_scan(
+          std::ptr::null_mut(),
+          std::ptr::null_mut(),
+          std::ptr::null()
+        ),
+        IC_ERROR_NULL_POINTER
+      );
+      ic_scan_reader_free(std::ptr::null_mut());
+      ic_scan_shape_free(std::ptr::null_mut());
     }
+  }
+
+  #[test]
+  fn scan_args_start_from_the_defaults_and_cross_to_rust() {
+    let mut args = std::mem::MaybeUninit::<IcScanArgs>::uninit();
+    // SAFETY: the init writes the whole struct, of the size given.
+    let mut args = unsafe {
+      ic_scan_args_init(args.as_mut_ptr(), std::mem::size_of::<IcScanArgs>());
+      args.assume_init()
+    };
+    assert_eq!(args.lock, IC_SCAN_LOCK_COMMITTED);
+    assert_eq!(args.trans, IC_NO_TRANS);
+    assert_eq!(args.partition, IC_NO_PARTITION);
+    assert!(!args.read_ahead);
+    assert!(args.callback.is_none());
+    // SAFETY: filled by the init above.
+    let crossed = unsafe { scan_args_from_c(&args) };
+    assert!(crossed.is_ok(), "refused: {:?}", crossed.err());
+    let rust = crossed.unwrap_or_default();
+    assert_eq!(rust.lock, ScanLock::Committed);
+    assert!(rust.trans.is_none() && rust.partition.is_none());
+    assert!(rust.callback.is_none());
+    args.lock = IC_SCAN_LOCK_EXCLUSIVE;
+    args.partition = 3;
+    args.trans = 7;
+    // SAFETY: as above.
+    let crossed = unsafe { scan_args_from_c(&args) };
+    assert!(crossed.is_ok(), "refused: {:?}", crossed.err());
+    let rust = crossed.unwrap_or_default();
+    assert_eq!(rust.lock, ScanLock::Exclusive);
+    assert_eq!(rust.partition, Some(3));
+    assert_eq!(rust.trans, Some(TransId::from_u32(7)));
+    args.lock = 9;
+    // SAFETY: as above.
+    let refused = unsafe { scan_args_from_c(&args) };
+    assert_eq!(refused.err(), Some(IC_ERROR_NOT_SUPPORTED));
+    args.size = 4;
+    // SAFETY: as above; the struct is whole, its size says otherwise.
+    let short = unsafe { scan_args_from_c(&args) };
+    assert_eq!(short.err(), Some(IC_ERROR_INCONSISTENT_DATA));
+  }
+
+  #[test]
+  fn a_batch_names_its_scan() {
+    let batch = ((42u64) << 32) | 0x0080_0001;
+    assert_eq!(ic_scan_batch_scan(batch), 42);
   }
 
   #[test]
@@ -3910,6 +5189,46 @@ mod tests {
     let defaults = ExecutorOptions::default();
     assert_eq!(opts.in_flight, defaults.in_flight);
     assert_eq!(opts.queue, defaults.queue);
+    assert_eq!(opts.scans, defaults.scans);
+  }
+
+  #[test]
+  fn a_struct_from_an_older_header_gets_the_fields_it_knows() {
+    // Release 0.1's IC_EXECUTOR_OPTIONS ends before `scans`: the init
+    // writes no further, and a later field read from it is the default.
+    let mut bytes = [0xAAu8; 32];
+    // SAFETY: the buffer is a local, longer than the size given.
+    unsafe {
+      ic_executor_options_init(
+        bytes.as_mut_ptr() as *mut IcExecutorOptions,
+        executor_options_0_1(),
+      );
+    }
+    assert!(bytes[executor_options_0_1()..].iter().all(|b| *b == 0xAA));
+    // SAFETY: as above.
+    let (size, queue, scans) = unsafe {
+      let base = bytes.as_ptr();
+      let size = get_sized::<u32>(base, 4, 0).unwrap_or(0) as usize;
+      (
+        size,
+        get_sized::<u32>(
+          base,
+          size,
+          std::mem::offset_of!(IcExecutorOptions, queue),
+        ),
+        get_sized::<u32>(
+          base,
+          size,
+          std::mem::offset_of!(IcExecutorOptions, scans),
+        ),
+      )
+    };
+    assert_eq!(size, executor_options_0_1());
+    assert_eq!(queue, Some(ExecutorOptions::default().queue));
+    assert_eq!(scans, None, "not in the older struct");
+    // The stats likewise end where 0.1's did.
+    assert_eq!(executor_stats_0_1(), 64);
+    assert_eq!(executor_options_0_1(), 12);
   }
 
   #[test]

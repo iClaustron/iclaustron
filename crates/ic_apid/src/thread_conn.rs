@@ -86,6 +86,16 @@
 //! application thread wait on a second condition until the executor
 //! takes the list, which it does whole, in the same lock as the pages.
 //!
+//! **Nudges.** A scan's reader, on an application thread, hands its
+//! batches back to the executor running the scan, and asks it to close
+//! the scan. Neither may wait behind requests: a full list, or an
+//! executor at its in-flight limit, would leave the scan stalled with
+//! nobody to move it. So a reader leaves a nudge, a word naming its
+//! scan, on a list of its own. A nudge is never refused, wakes the
+//! executor whenever it sleeps, and is taken with every exchange. A
+//! running scan has at most one nudge waiting, so the list stays within
+//! the scans.
+//!
 //! **Note for C readers.** `Arc<ThreadConnection>` is a pointer with an
 //! atomic reference count; the inbox is freed when the last holder lets
 //! go. It is what makes it safe for a receive thread to still hold an
@@ -156,6 +166,8 @@ struct Inbox {
   room_waiters: u32,
   /// Set when the executor stops: requests are refused from then on.
   requests_closed: bool,
+  /// Nudges from scan readers, oldest first, for an executor.
+  nudges: Vec<u32>,
 }
 
 /// A user thread's inbox (`IC_THREAD_CONNECTION`).
@@ -194,6 +206,7 @@ impl ThreadConnection {
           wants_requests: false,
           room_waiters: 0,
           requests_closed: false,
+          nudges: Vec::new(),
         },
       ),
       cond: IcCond::new(),
@@ -248,19 +261,22 @@ impl ThreadConnection {
   /// signals it had already taken, which the design allows. Either way
   /// the caller goes round again.
   pub fn exchange(&self, wait_ms: u32, pages: &mut Vec<SignalPage>) {
-    self.exchange_with_requests(wait_ms, pages, None);
+    self.exchange_with_requests(wait_ms, pages, None, None);
   }
 
   /// As [`exchange`](Self::exchange), for an executor. With `requests`,
   /// which must be empty, the requests submitted since are taken too,
   /// in the same lock, and a request ends the wait as a signal does.
   /// Without, the requests stay where they are and only signals end
-  /// the wait: what an executor at its in-flight limit asks for.
+  /// the wait: what an executor at its in-flight limit asks for. With
+  /// `nudges`, which must be empty, the nudges are taken likewise, and
+  /// one ends the wait.
   pub(crate) fn exchange_with_requests(
     &self,
     wait_ms: u32,
     pages: &mut Vec<SignalPage>,
     requests: Option<&mut Vec<Work>>,
+    nudges: Option<&mut Vec<u32>>,
   ) {
     let mut inbox = self.inbox.lock();
     for mut page in pages.drain(..) {
@@ -270,8 +286,10 @@ impl ThreadConnection {
       }
     }
     let take = requests.is_some();
-    let nothing =
-      inbox.pages.is_empty() && (!take || inbox.requests.is_empty());
+    let take_nudges = nudges.is_some();
+    let nothing = inbox.pages.is_empty()
+      && (!take || inbox.requests.is_empty())
+      && (!take_nudges || inbox.nudges.is_empty());
     if nothing && wait_ms != 0 {
       inbox.waiting = true;
       inbox.wants_requests = take;
@@ -290,6 +308,11 @@ impl ThreadConnection {
       if !inbox.requests.is_empty() {
         std::mem::swap(&mut inbox.requests, requests);
         make_room = inbox.room_waiters > 0;
+      }
+    }
+    if let Some(nudges) = nudges {
+      if !inbox.nudges.is_empty() {
+        std::mem::swap(&mut inbox.nudges, nudges);
       }
     }
     // As for a wake-up: after the lock is let go of.
@@ -345,6 +368,28 @@ impl ThreadConnection {
       self.cond.signal();
     }
     Ok(())
+  }
+
+  /// Leave a nudge for the executor: a word naming one of its scans,
+  /// whose reader has handed a batch back or asked for a close (see
+  /// "Nudges" above). Never refused nor held back; dropped only once
+  /// the executor has let go of its inbox.
+  pub(crate) fn nudge(&self, word: u32) {
+    let mut inbox = self.inbox.lock();
+    if inbox.closed {
+      return;
+    }
+    inbox.nudges.push(word);
+    let wake = inbox.waiting;
+    if wake {
+      inbox.waiting = false;
+      inbox.wants_requests = false;
+    }
+    // Unlock, and only then wake; see the note at the top of the file.
+    drop(inbox);
+    if wake {
+      self.cond.signal();
+    }
   }
 
   /// Take no more requests: every later submit is refused with
@@ -942,7 +987,7 @@ mod tests {
   fn take_requests(conn: &ThreadConnection, wait_ms: u32) -> Vec<Work> {
     let mut pages: Vec<SignalPage> = Vec::new();
     let mut requests: Vec<Work> = Vec::new();
-    conn.exchange_with_requests(wait_ms, &mut pages, Some(&mut requests));
+    conn.exchange_with_requests(wait_ms, &mut pages, Some(&mut requests), None);
     requests
   }
 
@@ -964,7 +1009,7 @@ mod tests {
     assert_eq!(conn.pending_requests(), 2);
     // An exchange that does not ask for them leaves them.
     let mut pages: Vec<SignalPage> = Vec::new();
-    conn.exchange_with_requests(0, &mut pages, None);
+    conn.exchange_with_requests(0, &mut pages, None, None);
     assert_eq!(conn.pending_requests(), 2);
     assert_eq!(take_requests(&conn, 0).len(), 2);
     assert_eq!(conn.pending_requests(), 0);
@@ -1020,7 +1065,7 @@ mod tests {
     let handle = thread::spawn(move || {
       let start = ic_port::time::gethrtime();
       let mut pages: Vec<SignalPage> = Vec::new();
-      executor.exchange_with_requests(300, &mut pages, None);
+      executor.exchange_with_requests(300, &mut pages, None, None);
       ic_port::time::millis_elapsed(start, ic_port::time::gethrtime())
     });
     ic_port::time::microsleep(50_000);
@@ -1054,6 +1099,49 @@ mod tests {
     assert!(!conn.requests_drained());
     assert_eq!(take_requests(&conn, 0).len(), 1);
     assert!(conn.requests_drained());
+  }
+
+  #[test]
+  fn a_nudge_wakes_an_executor_at_its_limit_and_is_taken_in_order() {
+    // An executor at its in-flight limit takes no requests, but a scan's
+    // reader handing a batch back must still reach it.
+    let table = ThreadTable::new();
+    let conn = table.allocate().expect("conn");
+    conn.open_requests(1);
+    conn.submit(request(), false).expect("fills the list");
+    let executor = Arc::clone(&conn);
+    let handle = thread::spawn(move || {
+      let start = ic_port::time::gethrtime();
+      let mut pages: Vec<SignalPage> = Vec::new();
+      let mut nudges: Vec<u32> = Vec::new();
+      while nudges.is_empty() {
+        executor.exchange_with_requests(
+          10_000,
+          &mut pages,
+          None,
+          Some(&mut nudges),
+        );
+      }
+      let waited =
+        ic_port::time::millis_elapsed(start, ic_port::time::gethrtime());
+      (waited, nudges)
+    });
+    ic_port::time::microsleep(50_000);
+    // Never refused, though the request list is full.
+    conn.nudge(7);
+    conn.nudge(9);
+    let (waited, mut nudges) = handle.join().expect("joined");
+    assert!(waited < 5_000, "woken after {} ms", waited);
+    // An exchange that does not ask for nudges leaves them.
+    conn.nudge(11);
+    let mut pages: Vec<SignalPage> = Vec::new();
+    conn.exchange_with_requests(0, &mut pages, None, None);
+    let mut later: Vec<u32> = Vec::new();
+    conn.exchange_with_requests(0, &mut pages, None, Some(&mut later));
+    nudges.append(&mut later);
+    assert_eq!(nudges, vec![7, 9, 11]);
+    // The request stayed where it was.
+    assert_eq!(conn.pending_requests(), 1);
   }
 
   #[test]
