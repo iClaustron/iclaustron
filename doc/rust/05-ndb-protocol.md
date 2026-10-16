@@ -1234,58 +1234,443 @@ fail the node, if they fail it at all.
 
 ## 7. Scans
 
-- `SCAN_REQ` (signal 32), 11 fixed words: the coordinator's record, a
-  column and key length word, the flags word, the table id (the
-  **index** id for ordered index scans), the schema version, the stored
-  procedure id, the transaction id's low and high halves, the owning
-  transaction's coordinator record, the batch byte size, the first
-  batch size; optional distribution key, RonDB TTL purge window, user
-  id, user id version, parallelism.
-  Sections: 0 = receiver ids (one per parallel fragment scan, which is how
-  parallelism is expressed), 1 = COLUMN_DATA_ORD, 2 = KEY_DATA_ORD (bounds). Verify:
-  `include/kernel/signaldata/ScanTab.hpp:39-133`.
-- Flags word bits: 8 lock mode, 9 no-disk, 10 hold lock, 11 read
-  committed, 12 key information (request SCAN_ROW_KEY_REP for takeover),
-  13 tuple scan, 14 descending, 15 range scan, 16–25 batch size (rows,
-  max 1 023), 26 distribution key, 27 via the join block, 28 pass all
-  confirmations, 29 extended confirmation,
-  30 read-committed-base, 31 multi-fragment; RonDB bits 0–7 for ring
-  buffer meta, join aggregation, parallel ordered scan, TTL, user id,
-  pass queueing, aggregation. Verify:
-  `include/kernel/signaldata/ScanTab.hpp:211-249, 300-304`.
-- `SCAN_CONF` (signal 29): our pointer, an information word (bit 31 =
-  end of data), the transaction id's low and high halves, then per
-  fragment `{our receiver id, the coordinator's pointer for it, rows,
-  length}` (or a 3-word compact form); the coordinator's pointer equal
-  to `IC_NULL_PTR` means that fragment is finished. Verify:
-  `include/kernel/signaldata/ScanTab.hpp:653-706`.
-- `SCAN_REF` (signal 31): our pointer, the transaction id, the error
-  code, and whether a close is needed.
-- `SCAN_MORE_REQ` (signal 28): the coordinator's record, a stop word,
-  the transaction id's low and high halves, then the coordinator's
-  pointers of the receivers being acknowledged (inline if ≤ 21 words,
-  else section 0).
-  Acknowledging releases the previous batch's locks unless taken over.
-  Verify: `include/kernel/signaldata/ScanTab.hpp:766-834`.
-- Row data arrives as `ROW_DATA_REP` addressed to the receiver ids.
-- Batch sizing from parameters 802 (`scan_batch_rows`), 801
-  (`scan_batch_bytes`) and 800 (`scan_batch_bytes_total`) and the row
-  width. Verify:
-  `include/ndbapi/NdbReceiver.hpp:132-159`.
-- Ordered index bounds (KEY_DATA_ORD section): per bound part a bound-type
-  word (0 ≤, 1 <, 2 ≥, 3 >, 4 =), then a column header using the
-  column's id *in the index*, then the value words. An open bound is
-  type 0 with a NULL header for column 0. For multi-range scans the
-  first word of each range also carries the bound length (bits 16–31) and
-  the range number (bits 4–15, max 0xFFF). Verify:
-  `include/ndbapi/NdbIndexScanOperation.hpp:89-178`,
-  `src/ndbapi/NdbScanOperation.cpp:1242-1251, 4111-4201`,
-  `include/kernel/signaldata/KeyInfo.hpp:71-95`.
-  This is the target of `IC_RANGE_CONDITION`.
-- Takeover (update/delete a scanned row): a `KEY_OP_REQ` whose KEY_DATA_ORD is the
-  raw `SCAN_ROW_KEY_REP` payload, with the scan-takeover flag and the scan
-  information word (take-over info and fragment) set. Verify:
-  `src/ndbapi/NdbScanOperation.cpp:3541-3571`.
+### 7.1 The exchange (the author, 2026-10-15)
+
+- **One request starts a scan.** `SCAN_REQ` goes to the coordinator,
+  either for a scan of a whole table, naming the table, or for a range
+  scan of an ordered index, naming the index. It carries the ranges'
+  bounds and a column section: what to read, which may also hold an
+  interpreted program.
+- **Three lock modes:** committed reads, shared locks and exclusive
+  locks. With a lock, a row is locked when it is handed to the API, so
+  the API can take the lock over before the scan goes on. It does so
+  with an ordinary `KEY_OP_REQ` that has the takeover flag set and
+  names the scanned row.
+- **The coordinator runs the parallelism.** It scans the fragments in
+  parallel itself; the API waits for `SCAN_CONF`, which reports how
+  many rows have been returned. A `SCAN_CONF` may be long, a section
+  carrying many counts in one signal.
+- **Rows come one signal each,** as `ROW_DATA_REP`, before or after the
+  `SCAN_CONF` that counts them. Each names a receiver: an object the
+  API made before the scan started, to receive rows. `SCAN_CONF` lists
+  the receivers it reports on, by the ids the API gave them, which the
+  API turns back into its objects.
+- **The API sets the pace.** `SCAN_CONF` says whether the scan has
+  ended. If it has not, the coordinator waits for `SCAN_MORE_REQ` to go
+  on; by sending it the API agrees that the data nodes release the
+  locks on the rows it has received. `SCAN_MORE_REQ` may instead ask
+  for the scan to close. On `SCAN_MORE_REQ` the coordinator may answer
+  at once with another `SCAN_CONF`, if rows are ready already.
+- **Half-duplex, mostly.** Each side speaks in turn, but on an error
+  either may close the scan when it is not its turn.
+- Join pushdown uses the same protocol; it is not part of phase 8.
+
+### 7.2 The signals, as read (2026-10-08; to be seen live in 8.2)
+
+Read from the 26.10 sources before the author's account, and folded in
+from §16.4; the captures of 8.2 confirm or correct each point. Words
+count from 0: word 0 is a signal's first. Paths: ST =
+`include/kernel/signaldata/ScanTab.hpp`, coordinator =
+`src/kernel/blocks/dbtc/DbtcMain.cpp`, local ops =
+`src/kernel/blocks/dblqh/DblqhMain.cpp`, NSO =
+`src/ndbapi/NdbScanOperation.cpp`, NR = `src/ndbapi/NdbReceiver.cpp`,
+NTS = `src/ndbapi/NdbTransactionScan.cpp`, IF = `src/ndbapi/Ndbif.cpp`.
+
+- **`SCAN_REQ` (32)**, eleven fixed words (the author, 2026-10-15):
+  - 0: the scan's coordinator record, the one allocated with
+    `COORD_ALLOC_REQ`;
+  - 1: a spare, always 0;
+  - 2: the flags;
+  - 3: the table, or the index for a range scan;
+  - 4: its schema version;
+  - 5: a word with bits added lately;
+  - 6–7: the transaction id;
+  - 8: the owning transaction's coordinator record, only for a scan
+    that updates, whose rows are taken over; else 0xFFFFFFFF, no owner,
+    as for every committed-read scan (the author, 2026-10-15). A
+    takeover is chosen row by row once the scan runs, so we name the
+    owner on every locking scan;
+  - 9: the batch byte size, the whole word: parameter 801 goes up to 1M
+    (`src/common/mgmcommon/ConfigInfo.cpp:1927-1929`) and the coordinator
+    reads all 32 bits (coordinator:17537);
+  - 10: the first batch's rows, in its low 16 bits.
+
+  The high halves of words 5 and 10 carry further flags, allocated down
+  from bit 31. ST:97-102 names word 9 as well, wrongly (the author,
+  2026-10-15). Word 10 has none yet, and the coordinator reads it whole
+  (coordinator:17535). Word 5's low half is 0xFFFF as the
+  reference sends it. Its high bits (the author, 2026-10-15):
+  - 16–17: fragments per worker, for pushed-down joins; the coordinator
+    reads them only with the join aggregation flag (coordinator:17561-17567);
+  - 30: the scan covers one partition, word 11 being its id;
+  - 31: a scan of a table with a partition hash fanout. Such a table
+    hashes in two levels: the first part of the primary key gives a
+    first hash value, word 11, and the scan covers the fanout's number
+    of partitions from it, which are contiguous.
+
+  Each of 30 and 31 needs flag bit 26, and they are never set together.
+
+  Optional words follow: the distribution key (11), a TTL window (12),
+  a user id and its version (13–14). ST:85-132, NSO:3068-3078.
+- **Its flags**: 8 exclusive lock, 9 no disk, 10 hold lock, 11 read
+  committed, 12 return each row's key, 13 storage order, 14 descending,
+  15 range, 16–25 batch rows (0: use word 10, coordinator:17525-17538;
+  the reference puts the count in both up to 992 rows, and 0 here above
+  that, NSO:3156-3168), 26 distribution key given, 27 join, 28 pass
+  every confirmation, 29 extended confirmation (always ours), 30 read committed base,
+  31 several fragments per receiver (joins only, else 4003,
+  coordinator:16936). ST:251-318 (trust the constants, not the drawing
+  beside them). Bits 0–7 are RonDB's extensions, all 0 from us in phase
+  8 (the author, 2026-10-15):
+  - 0: ring buffer metadata. 3 and 4: TTL (ignore it; expired rows
+    only). 5: the user id for rate limits, with words 13–14. All phase 10.
+  - 1 and 7: join aggregation and aggregation, for pushed-down joins,
+    which we do not support.
+  - 2: continuous scan. Section 0 holds four receivers for each
+    partition scanned in parallel, so that a committed-read scan goes
+    on after reporting rows to the API, which raises the scan rate.
+    Committed reads only (else 2202), receivers a multiple of 4 (else
+    2201), coordinator:17498-17518. Phase 10.
+  - 6: pass queueing. An API never sets it; doing so is an error.
+
+  A committed read sets
+  11; shared and simple reads set hold lock; an exclusive read sets 8,
+  hold lock and 12 (NSO:1865-1897). The reference always sets 13 for a
+  table scan (NSO:1570, 1662).
+- **Its sections**: 0 the receiver ids, whose count is the parallelism
+  (coordinator:16842-16856); 1 the column section, required (empty:
+  269), beginning with five size words (NSO:3196-3205): the read
+  before the program, the program, then 0 and 0 (a scan does not
+  update, and we send no final read; the author, 2026-10-15), and the
+  subroutines; 2 the bounds. A
+  large request is sent in fragments (NSO:3273-3274).
+- **A record of its own.** A scan has a coordinator record of its own,
+  with the transaction id. A locking scan takes its record on the node
+  and coordinator instance of its transaction's record and names that
+  record in word 8, for takeovers. A committed-read scan names none,
+  0xFFFFFFFF (the author, 2026-10-15). The reference instead names the transaction's
+  record for every scan (`src/ndbapi/Ndb.cpp:1028-1058`,
+  NSO:166-177). One scan per record; a second gives 202
+  (coordinator:16910-16924).
+
+  Not yet settled: the coordinator treats word 8 as none when it is
+  0xFFFFFFFF (coordinator:16840-16841), or when it is not a valid record
+  of the same transaction (coordinator:16987-17010). It keeps the word
+  (coordinator:17369), though, and then requires it to be a valid
+  record for every scan (coordinator:18068-18070). So in this tree a
+  scan that names none may stop the data node. The author looks at this
+  in a session of its own.
+- **Receivers.** Receiver i serves fragment record i (coordinator:17624),
+  and min(receivers, fragments) are used (coordinator:17932). The
+  receiver id is word 0 of `ROW_DATA_REP` and of `SCAN_ROW_KEY_REP`,
+  and is named per receiver in `SCAN_CONF` (IF:580-660, 842-866;
+  NTS:146-151).
+- **`SCAN_CONF` (29)**: our pointer for the scan's record (the one sent
+  in `COORD_ALLOC_REQ`, coordinator:2448), a word with the receiver
+  count and bit 31 end of data, the transaction id; then an entry per
+  receiver. Its first two words are the receiver's id and the
+  coordinator's pointer for it (0xFFFFFF00, the null record pointer,
+  `include/kernel/ndb_limits.h:33`: that receiver is done). The rest
+  depends on flag bit 29 of the request (coordinator:20803-20872):
+  - Bit 29 off: len << 10 | rows, and when rows reach 1023 that word
+    holds 1023 and a fourth word the count.
+  - Bit 29 on: rows, len, and the join's active mask, five words in
+    all. An API older than 8.0.20 gets four words, without the mask
+    (`include/ndb_version.h.in:637-645`).
+
+  We always set bit 29, take the five-word entry and ignore its last
+  word, so batches of up to 4 000 rows need no special case (the
+  author, 2026-10-15). The reference sets it only for pushed-down joins
+  (`src/ndbapi/NdbQueryOperation.cpp:4689`). The entries are inline
+  while the signal stays within 25 words, else in section 0;
+  NTS:210-229. len counts row words and key words (local
+  ops:26966-26969).
+- **A receiver's batch is complete** when its confirmation has come and
+  the words received equal len; rows and confirmation come from
+  different nodes in either order (NR:1719-1745). len 0 with rows means
+  an empty projection.
+- **The end.** The last confirmation carries end of data with the
+  counts, and the record is then free again (coordinator:20873-20901,
+  18480-18483); a confirmation that is exactly end of data confirms a
+  close (coordinator:20059-20070). A fragment that ends with no rows
+  while others remain is not reported: the coordinator starts the next
+  fragment on the same receiver (coordinator:19278-19305, 19723-19761).
+- **`SCAN_ROW_KEY_REP` (33)**, one per row when keys are asked for: the
+  receiver id, the key length, a word of operation number << 8 | scan
+  number | fragment << 20, the transaction id, then the key, inline up
+  to 20 words, else in section 0 (local ops:28318-28356;
+  `include/kernel/signaldata/ScanFrag.hpp:552`).
+- **`SCAN_REF` (31)**: the record, the transaction id, the error, and
+  whether a close is owed: 0 for errors at the start
+  (coordinator:17400-17418), 1 from errors during the scan
+  (coordinator:19064-19127). On 0 the scan is over and the record
+  free. On 1 we send `SCAN_MORE_REQ` with stop and wait for the bare
+  end of data. That stop names one pointer, 0xFFFFFFFF, as the
+  reference's does (NSO:2796-2820): the full five words, though the
+  coordinator ignores the list (the author, 2026-10-15).
+- **`SCAN_MORE_REQ` (28)**: the record, a stop word, the transaction id,
+  the coordinator's pointers of the receivers to go on (inline up to 21,
+  else section 0); each named fragment goes on by itself, one not named
+  waits (coordinator:19682-19765). We name subsets as the reference
+  does (the author, 2026-10-15): an ordered scan refills the one
+  receiver its merge has emptied (NSO:4937-5036); an unordered scan
+  names every receiver whose batch it has used, and those whose
+  batches came meanwhile wait for the next round (NSO:2229, 2347-2395).
+  A receiver reported done (the null pointer) is never named. A
+  pointer named must be one whose
+  batch the API holds, named once: the coordinator does not check it,
+  and stops the data node if it is wrong (coordinator:19727-19731).
+  Stop set: the coordinator closes at
+  once, ignoring the list, closes the fragments, and sends the bare end
+  of data confirmation (coordinator:19678-19684, 19817-20102). While a scan
+  closes after an error, a `SCAN_MORE_REQ` without stop is ignored
+  (coordinator:19687-19695). In phase 8 we close as the reference
+  does: first wait for every batch asked for, then send stop naming
+  the receivers held, then wait for the bare end of data (NSO:5076-5158).
+  A stop at once, with batches on their way, should work too and is
+  likely better, but waiting is the safer (the author, 2026-10-15);
+  it is left for phase 10.
+- **Batches.** A batch ends at the row count or the byte count, checked
+  after a row is added, so one row may overshoot (local ops:46539-46545).
+  The reference asks for bytes = min(parameter 801, parameter 800 /
+  parallelism) and rows = min(parameter 802 or the scan's own, 992 for
+  an exclusive scan or 4 000 for any other, bytes) (NR:510-534,
+  NSO:3095-3168); defaults 384 rows, 32 KB, 512 KB
+  (`src/common/mgmcommon/ConfigInfo.cpp:1923-1934`,
+  `include/kernel/ndb_limits.h:239-262`). The 992 comes from the ten-bit
+  operation number used by takeover
+  (`include/kernel/signaldata/ScanFrag.hpp:552-562`).
+  The data node requires a batch of 1 to 992 rows on an exclusive scan
+  and 1 to 4 000 on any other, and keys on an exclusive scan, and
+  stops otherwise; the coordinator passes the rows on unchecked (local
+  ops:25643-25648, coordinator:17525-17538). A shared-lock scan that
+  asks for keys may thus have 4 000 rows a batch, and rows past 1 023
+  get an operation number that wraps, a bug the author takes on
+  separately. Our locking scans, shared ones included, ask for at most
+  992 rows a batch; committed reads for up to 4 000 (the author,
+  2026-10-15). The reference asks for more only
+  when every cached row is consumed (NSO:2168-2247): its policy, not
+  the protocol's.
+- **Timeouts.** The coordinator's inactivity timer runs only while no
+  fragment is running (coordinator:20905-20914); past parameter 130
+  (`idle_transaction_limit`) the scan fails with 296 and a close owed
+  (coordinator:11991-12009; the default in this tree is 3 600 000 ms,
+  `src/common/mgmcommon/ConfigInfo.cpp:1154-1163`). A fragment stalled
+  past the deadlock timeout gives 274 (coordinator:12546-12668);
+  RonDB's deadlock detection may end a scan with 296
+  (coordinator:11670-11689). The reference's client gives up with 4008
+  after three times the check interval plus the deadlock timeout
+  (`src/ndbapi/ndb_cluster_connection.cpp:1285`, NSO:2261, 2318).
+- **Takeover**: a `KEY_OP_REQ` on the owning transaction whose key is
+  the row's key from `SCAN_ROW_KEY_REP`, with flags bit 14 (scan
+  takeover) and bit 2 (distribution key given), and optional words
+  after the user id: 1 | (the row word & 0x3FFFF) << 1 | fragment << 20,
+  then the fragment as distribution key
+  (`include/kernel/signaldata/TcKeyReq.hpp:430-503`, NSO:3385-3570,
+  `src/ndbapi/NdbOperationExec.cpp:1505-1528`). Its `KEY_OP_CONF` must
+  have come before the `SCAN_MORE_REQ` that names the row's receiver:
+  that request releases the scan's locks on the batch, and only the
+  confirmation shows that the update, write or delete is in place
+  before the lock goes. Sending it first is not enough (the author,
+  2026-10-15). It must also come after the batch's `SCAN_CONF`, though
+  its rows may come earlier: until then the fragment's scan is not
+  waiting for more, and the takeover is refused (local
+  ops:11210-11240).
+- **Node failure**: a reading node lost gives `SCAN_REF` 270,
+  temporary, with a close owed (coordinator:13133-13224); the
+  coordinator's node lost: the reference reports 4028, no close is
+  sent, the record is gone (IF:280-294; NSO:2326, 5056-5060); our API
+  node lost: the coordinator closes the scan (coordinator:2085-2100).
+  Nothing resumes a scan; it starts again and rows come again.
+- **Range scans**: per bound column a word of bound type (0 ≤, 1 <, 2 ≥,
+  3 >, 4 =; low bounds use 0 and 1, high bounds 2 and 3), a column
+  header (index column id, byte length) and the value padded to words;
+  each range's first word also holds len << 16 | range number << 4,
+  range numbers up to 0xFFF and rising strictly in an ordered scan with
+  several ranges; an open range is type 0 with a header of (0, 0)
+  (NSO:1102-1251, 4111-4196, 1150-1165; local ops:26196).
+- **Ordered range scans** (the author, 2026-10-15). `SCAN_REQ` has no
+  ordering flag: an ordered range scan scans every fragment in
+  parallel, a receiver each, and the client merges.
+  - Without the continuous scan, once the first batches have filled the
+    buffers, rows are fetched from one fragment at a time, as the merge
+    empties its receiver.
+  - The continuous scan (phase 10) would fetch further rows ahead
+    through a fragment's other receivers. It is for committed reads
+    only, never for a locked ordered scan.
+  - With several ranges, each fragment returns one range at a time, in
+    the order sent, and the fragments are not kept in step: one may be
+    in its second range while another is still in its first. So the
+    merge orders by range number, then by the index. The reference reads
+    each row's range number as a pseudo-column (NSO:4250-4285) and
+    compares it first (NSO:4305-4340).
+  - The descending flag (14) reverses each fragment's order, and the
+    merge's comparison of keys with it; ranges keep the order sent.
+
+  The reference asks for as many receivers as the index has fragments
+  (NSO:1623-1630), and the client needs a row or the end from each
+  before returning one (NSO:4374-4420, 4816-4830, 4865). The coordinator
+  moves a receiver on to a further fragment only when it has fewer
+  receivers than fragments (coordinator:17964, 19310-19338). An ordered
+  scan must therefore never have fewer.
+- **Pruning**: flag bit 26 and word 11, with word 5's bits 30 and 31.
+  - Bit 26 alone: word 11 is a hash, mapped to one fragment through the
+    hash map.
+  - With bit 30: word 11 is a fragment id, checked against the table's
+    fragment count.
+  - With bit 31: word 11 is a base hash, and the fanout's number of hash
+    values from it are scanned (coordinator:17893-17945).
+
+  The coordinator refuses these with 241:
+  - bit 30 or 31 without bit 26;
+  - bit 31 on a table without a fanout;
+  - bits 30 and 31 together (coordinator:17309-17334).
+
+  On a fanout table bit 26 alone is refused with 2203
+  (coordinator:17336-17352). That number also means read rate overload
+  (`include/kernel/signaldata/TcKeyRef.hpp:61`, two entries at
+  `src/ndbapi/ndberror.cpp:365, 580`). The reference prunes a range
+  scan only when both bounds fix every distribution key column
+  (NSO:1268-1300).
+
+  Pruning to the fanout's partitions is a pure optimisation and not in
+  phase 8: a fanout table's scans cover every partition, which is
+  correct (the author, 2026-10-15).
+
+### 7.3 Asked of the author (2026-10-15)
+
+Each answer goes into 7.2, and the captures check it. All fourteen
+were answered on 2026-10-15; what the captures still have to show is
+said with each.
+
+1. `SCAN_REQ` word 1: a spare, sent as 0? Yes, always 0 (answered
+   2026-10-15).
+2. Word 5 for a plain scan, neither pruned nor a join: 0x0000FFFF? When
+   are the fragments-per-worker bits (16–17) set? For pushed-down joins;
+   30 is one partition, 31 the fanout, each needing flag bit 26 and
+   never the two together, as the tree has it (answered 2026-10-15).
+   The low half's 0xFFFF is for the captures to show. The double 2203
+   is the author's, in a session of its own.
+3. The flags' bits 0–7: may a plain scan leave them 0? Yes, all of them
+   in phase 8; bit 2 is the continuous scan, four receivers per
+   partition, for phase 10; bit 6 is never set by an API (answered
+   2026-10-15). How a partition's four receivers are used is for
+   phase 10 to ask.
+4. The batch's rows: flags bits 16–25 or word 10? Is 0 in the bits and
+   the count in word 10 right? The coordinator takes the bits unless
+   they are 0, then word 10 (coordinator:17525-17538). Word 9's bytes
+   take the whole word, not 16 bits (answered 2026-10-15): the
+   reference sends min(801, 800 / parallelism) as it is (NR:519-523).
+5. The column section's five size words: what each is, and for a plain
+   read of columns, is it [n, 0, 0, 0, 0] then the n words of the list?
+   They are as for an interpreted key operation (§6.4); the reference's
+   scan sends [read, program, 0, 0, subroutines] (NSO:3196-3205). A
+   scan cannot update, and a final read is of no value, so ours are
+   [read, program, 0, 0, subroutines] with the read part the words a
+   key read sends (answered 2026-10-15). The captures check the read
+   part.
+6. `SCAN_CONF`: is the three-word entry the one to expect, and when does
+   the fourth word or the extended form (bit 29) come? Should a client
+   ask for the extended form? Yes: always set bit 29 and take the
+   five-word entry, ignoring its last word (answered 2026-10-15).
+7. "A new `SCAN_CONF` at once if rows are ready": do fragments fetch
+   their next batch ahead while the API holds the last, or is it only
+   receivers not named before that have finished meanwhile? As read:
+   the coordinator sends a `SCAN_CONF` whenever a fragment's batch is
+   done (coordinator:19379-19413), so several may come between two
+   `SCAN_MORE_REQ`s. Without the continuous scan a fragment does not
+   scan ahead; it waits for a `SCAN_MORE_REQ` naming its receiver
+   (coordinator:19727-19745). The rows "ready" are another fragment's
+   batch already on its way. The captures show the timing.
+8. May `SCAN_MORE_REQ` name a subset of the receivers holding batches,
+   each named one going on alone? Must every receiver with a batch be
+   named eventually before the end of data? As read: yes to both. End
+   of data comes only when no receiver holds a batch or runs
+   (coordinator:20905), so each must be named again or the scan
+   closed. The author (2026-10-15): name every receiver a `SCAN_CONF`
+   reported; the protocol may allow a subset, but the coordinator may
+   not handle one. Yet the reference names subsets: an ordered scan
+   refills one receiver at a time (NSO:4937-5036), and an unordered one
+   names the receivers whose rows it has used, leaving batches that
+   came meanwhile for the next round (NSO:2229, 2347-2395). Asked
+   again, the author agreed: we do as the reference does (2026-10-15).
+9. Closing: after `SCAN_MORE_REQ` with stop, does the API wait for the
+   bare end of data `SCAN_CONF`, or a `SCAN_REF`, before it reuses the
+   scan's record and receivers, dropping rows that come meanwhile? As
+   read: the coordinator takes a stop at any time. It closes running,
+   held and queued fragments (coordinator:19909-19990), sends the API
+   nothing from fragments that report while it closes
+   (coordinator:19257-19290), and then sends the bare end of data
+   (coordinator:20049-20102). The reference instead first waits for
+   every batch it asked for, then sends stop naming the receivers it
+   holds (NSO:5076-5104, 5139-5158). May we stop at once? Waiting is
+   safest; an immediate close should work and is likely desirable
+   (answered 2026-10-15). Phase 8 waits; the immediate close is for
+   phase 10.
+10. `SCAN_REF`'s close-owed word: 1 means the API sends `SCAN_MORE_REQ`
+    with stop and waits as in 9; 0 means the scan is over and its record
+    free? As read: yes. On 1 the reference sends stop naming one
+    made-up pointer, 0xFFFFFFFF (NSO:2796-2820), which the coordinator
+    ignores, as it ignores the whole list with stop
+    (coordinator:19678-19684). May our stop name no pointer at all, a
+    four-word signal? No: send the full signal as the reference does,
+    five words with that pointer, though the coordinator ignores it
+    (answered 2026-10-15).
+11. The scan's own record: word 0 is a record allocated with
+    `COORD_ALLOC_REQ`, and word 8 the transaction's record or the null
+    record (answered 2026-10-15). Still open: must the scan's record be
+    on the node and coordinator instance of the transaction's record?
+    May a transaction run several scans at once, a record each? With
+    the null record in word 8, does the scan begin a transaction of its
+    own? As read: every reference scan gets a record of its own, on the
+    node and instance of the transaction's record, with the same
+    transaction id, naming it in word 8 (NSO:166-177,
+    `src/ndbapi/Ndb.cpp:1028-1058`).
+    Word 8 as 0xFFFFFFFF reads as none (coordinator:16840-16841), and
+    one that is not a valid record of the same transaction is quietly
+    taken as none (coordinator:16987-17010). But the coordinator keeps
+    word 8 (coordinator:17369) and later requires it to be a valid
+    record for every scan (coordinator:18068-18070), so a scan without
+    one would stop the data node. The author: 0xFFFFFFFF is no owner,
+    and only a scan that updates names one; committed-read scans send
+    0xFFFFFFFF (answered 2026-10-15). The check is the author's, in a
+    session of its own. Several scans at once in a transaction, each
+    on its own record, follow from one scan per record.
+12. Takeover: flags bit 14, bit 2, the information word and the fragment
+    as the distribution key, as above? Must it reach the coordinator
+    before the `SCAN_MORE_REQ` that releases the row, or does sending it
+    first on the same link suffice? The words as above (NSO:3513-3574).
+    Wait for its `KEY_OP_CONF` before naming the receiver again: only
+    that guarantees the operation came before the lock was released
+    (answered 2026-10-15).
+13. The 992 rows of a locked batch: a limit of the protocol? As read:
+    yes for exclusive scans, where the data node stops on more
+    (local ops:25645-25648); shared-lock scans may have 4 000, and with
+    keys their rows past 1 023 get a wrapped operation number. We cap
+    every locking scan at 992. Is the shared-lock case a RonDB bug?
+    Takeover past 992 sounds like a bug, for the author in a session of
+    its own. Every locking scan stays at 992 rows a batch, shared ones
+    included; committed reads may go to 4 000 (answered 2026-10-15).
+14. Ordered range scans: do each receiver's rows come in index order,
+    for the client to merge, in every case? Yes: every fragment in
+    parallel, range by range with the fragments not in step, reversed
+    by the descending flag; after the first batches, one fragment is
+    fetched at a time unless the continuous scan is used, which a
+    locked ordered scan cannot (answered 2026-10-15).
+
+For the author, in sessions of their own (raised 2026-10-15):
+- error 2203 has two meanings, the fanout scan refusal and read rate
+  overload (`include/kernel/signaldata/TcKeyRef.hpp:61`,
+  `src/ndbapi/ndberror.cpp:365, 580`);
+- ST:97-102 counts word 9 among the words whose high half is free;
+- the coordinator's check that every scan names a valid owning record
+  (coordinator:18068-18070), which a scan naming none would fail;
+- takeover past row 1 023 of a shared-lock batch, whose operation
+  number wraps (`include/kernel/signaldata/ScanFrag.hpp:552-562`);
+- two things the data node stops on that a refusal would serve: a
+  `SCAN_MORE_REQ` naming a pointer not held (coordinator:19727-19731),
+  and a batch's rows outside 1 to 992 or 4 000, or an exclusive scan
+  without keys (local ops:25643-25648).
 
 ## 8. Dictionary
 
@@ -1892,131 +2277,8 @@ Folded into 6.8, seen live, 2026-10-09.
 
 ### 16.4 Scans (phase 8)
 
-Paths: ST = `include/kernel/signaldata/ScanTab.hpp`, coordinator =
-`src/kernel/blocks/dbtc/DbtcMain.cpp`, local ops =
-`src/kernel/blocks/dblqh/DblqhMain.cpp`, NSO =
-`src/ndbapi/NdbScanOperation.cpp`, NR = `src/ndbapi/NdbReceiver.cpp`,
-NTS = `src/ndbapi/NdbTransactionScan.cpp`, IF = `src/ndbapi/Ndbif.cpp`.
-
-- `SCAN_REQ` (32): eleven fixed words: the scan's coordinator record,
-  a spare, the flags word, the table (the index for a range scan), its
-  version, a word whose low 16 bits are 0xFFFF and whose high bits say
-  fragments per worker (16–17), partition id given (30) and hash
-  interval (31), the transaction id's two halves, the owning
-  transaction's coordinator record, the batch byte size and the first
-  batch's rows; then optionally the distribution key (11), a TTL window
-  (12), a user id and its version (13–14). ST:85-132, NSO:3068-3078.
-- Flags: 8 exclusive lock, 9 no disk, 10 hold lock, 11 read committed,
-  12 return each row's key, 13 storage order, 14 descending, 15 range,
-  16–25 batch rows (0: use the first batch's word, coordinator:17499-17504), 26
-  distribution key given, 27 join, 28 pass every confirmation, 29
-  extended confirmation, 30 read committed base, 31 several fragments
-  per receiver (joins only, else 4003, coordinator:16936); bits 0–7 RonDB's
-  extensions. ST:251-318 (trust the constants, not the drawing beside
-  them). A committed read sets 11; shared and simple reads set hold
-  lock; an exclusive read sets 8, hold lock and 12 (NSO:1865-1897). The
-  reference always sets 13 for a table scan (NSO:1570, 1662).
-- Sections: 0 the receiver ids, whose count is the parallelism
-  (coordinator:16842-16856); 1 the column section, required (empty: 269),
-  beginning with five size words (NSO:3187-3196); 2 the bounds. A large
-  request is sent in fragments (NSO:3273-3274).
-- A scan has a coordinator record of its own, allocated on the node and
-  coordinator instance of its transaction's record, with the same
-  transaction id, and names that record (`src/ndbapi/Ndb.cpp:1005-1035`,
-  NSO:166-177); the coordinator requires the named record to be a valid
-  one of its own instance (coordinator:18035-18039). One scan per record, a
-  second gives 202 (coordinator:16910-16924).
-- Receiver i serves fragment record i (coordinator:17624), and min(receivers,
-  fragments) are used (coordinator:17932). The receiver id is word 0 of
-  `ROW_DATA_REP` and of `SCAN_ROW_KEY_REP`, and is named per receiver in
-  `SCAN_CONF` (IF:580-660, 842-866; NTS:146-151).
-- `SCAN_CONF` (29): the scan's record, a word with the receiver count
-  and bit 31 end of data, the transaction id; then per receiver its id,
-  the coordinator's pointer for it (0xFFFFFF00, the null record
-  pointer, `include/kernel/ndb_limits.h:33`: that receiver is done) and
-  len << 10 | rows, where rows 1023 means a fourth word holds the
-  count; with the extended confirmation, rows and length apart and an
-  active mask. Inline up to 25 words, else in section 0. coordinator:20776-20845,
-  NTS:210-229. len counts row words and key words (local ops:26966-26969).
-- A receiver's batch is complete when its confirmation has come and the
-  words received equal len; rows and confirmation come from different
-  nodes in either order (NR:1719-1745). len 0 with rows means an empty
-  projection.
-- The last confirmation carries end of data with the counts, and the
-  record is then free again (coordinator:20873-20901, 18480-18483); a
-  confirmation that is exactly end of data confirms a close
-  (coordinator:20059-20070). A fragment that ends with no rows while others
-  remain is not reported: the coordinator starts the next fragment on
-  the same receiver (coordinator:19278-19305, 19723-19761).
-- `SCAN_ROW_KEY_REP` (33), one per row when keys are asked for: the
-  receiver id, the key length, a word of operation number << 8 | scan
-  number | fragment << 20, the transaction id, then the key, inline up
-  to 20 words, else in section 0 (local ops:28318-28356;
-  `include/kernel/signaldata/ScanFrag.hpp:552`).
-- `SCAN_REF` (31): the record, the transaction id, the error, and
-  whether a close is owed: 0 for errors at the start (coordinator:17400-17418),
-  1 from errors during the scan (coordinator:19064-19127).
-- `SCAN_MORE_REQ` (28): the record, a stop word, the transaction id,
-  the coordinator's pointers of the receivers to go on (inline up to
-  21, else section 0); each named fragment goes on by itself, one not
-  named waits (coordinator:19682-19765). Stop set: the coordinator closes at
-  once, ignoring the list, closes the fragments, and sends the bare end
-  of data confirmation (coordinator:19646, 19785-20083).
-- A batch ends at the row count or the byte count, checked after a row
-  is added, so one row may overshoot (local ops:46539-46545). The reference
-  asks for bytes = min(parameter 801, parameter 800 / parallelism) and
-  rows = min(parameter 802 or the scan's own, 992 with
-  locks or 4 000 committed, bytes) (NR:510-534, NSO:3083-3162);
-  defaults 384 rows, 32 KB, 512 KB (`src/common/mgmcommon/ConfigInfo.cpp:1908-1919`,
-  `include/kernel/ndb_limits.h:231-254`). The 992 comes from the ten-bit operation
-  number used by takeover. The reference asks for more only when
-  every cached row is consumed (NSO:2168-2247): its policy, not the
-  protocol's.
-- Timeouts: the coordinator's inactivity timer runs only while no
-  fragment is running (coordinator:20905-20914); past
-  parameter 130 (our `idle_transaction_limit`) the scan fails with 296 and a
-  close owed
-  (coordinator:11991-12009; the default in this tree is 3 600 000 ms,
-  `src/common/mgmcommon/ConfigInfo.cpp:1154-1163`). A fragment stalled past
-  the deadlock timeout
-  gives 274 (coordinator:12546-12668); RonDB's deadlock detection may end a scan
-  with 296 (coordinator:11670-11689). The reference's client gives up with 4008
-  after three times the check interval plus the deadlock timeout
-  (`src/ndbapi/ndb_cluster_connection.cpp:1285`, NSO:2261, 2318).
-- Takeover: a `KEY_OP_REQ` on the owning transaction whose key is the
-  row's key from `SCAN_ROW_KEY_REP`, with flags bit 14 (scan takeover)
-  and bit 2 (distribution key given), and optional words after the user
-  id: 1 | (the row word & 0x3FFFF) << 1 | fragment << 20, then the
-  fragment as distribution key (`include/kernel/signaldata/TcKeyReq.hpp:430-503`,
-  NSO:3385-3570, `src/ndbapi/NdbOperationExec.cpp:1505-1528`). The reference
-  sends it before asking that receiver for more.
-- Node failure: a reading node lost gives `SCAN_REF` 270, temporary,
-  with a close owed (coordinator:13133-13224); the coordinator's node lost: the
-  reference reports 4028, no close is sent, the record is gone
-  (IF:280-294; NSO:2326, 5056-5060); our API node lost: the coordinator
-  closes the scan (coordinator:2085-2100). Nothing resumes a scan; it starts
-  again and rows come again.
-- Range scans: per bound column a word of bound type (0 ≤, 1 <, 2 ≥,
-  3 >, 4 =; low bounds use 0 and 1, high bounds 2 and 3), a column
-  header (index column id, byte length) and the value padded to words;
-  each range's first word also holds len << 16 | range number << 4,
-  range numbers up to 0xFFF and rising strictly in an ordered scan with
-  several ranges; an open range is type 0 with a header of (0, 0)
-  (NSO:1102-1251, 4111-4196, 1150-1165; local ops:26196). An ordered scan runs
-  every fragment in parallel, and the client needs a row or the end
-  from each before returning one, refilling one receiver at a time;
-  descending reverses each fragment's order and the comparison
-  (NSO:1616-1621, 4262-4285, 4367-4420, 4858-4916).
-- Pruning: bit 26 and word 11; the coordinator maps a hash through the
-  hash map, or takes a fragment id when the partition is given
-  (coordinator:17861-17914, 18529-18543); on a fanout table a hash-pruned scan
-  is refused with 2203 unless the interval bit is set (coordinator:17306-17322).
-  The reference prunes a range scan only when both bounds fix every
-  distribution key column (NSO:1268-1300).
-- Corrections to §7: the three-word confirmation is the default, not
-  the four-word one; the optional parallelism word belongs to joins
-  only; §7 lacks the scan's own coordinator record, the row key report,
-  the takeover words, and closing and timeouts.
+Folded into §7.2, 2026-10-15, with the author's account in §7.1; to be
+seen live in 8.2.
 
 ### 16.5 AUTO_INCREMENT and the hidden key (phase 9.2)
 

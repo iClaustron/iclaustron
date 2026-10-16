@@ -1310,8 +1310,11 @@ failure.
 
 ### 8.3 The scan core, on a connection (2 weeks)
 
-- A scan runs on a coordinator record of its own, on the node and
-  coordinator instance of its transaction's record, naming that record.
+- A scan runs on a coordinator record of its own. A locking scan
+  takes it on the node and coordinator instance of its transaction's
+  record and names that record; a committed-read scan names none
+  (chapter 05 §7.2). Until the author has settled the coordinator's
+  check on that word, a scan naming none may stop a data node.
   Records for scans are pooled per node and instance and taken ahead,
   so that nothing waits for one, an executor least of all.
 - Receivers, one per fragment scanned in parallel, get ids in the
@@ -1327,16 +1330,21 @@ failure.
   room for its next batch is reserved, each receiver on its own. Rows
   are copied out of the receive pages into the scan's batch buffers, so
   a parked scan holds no page. A batch is complete when its `SCAN_CONF`
-  has come and as many words as it says.
-- Close at any time; a `SCAN_REF` that owes a close gets one; the
-  record is kept until the close is confirmed; rows that come late are
-  dropped by generation.
+  has come and as many words as it says. Every scan asks for the
+  extended confirmation, five words per receiver (chapter 05 §7.2).
+- Close at any time, as the reference does: wait for the batches asked
+  for, then stop, then wait for the bare end of data. A `SCAN_REF` that
+  owes a close gets one; the record is kept until the close is
+  confirmed; rows that come late are dropped by generation.
 - Errors: 296 when a parked scan passes `idle_transaction_limit` (130);
   274 and 266 for locks; 270 when a reading node fails (temporary: the
   scan starts again and rows come again); 4028 when the coordinator's
   node fails; a deadline of the client's closes the scan.
 - Full table scans in every lock mode; a scan pruned to one partition
   by its distribution key (with 8.6's character-set hash) or by partition id.
+  On a table with a partition hash fanout, a scan by distribution key
+  covers every partition. Pruning it to the fanout's partitions is a
+  later optimisation (the author, 2026-10-15; chapter 05 §7.2).
 
 ### 8.4 Three ways to consume a scan (1 week)
 
@@ -1357,8 +1365,10 @@ failure.
 ### 8.5 Updating and deleting what a scan locked (3 days)
 
 Takeover: rows with their keys (`SCAN_ROW_KEY_REP`), and a `KEY_OP_REQ`
-on the owning transaction carrying the takeover words, sent before that
-receiver is asked for more.
+on the owning transaction carrying the takeover words. A receiver is
+asked for more only once every takeover of its batch has its
+`KEY_OP_CONF`, since that request releases the batch's locks (chapter
+05 §7.2).
 
 ### 8.6 Character sets from the data nodes (1 week, with RonDB's new request)
 
@@ -1531,7 +1541,8 @@ merging; the C++ header and bindings for other languages; events; DDL
 counter row); the full interpreter; pushdown joins; aggregation
 pushdown; ring buffer tables; TTL options; rate-limit and user-id flags;
 the deferred unique check; scans with four receivers per fragment for
-committed reads, which suit an executor.
+committed reads, which suit an executor; a fanout table's scans pruned
+to its partitions; closing a scan at once, with batches on their way.
 
 ## Working method per module (all phases)
 
