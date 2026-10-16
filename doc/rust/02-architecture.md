@@ -452,6 +452,50 @@ against the transaction id. `poll` also fails every transaction whose
 coordinator's link has gone since it began, with the link's error; the
 takeover replies of a failed coordinator are still to come.
 
+## Data flow for a scan (phase 8.3; planned 2026-10-16)
+
+The protocol is chapter 05 §7; this is how the connection runs it.
+
+- **Objects.** A `Scan` lives in the connection, in a `PtrArray` as
+  queries do, with its record, its row and, while it runs, a
+  `Receiver` per fragment scanned in parallel. Receivers get ids in a
+  `PtrArray` of their own, a slot naming the scan and the receiver's
+  place in it, generational as a query's id is. A receiver's id has bit
+  23 set, which no query's id has, so the routing of `ROW_DATA_REP`
+  tells the two apart by its first word; `SCAN_ROW_KEY_REP` names only
+  receivers. Every row is also checked against the scan's transaction
+  id.
+- **Records.** A scan runs on a coordinator record of its own, kept
+  with the transactions' records, so that `SCAN_CONF` and `SCAN_REF`,
+  which name our pointer for it, lead to the scan by index as
+  `KEY_OP_CONF` leads to its transaction. Scan records are pooled apart
+  from transactions', per node and coordinator instance: a scan started
+  on a transaction takes one on the node and instance of the
+  transaction's record, any other scan one on any node. They are
+  allocated without waiting:
+  a scan that finds its pool empty sends the allocate and starts when
+  the confirmation comes in a poll, and the pool is then topped up
+  ahead of the next scan.
+- **A batch.** A receiver asked for a batch copies each row out of the
+  receive page into its batch buffer as the row comes, and counts its
+  words, and a key's words too. The batch is complete when its
+  `SCAN_CONF` entry has come and as many words as it says, in either
+  order, from any node. The batch then goes on the ready list or to the
+  callback, and the receiver waits until the application hands it
+  back. The requests for more of the receivers handed back since the
+  last send go in one `SCAN_MORE_REQ` per scan with the next send.
+- **The end.** A receiver whose entry names the null record gives no
+  more once its batch is handed back; when none is left the scan is
+  done and its record goes back to the pool. A close waits for the
+  batches asked for, sends stop naming the receivers held, and the
+  record goes back when the bare end of data comes. Rows that come
+  late find their receiver's id stale and are dropped.
+- **Failures.** `SCAN_REF` fails the scan, closing it first if a close
+  is owed. A coordinator link lost or replaced fails the scan at the
+  next poll, as it fails transactions, and its record is lost with the
+  link. A reading node's failure comes from the coordinator, as
+  `SCAN_REF` 270.
+
 ## Node failure flow
 
 1. **The link goes.** The node's socket closes, a send to it fails, or

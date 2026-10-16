@@ -44,6 +44,7 @@ pub mod list_objects;
 pub mod membership;
 pub mod numbers;
 pub mod prop_stream;
+pub mod scans;
 pub mod table_change;
 pub mod table_desc;
 pub mod table_props;

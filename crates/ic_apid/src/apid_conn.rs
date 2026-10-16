@@ -73,6 +73,10 @@ use crate::node_connect::SignalView;
 use crate::query::ApidQuery;
 use crate::query::QueryId;
 use crate::query::TransId;
+use crate::scan::ReceiverSlot;
+use crate::scan::Scan;
+use crate::scan::ScanBatchId;
+use crate::scan::ScanId;
 use crate::signal_page;
 use crate::thread_conn::ThreadConnection;
 use crate::transaction::Transaction;
@@ -526,6 +530,44 @@ pub struct ApidConnection {
   /// Pages of signals taken from the inbox, read, and given back on the
   /// next poll.
   pages: Vec<signal_page::SignalPage>,
+  /// The scans made on this connection.
+  pub(crate) scans: PtrArray<Scan>,
+  /// The receivers of the scans running, by the id their rows name,
+  /// tagged with `scan::IC_RECEIVER_TAG` when sent.
+  pub(crate) receivers: PtrArray<ReceiverSlot>,
+  /// By the place of the record it runs on, each scan in flight: a
+  /// `SCAN_CONF` or `SCAN_REF` names our pointer for the record.
+  pub(crate) scan_of_record: Vec<Option<ScanId>>,
+  /// Records for scans, free and asked for, per node and coordinator
+  /// instance (chapter 02, "Data flow for a scan").
+  scan_pools: Vec<ScanPool>,
+  /// Batches delivered and not yet taken, oldest first.
+  pub(crate) ready_batches: VecDeque<ScanBatchId>,
+  /// Scans with requests for more to go with the next send.
+  pub(crate) scans_to_send: Vec<ScanId>,
+  /// Scans waiting for a record from their pool.
+  pub(crate) scans_waiting: Vec<ScanId>,
+  /// Scans whose run is in progress: started, not yet done.
+  pub(crate) scans_live: Vec<ScanId>,
+  /// A poll queued scan requests that are to go before it returns.
+  pub(crate) scan_send_due: bool,
+  /// Where a scan's request is built, warm in the cache.
+  pub(crate) scan_words: Vec<u32>,
+  pub(crate) scan_columns: Vec<u32>,
+  pub(crate) scan_receiver_ids: Vec<u32>,
+}
+
+/// Records for scans at one node and coordinator instance.
+struct ScanPool {
+  node_id: u32,
+  /// The instance asked for, or `IC_ANY_COORD_INSTANCE`.
+  instance: u32,
+  /// Records confirmed and free, by their place.
+  free: Vec<u32>,
+  /// Records asked for and not yet answered, by their place.
+  asked: Vec<u32>,
+  /// Why the last record asked for was refused, until one comes.
+  refused: Option<IcError>,
 }
 
 /// Signals packed for one node, in the order they were queued
@@ -620,6 +662,18 @@ impl ApidConnection {
       key_scratch: Vec::new(),
       attr_scratch: Vec::new(),
       unusable: false,
+      scans: PtrArray::new(),
+      receivers: PtrArray::new(),
+      scan_of_record: Vec::new(),
+      scan_pools: Vec::new(),
+      ready_batches: VecDeque::new(),
+      scans_to_send: Vec::new(),
+      scans_waiting: Vec::new(),
+      scans_live: Vec::new(),
+      scan_send_due: false,
+      scan_words: Vec::new(),
+      scan_columns: Vec::new(),
+      scan_receiver_ids: Vec::new(),
     })
   }
 
@@ -1040,6 +1094,9 @@ impl ApidConnection {
       // A query callback is running inside a poll already.
       return 0;
     }
+    // Batches handed back since the last send are asked for before the
+    // wait, so that their rows can come during it.
+    self.send_scan_requests();
     // A callback in the previous poll's failure handling may have
     // deferred signals. They precede anything still in the inbox.
     let mut taken = self.receive_deferred();
@@ -1078,6 +1135,10 @@ impl ApidConnection {
       self.fail_lost_readers();
       self.seen_link_events = events;
     }
+    // Records that came start the scans waiting for them, scans whose
+    // coordinator's link went fail, and what the scans called for goes
+    // now rather than with the next send.
+    self.drive_scans(check_links);
     // Transactions whose replies never came while their link stayed up
     // end with 4012, after the replies just taken have had their say.
     let now = ic_port::time::gethrtime();
@@ -1358,6 +1419,206 @@ impl ApidConnection {
         held.lost = true;
       }
     }
+  }
+
+  // ---- Records for scans ----
+
+  /// The place of the pool of records for scans at `node_id` and
+  /// `instance`, made if there is none yet.
+  fn scan_pool_index(&mut self, node_id: u32, instance: u32) -> usize {
+    let mut index: usize = 0;
+    while index < self.scan_pools.len() {
+      let pool = &self.scan_pools[index];
+      if pool.node_id == node_id && pool.instance == instance {
+        return index;
+      }
+      index += 1;
+    }
+    self.scan_pools.push(ScanPool {
+      node_id,
+      instance,
+      free: Vec::new(),
+      asked: Vec::new(),
+      refused: None,
+    });
+    index
+  }
+
+  /// A free record for a scan at `node_id`'s coordinator `instance`, or
+  /// at any instance for `IC_ANY_COORD_INSTANCE`, over the link up now.
+  /// A free record of an earlier link is lost, as the coordinator freed
+  /// it with the link, and is dropped as it comes up.
+  pub(crate) fn take_scan_record(
+    &mut self,
+    node_id: u32,
+    instance: u32,
+  ) -> Option<CoordRecord> {
+    let generation = self.shared.node(node_id)?.published.generation();
+    let pool = self.scan_pool_index(node_id, instance);
+    while let Some(index) = self.scan_pools[pool].free.pop() {
+      let rec = &mut self.coord_records[index as usize];
+      if rec.generation == generation {
+        rec.busy = true;
+        return Some(*rec);
+      }
+      rec.lost = true;
+    }
+    None
+  }
+
+  /// Ask `node_id`'s coordinator for a record for a scan at `instance`,
+  /// without waiting: a later poll takes the confirmation into the
+  /// pool ([`collect_scan_records`](Self::collect_scan_records)). Only
+  /// one request a pool is out at a time.
+  pub(crate) fn ask_scan_record(
+    &mut self,
+    node_id: u32,
+    instance: u32,
+  ) -> Result<(), IcError> {
+    let pool = self.scan_pool_index(node_id, instance);
+    if !self.scan_pools[pool].asked.is_empty() {
+      return Ok(());
+    }
+    let generation = match self.shared.node(node_id) {
+      Some(node) => node.published.generation(),
+      None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_NODE)),
+    };
+    // As for a transaction's record, the place is taken before the
+    // request goes, and stays lost unless the coordinator confirms it.
+    let index = self.coord_records.len();
+    let api_ptr = coord_ptr_of(index);
+    let release_id = self.next_release_id();
+    self.coord_records.push(CoordRecord {
+      node_id,
+      generation,
+      api_ptr,
+      coord_ptr: 0,
+      coord_block: 0,
+      index: index as u32,
+      busy: true,
+      lost: true,
+      freed: false,
+      release_id,
+    });
+    let allocate = CoordAllocReq {
+      client_ptr: api_ptr,
+      client_block_ref: self.block_ref(),
+      instance,
+      release_id,
+    };
+    let header = SignalHeader::new(
+      numbers::IC_SIG_COORD_ALLOC_REQ,
+      self.block_number(),
+      blocks::IC_BLOCK_COORDINATOR,
+    );
+    let replies = [
+      numbers::IC_SIG_COORD_ALLOC_CONF,
+      numbers::IC_SIG_COORD_ALLOC_REF,
+    ];
+    self.send_expecting(
+      node_id,
+      &header,
+      &allocate.encode(),
+      &[],
+      api_ptr,
+      &replies,
+    )?;
+    self.scan_pools[pool].asked.push(index as u32);
+    Ok(())
+  }
+
+  /// Ask ahead for the next record of the pool at `node_id` and
+  /// `instance` if it has none free and none asked for, so that the
+  /// next scan there need not wait. A failure to ask is left for that
+  /// scan to meet.
+  pub(crate) fn top_up_scan_pool(&mut self, node_id: u32, instance: u32) {
+    let pool = self.scan_pool_index(node_id, instance);
+    let state = &self.scan_pools[pool];
+    if state.free.is_empty() && state.asked.is_empty() {
+      let _ = self.ask_scan_record(node_id, instance);
+    }
+  }
+
+  /// Take the answers to records asked for into their pools: a
+  /// confirmed record is free, a refusal is kept for the scans that
+  /// wait on the pool. True if any record came.
+  pub(crate) fn collect_scan_records(&mut self) -> bool {
+    let mut came = false;
+    let mut pool: usize = 0;
+    while pool < self.scan_pools.len() {
+      let mut k: usize = 0;
+      while k < self.scan_pools[pool].asked.len() {
+        let index = self.scan_pools[pool].asked[k];
+        let reply = match self.expectations.take(coord_ptr_of(index as usize)) {
+          Some(reply) => reply,
+          None => {
+            k += 1;
+            continue;
+          }
+        };
+        self.scan_pools[pool].asked.remove(k);
+        match self.confirm_record(index, reply) {
+          Ok(()) => {
+            self.scan_pools[pool].free.push(index);
+            self.scan_pools[pool].refused = None;
+            came = true;
+          }
+          Err(e) => self.scan_pools[pool].refused = Some(e),
+        }
+      }
+      pool += 1;
+    }
+    came
+  }
+
+  /// A record asked for, confirmed or refused by `reply`.
+  fn confirm_record(
+    &mut self,
+    index: u32,
+    reply: Result<ReceivedSignal, IcError>,
+  ) -> Result<(), IcError> {
+    let signal = reply?;
+    if signal.sig_no == numbers::IC_SIG_COORD_ALLOC_REF {
+      let refusal = CoordAllocRef::decode(&signal.data)?;
+      return Err(IcError::new(refusal.error_code as i32));
+    }
+    let conf = CoordAllocConf::decode(&signal.data)?;
+    let rec = &mut self.coord_records[index as usize];
+    rec.coord_ptr = conf.coord_ptr;
+    rec.coord_block = blocks::ref_to_block(conf.coord_block_ref);
+    rec.lost = false;
+    rec.busy = false;
+    Ok(())
+  }
+
+  /// Whether a record is still asked for at `node_id` and `instance`,
+  /// and why the last one was refused, if it was and none has come
+  /// since.
+  pub(crate) fn scan_pool_state(
+    &mut self,
+    node_id: u32,
+    instance: u32,
+  ) -> (bool, Option<IcError>) {
+    let pool = self.scan_pool_index(node_id, instance);
+    let state = &self.scan_pools[pool];
+    (!state.asked.is_empty(), state.refused)
+  }
+
+  /// Give a scan's record back to the pool of `instance`, the instance
+  /// it was asked for at, once the coordinator has let go of the scan:
+  /// it ended there, or the close was confirmed.
+  pub(crate) fn free_scan_record(&mut self, rec: &CoordRecord, instance: u32) {
+    match self.coord_records.get_mut(rec.index as usize) {
+      Some(held) => {
+        if held.api_ptr != rec.api_ptr || held.lost || !held.busy {
+          return;
+        }
+        held.busy = false;
+      }
+      None => return,
+    }
+    let pool = self.scan_pool_index(rec.node_id, instance);
+    self.scan_pools[pool].free.push(rec.index);
   }
 
   /// True if the link to `node_id` is up and is the one of `generation`.

@@ -18,7 +18,7 @@ use std::fmt;
 /// First iClaustron error code.
 pub const IC_FIRST_ERROR: i32 = 7000;
 /// Last iClaustron error code.
-pub const IC_LAST_ERROR: i32 = 7160;
+pub const IC_LAST_ERROR: i32 = 7161;
 
 /// Line was too long.
 pub const IC_ERROR_LINE_TOO_LONG: i32 = 7000;
@@ -371,6 +371,9 @@ pub const IC_ERROR_EXECUTOR_BUSY: i32 = 7159;
 /// The executor has stopped, or is stopping, and takes no requests:
 /// the request was not run.
 pub const IC_ERROR_EXECUTOR_STOPPED: i32 = 7160;
+/// The scan is running: it cannot be started again or freed until it
+/// is done.
+pub const IC_ERROR_SCAN_ACTIVE: i32 = 7161;
 
 /// What kind of thing went wrong (`IC_ERROR_CATEGORY`), in the header's
 /// order.
@@ -858,6 +861,7 @@ pub fn message(code: i32) -> &'static str {
     IC_ERROR_BAD_TEXT => "Text that is not UTF-8 or does not fit its field",
     IC_ERROR_EXECUTOR_BUSY => "The executor's list of requests is full",
     IC_ERROR_EXECUTOR_STOPPED => "The executor has stopped",
+    IC_ERROR_SCAN_ACTIVE => "The scan is running",
     _ => "Unknown error code",
   }
 }

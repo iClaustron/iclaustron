@@ -112,6 +112,31 @@ pub fn thread_of_api_block(block: u16) -> Option<u32> {
   Some((block - IC_FIRST_USER_THREAD_BLOCK) as u32)
 }
 
+/// The first data node block number, from which the main block is
+/// counted in a block number's low part.
+const IC_FIRST_KERNEL_BLOCK: u32 = 244;
+
+/// Which instance of its block a data node's block number names, such
+/// as the coordinator instance a record was allocated on, for asking
+/// another record of the same one. The high 7 bits of the number are
+/// the instance's low 7 bits; the low 9 bits hold the main block,
+/// counted from 244 in steps of one, and the instance's higher bits in
+/// steps of 64, the sum wrapping at 512 and skipping 0. Verify: chapter
+/// 05 §17.4.
+pub fn block_instance(block: u16) -> u32 {
+  let low = (block as u32) >> 9;
+  let mut part = (block as u32) & 0x1FF;
+  if part == 0 {
+    return low;
+  }
+  if part < IC_FIRST_KERNEL_BLOCK {
+    // Wrapped past 512: one more was added to skip 0.
+    part -= 1;
+  }
+  let counted = (part + 512 - IC_FIRST_KERNEL_BLOCK) & 0x1FF;
+  low + ((counted >> 6) << 7)
+}
+
 /// True for a block that belongs to a data node rather than to us.
 pub fn is_kernel_block(block: u16) -> bool {
   (IC_BLOCK_ARCHIVE..=IC_BLOCK_READ_WORKER_LAST).contains(&block)
@@ -143,6 +168,31 @@ mod tests {
     assert_eq!(thread_of_api_block(IC_BLOCK_BUNDLE), None);
     assert_eq!(thread_of_api_block(IC_BLOCK_NODE_WATCH), None);
     assert_eq!(thread_of_api_block(IC_BLOCK_COORDINATOR), None);
+  }
+
+  /// A block number made as the data nodes make one, for the tests.
+  fn instance_block(main: u32, instance: u32) -> u16 {
+    let high = instance >> 7;
+    let mut part =
+      ((main - IC_FIRST_KERNEL_BLOCK) + (high << 6) + IC_FIRST_KERNEL_BLOCK)
+        & 0x1FF;
+    if part < IC_FIRST_KERNEL_BLOCK {
+      part += 1;
+    }
+    (part | ((instance & 0x7F) << 9)) as u16
+  }
+
+  #[test]
+  fn a_block_number_names_its_instance() {
+    // Seen on the wire: the coordinator, instance 2.
+    assert_eq!(block_instance(0x04F5), 2);
+    assert_eq!(block_instance(IC_BLOCK_COORDINATOR), 0);
+    for instance in [0u32, 1, 2, 127, 128, 200, 359, 511, 512, 700, 1023] {
+      let block = instance_block(IC_BLOCK_COORDINATOR as u32, instance);
+      assert_eq!(block_instance(block), instance, "{}", instance);
+    }
+    // Up to 127 the low 9 bits are the block itself.
+    assert_eq!(instance_block(IC_BLOCK_COORDINATOR as u32, 5) & 0x1FF, 0xF5);
   }
 
   #[test]

@@ -146,7 +146,8 @@ Written from [05-ndb-protocol.md](05-ndb-protocol.md), against RonDB 26.10.
 | `dict.rs` | `TABLE_DESC_REQ/CONF/REF`, `LIST_OBJECTS_REQ/CONF`, TableProps keys + defaults, property-stream codec (ported from `ic_apid_dict_signals.h` and `fill_create_table_info_properties`, extended with the 26.10 keys) |
 | `interp.rs` | RonDB 26.10 interpreter instruction encoding (full set) |
 | `errors.rs` | NDB error code table: code, classification, status, our own message text added progressively (fallback `"NDB error <code>"`) |
-| `scan.rs`, `event.rs`, `ddl.rs` | later releases |
+| `scans.rs` | `SCAN_REQ`, `SCAN_CONF` (short and extended forms), `SCAN_REF`, `SCAN_MORE_REQ`, `SCAN_ROW_KEY_REP`, the takeover's scan information word (phase 8.3, chapter 05 §7) |
+| `event.rs`, `ddl.rs` | later releases |
 
 All structs are `#[repr(C)]` over `u32` words with `encode`/`decode`
 functions; explicit shifts and masks, no bit-field macros.
@@ -177,6 +178,7 @@ functions; explicit shifts and masks, no bit-field macros.
 | — | `hash.rs` | New | distribution key, hash choice per table, hash map → partition → node, with the data nodes' dynamic primary rule; location domain and host proximity still to come. The digests themselves are `ic_util::md5` and `ic_util::xxh3`, written from the public algorithms |
 | — | `row_codec.rs` | New | `ROW_DATA_REP` ↔ record row; COLUMN_DATA_ORD/KEY_DATA_ORD from record rows; first cut built: key, packed read request, packed row unpacked |
 | — | `key_op.rs` | New | the first key operation, a committed read waited for; a stepping stone to `transaction.rs` |
+| — | `scan.rs` | New | phase 8.3: scans on a connection, a coordinator record of their own from a pool per node and instance, receivers with ids apart from queries', batches copied out of the receive pages and handed back to go on, closes and failures (chapter 02, "Data flow for a scan"); takeover is 8.5 |
 | — | `executor.rs` | New | built in phase 8.1: a user thread running key operations for any number of application threads, which submit requests through `thread_conn.rs`'s second list; shapes, requests, completion slots and callbacks, the blocking `Submitter::execute` |
 | `ic_apid_range.ic`, `ic_apid_tablespace.ic` | `range.rs`, `tablespace.rs` | later releases | |
 

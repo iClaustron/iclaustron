@@ -817,6 +817,13 @@ pub(crate) struct ApidShared {
   /// How long a transaction waits for its replies, in milliseconds,
   /// fixed at start; see [`GlobalOptions::reply_wait_ms`].
   pub(crate) reply_wait_ms: u32,
+  /// A scan's batch, as the configuration has it for us: rows and bytes
+  /// per receiver (parameters 802 and 801), and the bytes of every
+  /// receiver's batch together (800), which the bytes of one are kept
+  /// within. A scan may ask for its own.
+  pub(crate) scan_batch_rows: u32,
+  pub(crate) scan_batch_bytes: u32,
+  pub(crate) scan_batch_bytes_total: u32,
 }
 
 impl ApidShared {
@@ -1275,6 +1282,9 @@ impl ApidGlobal {
       )));
     }
     let own_node_id = config.api.node_id;
+    let scan_batch_rows = config.api.scan_batch_rows;
+    let scan_batch_bytes = config.api.scan_batch_bytes;
+    let scan_batch_bytes_total = config.api.scan_batch_bytes_total;
     let reply_wait_ms = if options.reply_wait_ms > 0 {
       options.reply_wait_ms
     } else {
@@ -1320,6 +1330,9 @@ impl ApidGlobal {
       large_signal_words: AtomicU32::new(IC_LARGE_SIGNAL_WORDS),
       extra_reads: AtomicU32::new(IC_EXTRA_READS),
       reply_wait_ms,
+      scan_batch_rows,
+      scan_batch_bytes,
+      scan_batch_bytes_total,
     });
 
     let num_nodes = shared.nodes.len();

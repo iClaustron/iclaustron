@@ -1287,9 +1287,10 @@ NTS = `src/ndbapi/NdbTransactionScan.cpp`, IF = `src/ndbapi/Ndbif.cpp`.
   - 6–7: the transaction id;
   - 8: the owning transaction's coordinator record, only for a scan
     that updates, whose rows are taken over; else 0xFFFFFFFF, no owner,
-    as for every committed-read scan (the author, 2026-10-15). A
-    takeover is chosen row by row once the scan runs, so we name the
-    owner on every locking scan;
+    as for every committed-read scan (the author, 2026-10-15). Ours
+    names one when the application starts a locking scan on a
+    transaction, saying its rows may be taken over (the author,
+    2026-10-16, chapter 04);
   - 9: the batch byte size, the whole word: parameter 801 goes up to 1M
     (`src/common/mgmcommon/ConfigInfo.cpp:1927-1929`) and the coordinator
     reads all 32 bits (coordinator:17537);
@@ -1345,13 +1346,23 @@ NTS = `src/ndbapi/NdbTransactionScan.cpp`, IF = `src/ndbapi/Ndbif.cpp`.
   subroutines; 2 the bounds. A
   large request is sent in fragments (NSO:3273-3274).
 - **A record of its own.** A scan has a coordinator record of its own,
-  with the transaction id. A locking scan takes its record on the node
-  and coordinator instance of its transaction's record and names that
-  record in word 8, for takeovers. A committed-read scan names none,
-  0xFFFFFFFF (the author, 2026-10-15). The reference instead names the transaction's
-  record for every scan (`src/ndbapi/Ndb.cpp:1028-1058`,
-  NSO:166-177). One scan per record; a second gives 202
-  (coordinator:16910-16924).
+  with the transaction id. A scan started on a transaction, whose rows
+  may be taken over, takes its record on the node and coordinator
+  instance of the transaction's record, runs under the transaction's
+  id and names that record in word 8. Any other scan, every
+  committed read among them, names none, 0xFFFFFFFF (the author,
+  2026-10-15), runs under an id of its own and may go to any node. The
+  reference instead names the transaction's record for every scan
+  (`src/ndbapi/Ndb.cpp:1028-1058`, NSO:166-177). One scan per record;
+  a second gives 202 (coordinator:16910-16924).
+
+  What the owner gives a scan, as read: the transaction's idle timer is
+  kept fresh while the scan runs (coordinator:453-480), and the scan
+  takes the transaction's savepoint and fails at the start if it is
+  aborting (coordinator:16987-17010). The link is dropped quietly when
+  the ids differ, as for a transaction not yet begun there. A takeover
+  is matched at the data node by the row word and the transaction id,
+  which is why such a scan runs under its transaction's id.
 
   Not yet settled: the coordinator treats word 8 as none when it is
   0xFFFFFFFF (coordinator:16840-16841), or when it is not a valid record
@@ -2588,6 +2599,7 @@ the fuller account; this one is the index the code points into.
 - A reference is built as the node id or-ed with the block number shifted up 16 bits. `include/kernel/RefConvert.hpp:184-187`
 - The node of a reference is its low 16 bits. `include/kernel/RefConvert.hpp:161`
 - The block of a reference is its high 16 bits. `include/kernel/RefConvert.hpp:166`
+- A data node's block number carries the instance of its block, as a coordinator record's block does: the high 7 bits are the instance's low 7 bits, and the low 9 bits hold the main block, counted from 244, plus the instance's higher bits in steps of 64, the sum wrapping at 512 and skipping 0. Up to instance 127 the low 9 bits are the block itself, 0xF5 for the coordinator, of which there may be up to 360 instances. `include/kernel/RefConvert.hpp:36-37, 95-157`, `include/kernel/ndb_limits.h:365-376`
 
 ### 17.5 Signal numbers (`ic_signals::numbers`)
 

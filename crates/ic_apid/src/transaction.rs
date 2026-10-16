@@ -303,7 +303,18 @@ impl ApidConnection {
     attr_rec: &Record,
   ) -> Result<QueryId, IcError> {
     let query = ApidQuery::new(table, key_rec, attr_rec)?;
-    Ok(QueryId(self.queries.insert(query)?))
+    self.insert_query(query)
+  }
+
+  /// A query into the object map, its id kept below the tag that marks
+  /// a scan's receiver.
+  fn insert_query(&mut self, query: ApidQuery) -> Result<QueryId, IcError> {
+    let id = self.queries.insert(query)?;
+    if !crate::scan::fits_below_tag(id) {
+      self.queries.remove(id);
+      return Err(IcError::new(err::IC_ERROR_PTR_ARRAY_INDEX_OUT_OF_BOUND));
+    }
+    Ok(QueryId(id))
   }
 
   /// A query through a unique index (`ic_apid_query_create_unique`),
@@ -315,7 +326,7 @@ impl ApidConnection {
     attr_rec: &Record,
   ) -> Result<QueryId, IcError> {
     let query = ApidQuery::new_unique(index, key_rec, attr_rec)?;
-    Ok(QueryId(self.queries.insert(query)?))
+    self.insert_query(query)
   }
 
   /// A query, if the id names one.
@@ -430,8 +441,8 @@ impl ApidConnection {
   }
 
   /// The node a transaction goes to: the hint's, or the started nodes
-  /// in turn.
-  fn choose_start_node(
+  /// in turn. A scan with no transaction is placed the same way.
+  pub(crate) fn choose_start_node(
     &mut self,
     hint: TransactionHint,
     table: Option<&TableDef>,
@@ -811,8 +822,11 @@ impl ApidConnection {
     }
     // What was staged goes with this send, its flags now set. A node
     // whose link is down fails its write here; the transactions sent to
-    // it are failed by the next poll, as their link is gone.
+    // it are failed by the next poll, as their link is gone. The scans'
+    // requests for more go too.
     self.send_staged();
+    self.queue_scan_more();
+    self.scan_send_due = false;
     if let Err(e) = self.send_queued(force) {
       if first_error.is_none() {
         first_error = Some(e);
@@ -997,7 +1011,19 @@ impl ApidConnection {
       numbers::IC_SIG_KEY_OP_CONF | numbers::IC_SIG_UNIQUE_OP_CONF => {
         self.take_key_conf(signal)
       }
-      numbers::IC_SIG_ROW_DATA_REP => self.take_row(signal),
+      // A scan's row names its receiver, whose id has the tag a query's
+      // never has (chapter 02, "Data flow for a scan").
+      numbers::IC_SIG_ROW_DATA_REP => {
+        let first = signal.data.first().copied().unwrap_or(0);
+        if first & crate::scan::IC_RECEIVER_TAG != 0 {
+          self.take_scan_row(signal)
+        } else {
+          self.take_row(signal)
+        }
+      }
+      numbers::IC_SIG_SCAN_ROW_KEY_REP => self.take_scan_key(signal),
+      numbers::IC_SIG_SCAN_CONF => self.take_scan_conf(signal),
+      numbers::IC_SIG_SCAN_REF => self.take_scan_ref(signal),
       numbers::IC_SIG_KEY_OP_REF | numbers::IC_SIG_UNIQUE_OP_REF => {
         self.take_key_ref(signal)
       }

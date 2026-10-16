@@ -40,7 +40,9 @@
 //! `big_rows`, which writes and reads rows too large for one message,
 //! in memory and on disk (chapter 06 §6.6); `executor`, which runs key
 //! operations for application threads through an executor (chapter 06
-//! §8.1). The `big_rows` group makes a log file
+//! §8.1); `scan`, which reads tables by scans in every lock mode, closes
+//! them early and prunes them (chapter 06 §8.3). The `big_rows` group
+//! makes a log file
 //! group and a tablespace if the cluster has none, and keeps them.
 //! Each test is its own program against the cluster, as an application
 //! would be: it takes an API node id, binds its tables, does its work
@@ -80,6 +82,10 @@ use ic_apid::query::WriteKeyArgs;
 use ic_apid::query::WriteKind;
 use ic_apid::record::Record;
 use ic_apid::row_codec::IC_NDB_ERROR_NULL_KEY;
+use ic_apid::scan::ScanArgs;
+use ic_apid::scan::ScanBatchId;
+use ic_apid::scan::ScanId;
+use ic_apid::scan::ScanLock;
 use ic_apid::text_row;
 use ic_apid::transaction::CommitState;
 use ic_apid::transaction::TransactionHint;
@@ -4190,4 +4196,374 @@ fn collation_weights_cover_the_set_and_fold_case() {
     unicode.contractions.len(),
     unicode.round_trips
   );
+}
+
+// ---- scan ----
+
+/// How long a scan may take before the test gives up on it.
+const IC_IT_SCAN_WAIT_MS: u64 = 30_000;
+/// Rows in the `scan` table: enough for several batches a fragment.
+const IC_IT_SCAN_ROWS: i64 = 2_500;
+
+/// Make the `scan` table afresh with `IC_IT_SCAN_ROWS` rows, id 1 up,
+/// val ten times the id, name `r` and the id's last digit; 1 000 rows a
+/// statement, within what MTR's data nodes take in one transaction.
+fn setup_scan_table() -> Option<()> {
+  let sql = format!(
+    "CREATE DATABASE IF NOT EXISTS {db};
+     DROP TABLE IF EXISTS {db}.scan;
+     CREATE TABLE {db}.scan (
+       id INT NOT NULL PRIMARY KEY,
+       val INT NOT NULL,
+       name VARCHAR(32)
+     ) ENGINE=NDB;",
+    db = IC_IT_DB
+  );
+  mysql(&sql)?;
+  let mut base: i64 = 0;
+  while base < IC_IT_SCAN_ROWS {
+    let count = (IC_IT_SCAN_ROWS - base).min(1000);
+    let sql = format!(
+      "INSERT INTO {db}.scan
+         WITH RECURSIVE seq (n) AS
+           (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < {count})
+         SELECT n + {base}, (n + {base}) * 10, CONCAT('r', (n + {base}) % 10)
+         FROM seq;",
+      db = IC_IT_DB,
+      count = count,
+      base = base
+    );
+    mysql(&sql)?;
+    base += count;
+  }
+  Some(())
+}
+
+/// Run a scan to its end, reading every row, handing every batch back
+/// as soon as it is read. The ids read, in the order read; the batches;
+/// and the run's error.
+fn scan_ids(
+  conn: &mut ApidConnection,
+  t: &Table,
+  scan: ScanId,
+  args: &ScanArgs,
+) -> (Vec<i64>, u32, Option<IcError>) {
+  conn.start_scan(scan, args).expect("start the scan");
+  let _ = conn.send_queries(true);
+  let mut ids: Vec<i64> = Vec::new();
+  let mut batches: u32 = 0;
+  let start = time::gethrtime();
+  while !conn.scan_done(scan) {
+    conn.poll(100);
+    while let Some(batch) = conn.get_next_scan_batch() {
+      batches += 1;
+      while conn.next_scan_row(batch).expect("read a row") {
+        let id = t.get(conn.scan_row(scan), "id");
+        ids.push(id.parse().expect("an id"));
+      }
+      conn.release_scan_batch(batch).expect("hand the batch back");
+    }
+    let waited = time::millis_elapsed(start, time::gethrtime());
+    assert!(
+      waited < IC_IT_SCAN_WAIT_MS,
+      "the scan did not end: {:?}",
+      conn.scan(scan)
+    );
+  }
+  let error = match conn.scan(scan) {
+    Some(scan) => scan.error(),
+    None => None,
+  };
+  (ids, batches, error)
+}
+
+/// True if `ids`, in any order, are every id of the `scan` table once.
+fn every_row_once(ids: &[i64]) -> bool {
+  let mut sorted = ids.to_vec();
+  sorted.sort_unstable();
+  let mut expect: i64 = 1;
+  for id in &sorted {
+    if *id != expect {
+      return false;
+    }
+    expect += 1;
+  }
+  expect == IC_IT_SCAN_ROWS + 1
+}
+
+#[test]
+fn scan_reads_every_row_in_each_lock_mode() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_scan_table().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("connection");
+  let t = bind(&mut conn, "scan");
+  let scan = conn.create_scan(&t.def, &t.rec).expect("create the scan");
+  for lock in [ScanLock::Committed, ScanLock::Shared, ScanLock::Exclusive] {
+    let args = ScanArgs {
+      lock,
+      ..ScanArgs::default()
+    };
+    let (ids, batches, error) = scan_ids(&mut conn, &t, scan, &args);
+    assert!(error.is_none(), "{:?}: {:?}", lock, error);
+    assert!(every_row_once(&ids), "{:?}: {} rows", lock, ids.len());
+    println!("{:?}: {} rows in {} batches", lock, ids.len(), batches);
+  }
+  // Every row came to the scan it was for.
+  assert_eq!(conn.unexpected(), 0);
+  conn.free_scan(scan).expect("free the scan");
+}
+
+#[test]
+fn scan_with_small_batches_and_few_receivers() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_scan_table().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("connection");
+  let t = bind(&mut conn, "scan");
+  let scan = conn.create_scan(&t.def, &t.rec).expect("create the scan");
+  for parallelism in [1u32, 2] {
+    for lock in [ScanLock::Committed, ScanLock::Exclusive] {
+      let args = ScanArgs {
+        lock,
+        parallelism,
+        batch_rows: 100,
+        ..ScanArgs::default()
+      };
+      let (ids, batches, error) = scan_ids(&mut conn, &t, scan, &args);
+      assert!(error.is_none(), "{:?}", error);
+      assert!(every_row_once(&ids), "{} rows", ids.len());
+      // At most 100 rows a batch: at least 25 batches.
+      assert!(batches >= 25, "{} batches", batches);
+    }
+  }
+  assert_eq!(conn.unexpected(), 0);
+}
+
+#[test]
+fn scan_closed_early_and_run_again() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_scan_table().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("connection");
+  let t = bind(&mut conn, "scan");
+  let scan = conn.create_scan(&t.def, &t.rec).expect("create the scan");
+  for lock in [ScanLock::Committed, ScanLock::Shared] {
+    let args = ScanArgs {
+      lock,
+      batch_rows: 50,
+      ..ScanArgs::default()
+    };
+    // Read one batch, keep it, and close with the others in flight or
+    // held: the run waits for what it asked for, then stops.
+    conn.start_scan(scan, &args).expect("start");
+    let _ = conn.send_queries(true);
+    let start = time::gethrtime();
+    let mut first: Option<ScanBatchId> = None;
+    while first.is_none() {
+      conn.poll(100);
+      first = conn.get_next_scan_batch();
+      let waited = time::millis_elapsed(start, time::gethrtime());
+      assert!(waited < IC_IT_SCAN_WAIT_MS, "no batch came");
+    }
+    let batch = first.expect("a batch");
+    assert!(conn.next_scan_row(batch).expect("a row"));
+    conn.close_scan(scan).expect("close");
+    while !conn.scan_done(scan) {
+      conn.poll(100);
+      let waited = time::millis_elapsed(start, time::gethrtime());
+      assert!(waited < IC_IT_SCAN_WAIT_MS, "the close did not end");
+    }
+    assert!(conn.scan(scan).expect("the scan").error().is_none());
+    // The batch kept is let go of with the run.
+    assert!(conn.next_scan_row(batch).is_err());
+    conn
+      .release_scan_batch(batch)
+      .expect("a stale batch is passed over");
+    // The record went back to its pool: the next runs read everything.
+    let all = ScanArgs {
+      lock,
+      ..ScanArgs::default()
+    };
+    let mut run: u32 = 0;
+    while run < 3 {
+      let (ids, _, error) = scan_ids(&mut conn, &t, scan, &all);
+      assert!(error.is_none(), "{:?}", error);
+      assert!(every_row_once(&ids), "{} rows", ids.len());
+      run += 1;
+    }
+  }
+}
+
+#[test]
+fn scan_one_partition_at_a_time() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_scan_table().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("connection");
+  let t = bind(&mut conn, "scan");
+  let scan = conn.create_scan(&t.def, &t.rec).expect("create the scan");
+  let fragments = t.def.info().fragment_count;
+  assert!(fragments > 1, "{} fragments", fragments);
+  let mut all: Vec<i64> = Vec::new();
+  let mut partition: u32 = 0;
+  while partition < fragments {
+    let args = ScanArgs {
+      partition: Some(partition),
+      ..ScanArgs::default()
+    };
+    let (ids, _, error) = scan_ids(&mut conn, &t, scan, &args);
+    assert!(error.is_none(), "partition {}: {:?}", partition, error);
+    assert!(!ids.is_empty(), "partition {} is empty", partition);
+    all.extend_from_slice(&ids);
+    partition += 1;
+  }
+  // The partitions together are the table, each row in one of them.
+  assert!(every_row_once(&all), "{} rows", all.len());
+}
+
+#[test]
+fn scan_on_a_transaction_runs_at_its_coordinator() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_scan_table().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("connection");
+  let t = bind(&mut conn, "scan");
+  let scan = conn.create_scan(&t.def, &t.rec).expect("create the scan");
+  for lock in [ScanLock::Shared, ScanLock::Exclusive] {
+    let tid = conn
+      .start_transaction(TransactionHint::Any, None)
+      .expect("start a transaction");
+    let args = ScanArgs {
+      lock,
+      trans: Some(tid),
+      ..ScanArgs::default()
+    };
+    let (ids, _, error) = scan_ids(&mut conn, &t, scan, &args);
+    assert!(error.is_none(), "{:?}: {:?}", lock, error);
+    assert!(every_row_once(&ids), "{} rows", ids.len());
+    conn.commit_transaction(tid).expect("commit");
+    assert_eq!(finish(&mut conn, tid), CommitState::Committed);
+    conn.close_transaction(tid).expect("close");
+  }
+  // A committed read's rows cannot be taken over into a transaction.
+  let tid = conn
+    .start_transaction(TransactionHint::Any, None)
+    .expect("start a transaction");
+  let refused = ScanArgs {
+    trans: Some(tid),
+    ..ScanArgs::default()
+  };
+  let e = conn.start_scan(scan, &refused).expect_err("refused");
+  assert_eq!(e.code, err::IC_ERROR_NOT_SUPPORTED);
+  conn.rollback_transaction(tid).expect("rollback");
+  finish(&mut conn, tid);
+}
+
+#[test]
+fn scan_reads_into_a_record_of_its_own() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_scan_table().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("connection");
+  let t = bind(&mut conn, "scan");
+  let narrow = record_over(&t, &["id", "name"]);
+  let scan = conn.create_scan(&t.def, &narrow).expect("create the scan");
+  conn.start_scan(scan, &ScanArgs::default()).expect("start");
+  let _ = conn.send_queries(true);
+  let id_at = narrow.position_of(t.def.field_id("id").expect("id"));
+  let name_at = narrow.position_of(t.def.field_id("name").expect("name"));
+  let (id_at, name_at) = (id_at.expect("id"), name_at.expect("name"));
+  let mut rows: i64 = 0;
+  let mut row = vec![0u8; narrow.row_size() as usize];
+  let start = time::gethrtime();
+  while !conn.scan_done(scan) {
+    conn.poll(100);
+    while let Some(batch) = conn.get_next_scan_batch() {
+      // Into a buffer of the caller's.
+      while conn.next_scan_row_into(batch, &mut row).expect("a row") {
+        let id: i64 = text_row::value_text(&narrow, id_at, &row)
+          .parse()
+          .expect("an id");
+        let name = text_row::value_text(&narrow, name_at, &row);
+        assert_eq!(name, format!("r{}", id % 10));
+        rows += 1;
+      }
+      conn.release_scan_batch(batch).expect("hand back");
+    }
+    let waited = time::millis_elapsed(start, time::gethrtime());
+    assert!(waited < IC_IT_SCAN_WAIT_MS, "the scan did not end");
+  }
+  assert!(conn.scan(scan).expect("the scan").error().is_none());
+  assert_eq!(rows, IC_IT_SCAN_ROWS);
+}
+
+#[test]
+fn scan_waits_on_a_locked_row_until_the_deadlock_timeout() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_scan_table().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("connection");
+  let t = bind(&mut conn, "scan");
+  // Another transaction holds row 5 exclusively and does not end.
+  let mut key = t.row();
+  t.put(&mut key, "id", "5");
+  let holder = start_for(&mut conn, &t, &key);
+  let qid = conn.create_query(&t.def, &t.rec, &t.rec).expect("query");
+  conn
+    .query_mut(qid)
+    .expect("query")
+    .key_row_mut()
+    .copy_from_slice(&key);
+  let read = ReadKeyArgs {
+    kind: ReadKind::Exclusive,
+    ..ReadKeyArgs::default()
+  };
+  conn.read_key(qid, holder, &read).expect("read");
+  complete(&mut conn, qid);
+  // The exclusive scan meets it, waits, and is ended by the
+  // coordinator with an error, the close it owes done.
+  let scan = conn.create_scan(&t.def, &t.rec).expect("create the scan");
+  let args = ScanArgs {
+    lock: ScanLock::Exclusive,
+    ..ScanArgs::default()
+  };
+  let (_, _, error) = scan_ids(&mut conn, &t, scan, &args);
+  let e = error.expect("the scan failed");
+  assert!(e.code == 274 || e.code == 266, "error {}", e.code);
+  assert!(e.is_temporary(), "error {} is temporary", e.code);
+  conn.rollback_transaction(holder).expect("rollback");
+  finish(&mut conn, holder);
+  // With the lock gone, the same scan reads everything.
+  let (ids, _, error) = scan_ids(&mut conn, &t, scan, &args);
+  assert!(error.is_none(), "{:?}", error);
+  assert!(every_row_once(&ids));
 }

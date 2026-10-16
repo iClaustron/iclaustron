@@ -245,6 +245,81 @@ decides and then writes takes two requests, or a connection of its own.
 Asynchronous calls for C, and Rust futures over the same executors, are
 for later.
 
+### Scans (phases 8.3 and 8.4; agreed with the author 2026-10-16)
+
+A scan lives in its connection, named by a `ScanId`, and is made once
+and run many times, as a query is: `conn.create_scan(&table, &rec)`,
+over a table, with the record its rows are read into. **A scan owns
+its row**, sized by its record, as a query owns its rows.
+
+```rust
+let scan = conn.create_scan(&table, &rec)?;
+conn.start_scan(scan, &ScanArgs {
+  lock: ScanLock::Committed,         // Committed, Shared or Exclusive
+  ..ScanArgs::default()
+})?;
+conn.send_queries(false)?;            // the request goes with the next send
+while !conn.scan_done(scan) {
+  conn.poll(100);
+  while let Some(batch) = conn.get_next_scan_batch() {
+    while conn.next_scan_row(batch)? {
+      let row = conn.scan_row(scan);  // laid out by the record
+    }
+    conn.release_scan_batch(batch)?;  // that receiver goes on
+  }
+}
+```
+
+- **`ScanArgs`**: `lock` (`Committed`, `Shared`, `Exclusive`);
+  `trans`, for a locking scan whose rows may be taken over (8.5): the
+  transaction they are taken over into, on the same connection. The
+  scan then runs at that transaction's coordinator, under its id.
+  Without it a scan needs no transaction at all, runs under an id of
+  its own and takes over nothing, its locks held only while a batch is;
+  a committed read never names one, as its rows cannot be taken over.
+  `parallelism`, 0 for every fragment; `batch_rows` and
+  `batch_bytes`, 0 for the configuration's (parameters 802 and 801),
+  kept within 992 rows for a locking scan and 4 000 for committed
+  reads; `partition`, to scan one partition by its id; `user_ref`,
+  `callback` and `binding`, as for a query; `timeout_ms`, past which
+  the scan is closed with `IC_ERROR_TIMEOUT`.
+- **Batches** (`ScanBatchId`): each receiver, one per fragment scanned
+  in parallel, delivers its batch when the whole of it has come, onto
+  the ready list (`get_next_scan_batch`) or to the scan's callback,
+  `fn(&mut ApidConnection, ScanBatchId, usize)`. The rows are copied
+  out of the receive pages, so a batch held for as long as the
+  application likes holds no page. `next_scan_row` unpacks the batch's
+  next row into the scan's row, and `next_scan_row_into` into a buffer
+  of the caller's, a copy less; rows stay packed until they are read,
+  so a scan closed early pays only for the rows it read.
+  `release_scan_batch` hands the batch back, and only then is that
+  receiver asked for more: the consumer sets the pace, receiver by
+  receiver. A batch not handed back stalls its receiver, and a locking
+  scan's batch keeps its locks until the coordinator ends the scan
+  (296). The synchronous `next_row` of 8.4, a row stream that hands
+  batches back as it goes, is built on these, and is how an ordered
+  scan is read, since its rows are merged across receivers.
+- **Why so** (the author, 2026-10-16, choosing among alternatives): a
+  scan made once and run many times allocates nothing after its first
+  run; the batch is the protocol's unit of flow control, so memory
+  stays within the parallelism times the batch bytes and a slow
+  consumer slows only its own scan; and handing a batch back is what
+  releases its locks, so a takeover (8.5) is placed before it. Reading
+  rows in place in the receive pages was ruled out: a parked scan
+  would hold pages every thread of the process needs.
+- **The end**: a scan is done when every receiver has given its last
+  batch and each has been handed back, or when it fails. `close_scan`
+  ends it at any time: it waits for the batches asked for, then stops
+  (chapter 05 §7.2). A done scan gives its error, none if it read to
+  the end; `free_scan` once it is not running.
+- **Errors** are the scan's: 274 and 266 for locks, 296 for a scan
+  idle too long at the coordinator, 270 when a reading node fails
+  (temporary: the scan is started again and its rows come again), 4028
+  when the coordinator's node fails.
+
+The synchronous form, scans through an executor, and the C ABI are
+phase 8.4.
+
 ### Errors
 
 `IcError` is a code: 7000 and up iClaustron's own, small positive codes

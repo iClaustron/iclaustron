@@ -1311,10 +1311,12 @@ failure.
 ### 8.3 The scan core, on a connection (2 weeks)
 
 - A scan runs on a coordinator record of its own. A locking scan
-  takes it on the node and coordinator instance of its transaction's
-  record and names that record; a committed-read scan names none
-  (chapter 05 §7.2). Until the author has settled the coordinator's
-  check on that word, a scan naming none may stop a data node.
+  started on a transaction, so that its rows may be taken over, takes
+  it on the node and coordinator instance of the transaction's record
+  and names that record; every other scan names none (the author,
+  2026-10-16; chapter 04, chapter 05 §7.2). Until the author has
+  settled the coordinator's check on that word, a scan naming none may
+  stop a data node.
   Records for scans are pooled per node and instance and taken ahead,
   so that nothing waits for one, an executor least of all.
 - Receivers, one per fragment scanned in parallel, get ids in the
