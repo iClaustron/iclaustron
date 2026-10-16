@@ -1456,14 +1456,18 @@ int32_t ic_record_set_null(const IC_RECORD *rec,
 
 /*
  Put a value given as text into field `field_id` of the row: a
- number, a character or binary string as its own bytes, unquoted, or
- `NULL`. The temporal types and decimals cannot be given as text; a
- program puts their bytes into the row itself. For tools and
- examples: an application works in the row's own bytes.
+ number; a character string, unquoted, converted to its column's
+ character set (utf8mb4, utf8mb3, utf16, utf16le, ucs2, utf32 and
+ latin1), or for another set its bytes as `0x` and hexadecimal
+ digits; a binary string as the text's own bytes; or `NULL`. The
+ temporal types and decimals cannot be given as text; a program puts
+ their bytes into the row itself. For tools and examples: an
+ application works in the row's own bytes.
 
- Errors: `IC_ERROR_BAD_TEXT` for text that is not UTF-8 or does not fit the
- field; `IC_ERROR_NO_SUCH_FIELD`; `IC_ERROR_RECORD_LAYOUT` when `len` is less
- than the record's row size.
+ Errors: `IC_ERROR_BAD_TEXT` for text that is not UTF-8, does not fit the
+ field, or has a character the column's set cannot hold;
+ `IC_ERROR_NO_SUCH_FIELD`; `IC_ERROR_RECORD_LAYOUT` when `len` is less than
+ the record's row size.
 
  # Safety
 
@@ -1479,8 +1483,10 @@ int32_t ic_record_put_text(const IC_RECORD *rec,
 /*
  Give field `field_id` of the row as text, into `buf`, `buf_len`
  bytes, ended with a NUL: a number, a character string in single
- quotes, binary as `0x` and hexadecimal digits, or `NULL`. The text's
- whole length is returned, and a longer text is cut short.
+ quotes and UTF-8, a CHAR without its padding, or `NULL`. Binary
+ strings, and character strings of a set not converted here, are
+ given as `0x` and hexadecimal digits. The text's whole length is
+ returned, and a longer text is cut short.
 
  0, with nothing written, for a field the record does not hold or a row
  shorter than the record's.

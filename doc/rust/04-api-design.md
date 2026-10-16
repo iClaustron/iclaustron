@@ -104,7 +104,21 @@ size: `Record::new(&table, &specs, row_size)`.
 - A record over the key fields serves as a key record; one covering
   every key field serves as key and attribute record alike.
 - `text_row::put_value` and `value_text` put a value given as text into
-  a row and give it back as text, for tools and examples.
+  a row and give it back as text, for tools and examples. A character
+  string is converted to and from its column's character set through
+  tables compiled in from public standards (chapter 09): UTF-8 for
+  utf8mb4, and for utf8mb3 the Basic Multilingual Plane; UTF-16 for
+  utf16 and utf16le; UCS-2 and UTF-32, big-endian; and CP1252, as
+  Unicode publishes it, for latin1. Which set a column is in comes from
+  the data nodes: binding describes each character column's collation,
+  once a collation for the process, without its weights unless it
+  places a key (built 2026-10-16). A column of another set is shown and
+  given as `0x` and hexadecimal digits, a CHAR padded with the pad byte
+  the description names; a column whose collation could not be
+  described is shown in hexadecimal and takes no text. A character the
+  set cannot hold is refused; bytes that are not a string of the set are
+  shown in hexadecimal. A CHAR is shown without its trailing spaces, a
+  VARCHAR with them.
 
 ### Queries
 

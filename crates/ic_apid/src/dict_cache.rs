@@ -77,6 +77,8 @@ use crate::apid_conn::ApidConnection;
 use crate::collation_client;
 use crate::collation_map::CollationMap;
 use crate::dict_client;
+use crate::text_row;
+use crate::text_row::TextEncoding;
 
 /// How many times a bind fetches again because what it fetched was
 /// already out of date, before it gives up.
@@ -97,6 +99,9 @@ pub struct TableDef {
   /// hashed through is put through, where one is known: a table's
   /// distribution key columns, an index's own key columns.
   collations: Vec<Option<Arc<CollationMap>>>,
+  /// By attribute place, how each character column's text is converted,
+  /// where its collation was described.
+  encodings: Vec<Option<TextEncoding>>,
 }
 
 /// The place of each column in `attributes`, by column id.
@@ -139,6 +144,7 @@ impl TableDef {
       attr_index,
       has_blob,
       collations: Vec::new(),
+      encodings: Vec::new(),
     }
   }
 
@@ -157,6 +163,22 @@ impl TableDef {
   /// (chapter 06 §8.6).
   pub fn collation_at(&self, place: usize) -> Option<&Arc<CollationMap>> {
     self.collations.get(place)?.as_ref()
+  }
+
+  /// The table with how the text of its character columns is converted.
+  pub(crate) fn with_text_encodings(
+    mut self,
+    encodings: Vec<Option<TextEncoding>>,
+  ) -> TableDef {
+    self.encodings = encodings;
+    self
+  }
+
+  /// How the text of the field `field_id` is converted, if it is a
+  /// character column whose collation was described (`text_row`).
+  pub fn text_encoding(&self, field_id: u32) -> Option<TextEncoding> {
+    let place = *self.attr_index.get(field_id as usize)?;
+    *self.encodings.get(place as usize)?
   }
 
   /// Everything the dictionary said about the table.
@@ -369,6 +391,9 @@ struct CacheState {
   /// keys cannot be placed from its weights. A collation never changes,
   /// so these are kept for as long as the process runs.
   collations: BTreeMap<u32, Option<Arc<CollationMap>>>,
+  /// By number, how the text of each collation described is converted,
+  /// kept as long for the same reason.
+  encodings: BTreeMap<u32, TextEncoding>,
 }
 
 /// What a thread found when it looked a name up.
@@ -473,6 +498,18 @@ impl DictCache {
   ) -> Option<Arc<CollationMap>> {
     let mut state = self.state.lock();
     state.collations.entry(number).or_insert(map).clone()
+  }
+
+  /// How a collation described already converts text.
+  fn encoding(&self, number: u32) -> Option<TextEncoding> {
+    let state = self.state.lock();
+    state.encodings.get(&number).copied()
+  }
+
+  /// Keep how a collation converts text.
+  fn add_encoding(&self, number: u32, encoding: TextEncoding) {
+    let mut state = self.state.lock();
+    state.encodings.insert(number, encoding);
   }
 
   /// Keep a hash map, or the one another thread kept first.
@@ -657,7 +694,12 @@ fn fetch_table(
   let info = dict_client::get_table_named(conn, name)?;
   let hash_map = hash_map_of(cache, conn, &info)?;
   let collations = key_collations(cache, conn, &info, false);
-  Ok(TableDef::new(info, hash_map).with_collations(collations))
+  let encodings = text_encodings(cache, conn, &info);
+  Ok(
+    TableDef::new(info, hash_map)
+      .with_collations(collations)
+      .with_text_encodings(encodings),
+  )
 }
 
 /// By attribute place, the collations of the character columns a key
@@ -700,6 +742,7 @@ fn collation_for(
   }
   match collation_client::describe_by_number(conn, number, true) {
     Ok(collation) => {
+      cache.add_encoding(number, text_row::encoding_of(&collation.desc));
       let map = CollationMap::new(&collation).ok().map(Arc::new);
       cache.add_collation(number, map)
     }
@@ -708,6 +751,56 @@ fn collation_for(
       ic_port::debug_print!(
         IC_NDB_MESSAGE_LEVEL,
         "Collation {} could not be fetched: {}",
+        number,
+        e.message()
+      );
+      None
+    }
+  }
+}
+
+/// By attribute place, how the text of each character column is
+/// converted, blobs apart (chapter 06 §8.6). A collation not yet seen
+/// is described, without its weights, the first time any thread binds a
+/// column of it; one placing a key was described with them already.
+/// One that cannot be described leaves its column without one, to be
+/// shown as bytes.
+fn text_encodings(
+  cache: &DictCache,
+  conn: &mut ApidConnection,
+  info: &TableProps,
+) -> Vec<Option<TextEncoding>> {
+  let mut out: Vec<Option<TextEncoding>> = Vec::new();
+  for attr in &info.attributes {
+    if !attr.is_char_type() || attr.is_blob() || attr.charset == 0 {
+      out.push(None);
+      continue;
+    }
+    out.push(encoding_for(cache, conn, attr.charset));
+  }
+  out
+}
+
+/// How a collation converts text, from the cache or the data nodes.
+fn encoding_for(
+  cache: &DictCache,
+  conn: &mut ApidConnection,
+  number: u32,
+) -> Option<TextEncoding> {
+  if let Some(kept) = cache.encoding(number) {
+    return Some(kept);
+  }
+  match collation_client::describe_by_number(conn, number, false) {
+    Ok(collation) => {
+      let encoding = text_row::encoding_of(&collation.desc);
+      cache.add_encoding(number, encoding);
+      Some(encoding)
+    }
+    Err(e) => {
+      // Not kept: asking again later may do better.
+      ic_port::debug_print!(
+        IC_NDB_MESSAGE_LEVEL,
+        "Collation {} could not be described: {}",
         number,
         e.message()
       );
@@ -818,7 +911,10 @@ fn fetch_index(
   // and its character columns are hashed through their collations.
   let hash_map = hash_map_of(cache, conn, &info)?;
   let collations = key_collations(cache, conn, &info, true);
-  let own = TableDef::new(info, hash_map).with_collations(collations);
+  let encodings = text_encodings(cache, conn, &info);
+  let own = TableDef::new(info, hash_map)
+    .with_collations(collations)
+    .with_text_encodings(encodings);
   Ok(IndexDef::with_own(own, Arc::clone(table)))
 }
 

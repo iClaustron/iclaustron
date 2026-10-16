@@ -16,8 +16,12 @@
 //! read into it and printed a column at a time.
 //!
 //! Key columns may be integers, or character and binary strings. The
-//! row may hold any type a record can: numbers and strings are printed
-//! as such, anything else as its bytes in hexadecimal.
+//! row may hold any type a record can: numbers and character strings
+//! are printed as such, anything else as its bytes in hexadecimal.
+//! Character strings are converted from their column's character set
+//! when it is utf8mb4, utf8mb3, utf16, utf16le, ucs2, utf32 or latin1;
+//! a column of another set is given and printed in hexadecimal, `0x`
+//! and two digits a byte.
 //!
 //! Integers are put in the key, and read from the row, in little-endian
 //! order: the data node's own, on the machines RonDB runs on.

@@ -817,7 +817,9 @@ unsafe extern "C" fn on_batch(
       }
       let row = ic_apid_scan_row(conn, seen.scan, &mut len);
       seen.rows += 1;
-      seen.ids += get(seen.rec, row, len, seen.id).parse::<u64>().unwrap();
+      seen.ids += get(seen.rec, row, len, seen.id)
+        .parse::<u64>()
+        .expect("an id");
     }
     assert_eq!(ic_apid_conn_release_scan_batch(conn, batch), 0);
   }
@@ -889,7 +891,7 @@ fn c_api_scan_on_a_connection_and_through_an_executor() {
         }
         let row = ic_apid_scan_row(conn, scan, &mut len);
         assert_eq!(len, row_size);
-        ids += get(rec, row, len, id).parse::<u64>().unwrap();
+        ids += get(rec, row, len, id).parse::<u64>().expect("an id");
         rows += 1;
       }
       assert_eq!(rows, IC_IT_CAPI_SCAN_ROWS, "lock {}", lock);
@@ -929,7 +931,7 @@ fn c_api_scan_on_a_connection_and_through_an_executor() {
           }
           ids += get(rec, row.as_ptr(), row.len(), id)
             .parse::<u64>()
-            .unwrap();
+            .expect("an id");
           rows += 1;
         }
         assert_eq!(ic_apid_conn_release_scan_batch(conn, batch), 0);
@@ -1084,7 +1086,7 @@ fn c_api_scan_on_a_connection_and_through_an_executor() {
           break;
         }
         let row = ic_scan_reader_row(reader, &mut len);
-        ids += get(rec, row, len, id).parse::<u64>().unwrap();
+        ids += get(rec, row, len, id).parse::<u64>().expect("an id");
         rows += 1;
       }
       assert_eq!(rows, IC_IT_CAPI_SCAN_ROWS);

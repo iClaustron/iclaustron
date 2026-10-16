@@ -1493,8 +1493,24 @@ eight collations, utf8mb4's pad-space and fourteen of its 9.0.0
 collations including Spanish, German, Swedish, Japanese and Chinese
 tailorings, utf8mb3, ucs2, utf16, utf16le, utf32, latin2 and cp1251,
 for keys of several columns and for unique indexes (chapter 05 §6.3).
-Still to do in this step: text in and out through compiled-in tables
-in `text_row`; the merge is 8.7's.
+
+Text in and out, built 2026-10-16 (chapter 04, "Records"):
+`text_row` converts a character column's text through tables compiled
+in from public standards: UTF-8 for utf8mb4 and, within the Basic
+Multilingual Plane, utf8mb3; UTF-16 for utf16 and utf16le; UCS-2 and
+UTF-32; and for latin1 the CP1252 code page as Unicode publishes it,
+the five bytes it leaves unassigned taken as themselves. Binding
+describes every character column's collation, not only a key's, once
+a collation for the process and without its weights unless it places
+a key, and keeps how its text is converted in the dictionary cache. A
+column of another set is shown and given in hexadecimal, a CHAR padded
+with the pad byte the description names. A CHAR is now shown without
+its trailing spaces and a VARCHAR with them; before, both lost them.
+The test `charset_text_in_and_out_through_the_tables` checks every byte
+of latin1, and text in each Unicode set, against what MySQL converts
+and stores, both ways, and latin2 and cp1251 in hexadecimal. It, the
+`charset_` group and the whole integration run pass against
+`rondb_1107_cte_test` (2026-10-16). The merge is 8.7's.
 
 ### 8.7 Ordered index range scans (1.5 weeks)
 

@@ -18,9 +18,12 @@
 //! change; a write inserts the row or updates it if it is there.
 //!
 //! Values are given as text: integers, and character and binary
-//! strings. A column of another type can only be given as `NULL` here;
-//! an application writes such a column in the bytes the data node
-//! keeps it in.
+//! strings. A character string is converted to its column's character
+//! set when it is utf8mb4, utf8mb3, utf16, utf16le, ucs2, utf32 or
+//! latin1, and for another set is given as `0x` and two hexadecimal
+//! digits a byte. A column of another type can only be given as
+//! `NULL` here; an application writes such a column in the bytes the
+//! data node keeps it in.
 //!
 //! Debug level 1024 traces every signal, which shows the request with
 //! its key and values, and the confirmation or refusal.

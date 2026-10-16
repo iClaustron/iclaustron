@@ -3410,6 +3410,204 @@ fn charset_unique_keys_over_character_columns() {
   assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
+/// Insert a row of `txt` with `columns` given as text, the others NULL.
+fn insert_text(
+  conn: &mut ApidConnection,
+  t: &Table,
+  id: u32,
+  columns: &[(&str, &str)],
+) {
+  let mut names: Vec<&str> = vec!["id"];
+  for (name, _) in columns {
+    names.push(*name);
+  }
+  let rec = record_over(t, &names);
+  let mut row = vec![0; rec.row_size() as usize];
+  put_into(t, &rec, &mut row, "id", &id.to_string());
+  for (name, text) in columns {
+    put_into(t, &rec, &mut row, name, text);
+  }
+  key_op::write_key(conn, key_ops::IC_OP_INSERT, &rec, &row, &rec, &row)
+    .expect("insert");
+}
+
+/// Bytes from MySQL's `HEX()`, two digits a byte.
+fn unhex(text: &str) -> Vec<u8> {
+  let mut bytes: Vec<u8> = Vec::new();
+  let mut i: usize = 0;
+  while i + 2 <= text.len() {
+    bytes.push(u8::from_str_radix(&text[i..i + 2], 16).expect("hex"));
+    i += 2;
+  }
+  bytes
+}
+
+/// A column of row `id` of `txt` as MySQL converts it to UTF-8.
+fn mysql_text(column: &str, id: u32) -> String {
+  let hex = mysql(&format!(
+    "SELECT HEX(CONVERT({} USING utf8mb4)) FROM {}.txt WHERE id = {}",
+    column, IC_IT_DB, id
+  ))
+  .expect("MySQL");
+  String::from_utf8(unhex(&hex)).expect("UTF-8")
+}
+
+#[test]
+fn charset_text_in_and_out_through_the_tables() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  let sql = format!(
+    "CREATE DATABASE IF NOT EXISTS {db};
+     DROP TABLE IF EXISTS {db}.txt;
+     CREATE TABLE {db}.txt (
+       id INT NOT NULL PRIMARY KEY,
+       l1 VARCHAR(255) CHARACTER SET latin1,
+       u4 VARCHAR(40) CHARACTER SET utf8mb4,
+       u3 VARCHAR(40) CHARACTER SET utf8mb3,
+       u16 VARCHAR(40) CHARACTER SET utf16,
+       u16le VARCHAR(40) CHARACTER SET utf16le,
+       uc2 VARCHAR(40) CHARACTER SET ucs2,
+       u32 VARCHAR(40) CHARACTER SET utf32,
+       c4 CHAR(10) CHARACTER SET utf8mb4,
+       c16 CHAR(10) CHARACTER SET utf16,
+       l2 VARCHAR(20) CHARACTER SET latin2,
+       cp CHAR(4) CHARACTER SET cp1251) ENGINE=NDB;",
+    db = IC_IT_DB
+  );
+  if mysql(&sql).is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let t = bind(&mut conn, "txt");
+
+  // Every byte of latin1 but 0, written by MySQL, reads as MySQL
+  // converts it; written back as text, it is the same bytes.
+  let mut every: Vec<u8> = Vec::new();
+  for byte in 1..=255u8 {
+    every.push(byte);
+  }
+  mysql(&format!(
+    "INSERT INTO {}.txt (id, l1) VALUES (1, UNHEX('{}'))",
+    IC_IT_DB,
+    hex(&every)
+  ));
+  let row = read_by_id(&mut conn, &t, 1).expect("row 1");
+  let latin1 = mysql_text("l1", 1);
+  assert_eq!(t.get(&row, "l1"), format!("'{}'", latin1));
+  insert_text(&mut conn, &t, 2, &[("l1", latin1.as_str())]);
+  let seen = mysql(&format!(
+    "SELECT LOWER(HEX(l1)) FROM {}.txt WHERE id = 2",
+    IC_IT_DB
+  ));
+  assert_eq!(seen, Some(hex(&every)));
+
+  // The Unicode sets, written by MySQL and read here, and written here
+  // and read by MySQL, byte for byte as MySQL writes them.
+  let full = "Aé Ωж 漢字 😀";
+  let bmp = "Aé Ωж 漢字";
+  let sets: [(&str, &str); 8] = [
+    ("u4", full),
+    ("u3", bmp),
+    ("u16", full),
+    ("u16le", full),
+    ("uc2", bmp),
+    ("u32", full),
+    ("c4", "ab"),
+    ("c16", "ab"),
+  ];
+  let mut names: Vec<&str> = Vec::new();
+  let mut given: Vec<String> = Vec::new();
+  for (column, text) in sets {
+    names.push(column);
+    given.push(format!(
+      "CONVERT(UNHEX('{}') USING utf8mb4)",
+      hex(text.as_bytes())
+    ));
+  }
+  mysql(&format!(
+    "INSERT INTO {}.txt (id, {}) VALUES (3, {})",
+    IC_IT_DB,
+    names.join(", "),
+    given.join(", ")
+  ));
+  let row = read_by_id(&mut conn, &t, 3).expect("row 3");
+  for (column, text) in sets {
+    assert_eq!(t.get(&row, column), format!("'{}'", text), "{}", column);
+  }
+  insert_text(&mut conn, &t, 4, &sets);
+  for (column, text) in sets {
+    assert_eq!(mysql_text(column, 4), text, "{}", column);
+  }
+  let mut hexes: Vec<String> = Vec::new();
+  for column in &names {
+    hexes.push(format!("HEX({})", column));
+  }
+  let bytes_of = |id: u32| {
+    mysql(&format!(
+      "SELECT {} FROM {}.txt WHERE id = {}",
+      hexes.join(", "),
+      IC_IT_DB,
+      id
+    ))
+  };
+  assert_eq!(bytes_of(4), bytes_of(3));
+
+  // A variable-sized value keeps its trailing spaces.
+  insert_text(&mut conn, &t, 7, &[("u4", "a  ")]);
+  let seen = mysql(&format!(
+    "SELECT HEX(u4) FROM {}.txt WHERE id = 7",
+    IC_IT_DB
+  ));
+  assert_eq!(seen, Some("612020".to_string()));
+  let row = read_by_id(&mut conn, &t, 7).expect("row 7");
+  assert_eq!(t.get(&row, "u4"), "'a  '");
+
+  // Sets with no table here are shown and given in hexadecimal, a
+  // CHAR without its padding.
+  mysql(&format!(
+    "INSERT INTO {}.txt (id, l2, cp) VALUES (5, \
+     CONVERT(UNHEX('{}') USING utf8mb4), CONVERT(UNHEX('{}') USING utf8mb4))",
+    IC_IT_DB,
+    hex("Łódź".as_bytes()),
+    hex("Да".as_bytes())
+  ));
+  let row = read_by_id(&mut conn, &t, 5).expect("row 5");
+  let theirs = |id: u32| {
+    mysql(&format!(
+      "SELECT LOWER(HEX(l2)), LOWER(HEX(cp)) FROM {}.txt WHERE id = {}",
+      IC_IT_DB, id
+    ))
+    .expect("MySQL")
+  };
+  let seen = theirs(5);
+  let (l2, cp) = (t.get(&row, "l2"), t.get(&row, "cp"));
+  assert_eq!(
+    format!("{}\t{}", l2, cp),
+    format!("0x{}", seen.replace('\t', "\t0x"))
+  );
+  insert_text(
+    &mut conn,
+    &t,
+    6,
+    &[("l2", l2.as_str()), ("cp", cp.as_str())],
+  );
+  assert_eq!(theirs(6), seen);
+  assert_eq!(mysql_text("l2", 6), "Łódź");
+
+  // What a set cannot hold is refused, as is text for a set with no
+  // table.
+  let mut scratch = t.row();
+  for (column, text) in
+    [("l1", "Ł"), ("u3", "😀"), ("uc2", "😀"), ("l2", "Łódź")]
+  {
+    let refused =
+      text_row::put_value(&t.rec, t.position(column), text, &mut scratch);
+    assert!(refused.is_err(), "{} took {:?}", column, text);
+  }
+}
+
 // ---- big_rows ----
 
 /// The tablespace the `big_rows` group's disk columns go in.
