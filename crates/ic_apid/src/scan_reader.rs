@@ -32,6 +32,19 @@
 //! Buffers go round: from the receivers to the reader, back to the
 //! executor, and to the receivers again. Once they have grown to the
 //! batch size, a run allocates nothing.
+//!
+//! **A scan of an ordered index** (phase 8.7) has a shape over the
+//! index ([`ScanShape::new_index`]), and its ranges are added to the
+//! reader, encoded at once, and left in the feed for the executor to
+//! take as it starts the run, under the lock it checks the run by;
+//! the emptied set it leaves there takes the reader's next ranges. An ordered run is merged by the reader, not by the executor,
+//! whose own scan of it is unordered over every fragment: each batch
+//! comes with its receiver's place and whether it is that receiver's
+//! last, and the reader takes the row that comes first once every
+//! receiver has a batch with a row or has ended, as a connection's
+//! merge does. The batches stay where they are moved to; with
+//! `read_ahead` a receiver's next batch may come before its last is
+//! read, and waits.
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -42,8 +55,13 @@ use ic_port::sync::IcMutex;
 use ic_port::sync::IC_MUTEX_LEVEL_COMPLETION;
 use ic_port::IcError;
 
+use crate::dict_cache::IndexDef;
 use crate::dict_cache::TableDef;
 use crate::executor::next_shape_id;
+use crate::index_order::IndexOrder;
+use crate::index_scan::IndexShape;
+use crate::index_scan::RangeSet;
+use crate::index_scan::ScanRange;
 use crate::record::Record;
 use crate::row_codec;
 use crate::scan;
@@ -61,6 +79,8 @@ pub struct ScanShape {
   id: u64,
   table: Arc<TableDef>,
   rec: Record,
+  /// For scans of an ordered index: its ranges and order.
+  index: Option<IndexShape>,
 }
 
 impl std::fmt::Debug for ScanShape {
@@ -81,12 +101,47 @@ impl ScanShape {
       id: next_shape_id(),
       table: Arc::clone(table),
       rec: rec.clone(),
+      index: None,
+    }))
+  }
+
+  /// Scans of `index`, an ordered index, their ranges laid out by
+  /// `key_rec`, which must hold every column of the index, and their
+  /// rows read into `rec`, both over the index's table (chapter 04,
+  /// "Index scans"). Refused for an index that is not ordered
+  /// (`IC_ERROR_NOT_SUPPORTED`).
+  pub fn new_index(
+    index: &Arc<IndexDef>,
+    key_rec: &Record,
+    rec: &Record,
+  ) -> Result<Arc<ScanShape>, IcError> {
+    let table = index.table();
+    scan::check_scan_record(table, rec)?;
+    let read_part = row_codec::read_attr_info(rec);
+    let shape = IndexShape::new(index, key_rec, rec, &read_part)?;
+    Ok(Arc::new(ScanShape {
+      id: next_shape_id(),
+      table: Arc::clone(table),
+      rec: rec.clone(),
+      index: Some(shape),
     }))
   }
 
   /// The table scanned.
   pub fn table(&self) -> &Arc<TableDef> {
     &self.table
+  }
+
+  /// The ordered index scanned, for a shape over one.
+  pub fn index(&self) -> Option<&Arc<IndexDef>> {
+    let index = self.index.as_ref()?;
+    Some(index.index())
+  }
+
+  /// What the ranges and the order are made with, for a shape over an
+  /// ordered index.
+  pub(crate) fn index_shape(&self) -> Option<&IndexShape> {
+    self.index.as_ref()
   }
 
   /// The record the rows are laid out by.
@@ -112,6 +167,10 @@ pub(crate) struct FeedBatch {
   pub(crate) rows: Vec<u32>,
   /// Where each row ends in `rows`.
   pub(crate) row_ends: Vec<u32>,
+  /// Its receiver's place in the run.
+  pub(crate) place: u32,
+  /// It is its receiver's last batch.
+  pub(crate) last: bool,
 }
 
 impl FeedBatch {
@@ -120,6 +179,8 @@ impl FeedBatch {
     self.batch = None;
     self.rows.clear();
     self.row_ends.clear();
+    self.place = 0;
+    self.last = false;
   }
 }
 
@@ -147,6 +208,13 @@ pub(crate) struct FeedState {
   pub(crate) error: Option<IcError>,
   /// The reader sleeps on the condition.
   pub(crate) reader_waiting: bool,
+  /// The receivers of the run, once it runs: what an ordered run merges.
+  pub(crate) receivers: u32,
+  /// For a scan of an ordered index: the run's ranges, until the
+  /// executor takes them as it starts the run; then an emptied set the
+  /// executor leaves for the reader's next. Kept here, not in the run's
+  /// work, so that the work stays small as it goes through the inbox.
+  pub(crate) ranges: RangeSet,
 }
 
 /// What a reader and the executor running its scan share.
@@ -269,6 +337,65 @@ pub struct ScanReader {
   /// A run has been started; it may since have ended.
   started: bool,
   read_ahead: bool,
+  /// For a shape over an ordered index: the ranges added for the next
+  /// run.
+  pending: RangeSet,
+  /// The run reads each row's range number; else every row is of
+  /// range `single_no`.
+  reads_range_no: bool,
+  single_no: u32,
+  /// The range number of the row last read.
+  range_no: u32,
+  /// The run is merged in the index's order, from the high end when
+  /// `descending`.
+  ordered: bool,
+  descending: bool,
+  /// An ordered run's receivers, as far as the reader knows them, and
+  /// what each has with the reader.
+  receivers: usize,
+  heads: Vec<MergeHead>,
+  /// Batches that came while their receiver's last was being read.
+  early: Vec<FeedBatch>,
+}
+
+/// No row of a receiver's batch is unpacked for the merge.
+const IC_NO_HEAD: usize = usize::MAX;
+
+/// One receiver's part in a reader's merge: the batch being read, and
+/// its next row unpacked, with its order key and range number.
+struct MergeHead {
+  batch: Option<FeedBatch>,
+  next_row: usize,
+  /// Its last batch has been read: the receiver gives no more.
+  ended: bool,
+  /// The row of the batch that `row`, `key` and `range` are of;
+  /// `IC_NO_HEAD` when none is.
+  head_at: usize,
+  row: Vec<u8>,
+  key: Vec<u8>,
+  range: u32,
+}
+
+impl MergeHead {
+  fn new() -> MergeHead {
+    MergeHead {
+      batch: None,
+      next_row: 0,
+      ended: false,
+      head_at: IC_NO_HEAD,
+      row: Vec::new(),
+      key: Vec::new(),
+      range: 0,
+    }
+  }
+
+  /// True if its batch has a row not yet read.
+  fn has_row(&self) -> bool {
+    match &self.batch {
+      Some(batch) => self.next_row < batch.row_ends.len(),
+      None => false,
+    }
+  }
 }
 
 impl std::fmt::Debug for ScanReader {
@@ -298,7 +425,37 @@ impl ScanReader {
       run: 0,
       started: false,
       read_ahead: false,
+      pending: RangeSet::default(),
+      reads_range_no: false,
+      single_no: 0,
+      range_no: 0,
+      ordered: false,
+      descending: false,
+      receivers: 0,
+      heads: Vec::new(),
+      early: Vec::new(),
     }
+  }
+
+  /// Add a range to the next run, for a shape over an ordered index, its
+  /// bounds taken from `low` and `high`, rows laid out by the shape's key
+  /// record; as a connection's `add_scan_range`. Refused for a shape
+  /// over a table (`IC_ERROR_NOT_SUPPORTED`).
+  pub fn add_range(
+    &mut self,
+    range: &ScanRange,
+    low: &[u8],
+    high: &[u8],
+  ) -> Result<(), IcError> {
+    match &self.shape.index {
+      Some(index) => index.add_range(&mut self.pending, range, low, high),
+      None => Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED)),
+    }
+  }
+
+  /// The number of the range the row last read is in.
+  pub fn range_no(&self) -> u32 {
+    self.range_no
   }
 
   /// The shape it reads.
@@ -364,6 +521,9 @@ impl ScanReader {
     if !self.started {
       return Ok(false);
     }
+    if self.ordered {
+      return self.next_merged(row);
+    }
     loop {
       if let Some(batch) = &self.current {
         let at = self.next_row;
@@ -374,7 +534,12 @@ impl ScanReader {
           }
           let end = batch.row_ends[at] as usize;
           self.next_row += 1;
-          let words = &batch.rows[start..end];
+          let (range_no, words) = scan::split_range_no(
+            &batch.rows[start..end],
+            self.reads_range_no,
+            self.single_no,
+          )?;
+          self.range_no = range_no;
           match row.as_deref_mut() {
             Some(into) => row_codec::unpack_row(&self.shape.rec, words, into)?,
             None => {
@@ -437,6 +602,150 @@ impl ScanReader {
     self.send_nudge(nudge);
   }
 
+  // ---- The ordered merge ----
+
+  /// The next row of an ordered run, merged from its receivers' batches
+  /// (chapter 04, "Index scans"), into `row` or the reader's row. The
+  /// batches that came go to their receivers, those read are handed
+  /// back, and once every receiver has a row or has ended, the row that
+  /// comes first is taken; until then the reader waits.
+  fn next_merged(
+    &mut self,
+    mut row: Option<&mut [u8]>,
+  ) -> Result<bool, IcError> {
+    loop {
+      if !self.collect_batches() {
+        return Ok(false);
+      }
+      self.hand_back_read();
+      if let Some(place) = self.first_head()? {
+        self.take_head(place, row.as_deref_mut());
+        return Ok(true);
+      }
+      let mut state = self.feed.state.lock();
+      loop {
+        if state.run != self.run {
+          return Ok(false);
+        }
+        if !state.full.is_empty() {
+          break;
+        }
+        if state.done {
+          return match state.error {
+            Some(e) => Err(e),
+            None => Ok(false),
+          };
+        }
+        state.reader_waiting = true;
+        state = self.feed.cond.wait(state);
+      }
+    }
+  }
+
+  /// Take the batches that came, each to its receiver, and learn how
+  /// many receivers the run has. False if the reader has moved on from
+  /// the run.
+  fn collect_batches(&mut self) -> bool {
+    let mut state = self.feed.state.lock();
+    if state.run != self.run {
+      return false;
+    }
+    self.receivers = state.receivers as usize;
+    while self.heads.len() < self.receivers {
+      self.heads.push(MergeHead::new());
+    }
+    while let Some(mut batch) = state.full.pop_front() {
+      if batch.run != self.run {
+        batch.clear();
+        state.spare.push(batch);
+        continue;
+      }
+      place_batch(&mut self.heads, &mut self.early, batch);
+    }
+    true
+  }
+
+  /// Hand back each batch whose rows are all read, its receiver ended if
+  /// it was the last, and give the receiver its next if it came early.
+  fn hand_back_read(&mut self) {
+    let mut place: usize = 0;
+    while place < self.heads.len() {
+      let used_up =
+        self.heads[place].batch.is_some() && !self.heads[place].has_row();
+      if !used_up {
+        place += 1;
+        continue;
+      }
+      if let Some(used) = self.heads[place].batch.take() {
+        self.heads[place].ended = used.last;
+        self.hand_back(used);
+      }
+      if let Some(next) = take_early(&mut self.early, place as u32) {
+        place_batch(&mut self.heads, &mut self.early, next);
+      }
+      // The same place again: the batch given it may be empty.
+    }
+  }
+
+  /// The place of the receiver whose next row comes first, once every
+  /// receiver has a row or has ended; none while one waits for its
+  /// batch, when every one has ended, or before the run has started.
+  fn first_head(&mut self) -> Result<Option<usize>, IcError> {
+    if self.receivers == 0 {
+      return Ok(None);
+    }
+    let order = match &self.shape.index {
+      Some(index) => match &index.order {
+        Ok(order) => order,
+        Err(e) => return Err(*e),
+      },
+      None => return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED)),
+    };
+    let mut first: Option<usize> = None;
+    let mut place: usize = 0;
+    while place < self.receivers {
+      let head = &mut self.heads[place];
+      if head.ended {
+        place += 1;
+        continue;
+      }
+      if !head.has_row() {
+        return Ok(None);
+      }
+      fill_head(
+        &self.shape.rec,
+        order,
+        self.reads_range_no,
+        self.single_no,
+        head,
+      )?;
+      let before = match first {
+        Some(best) => {
+          head_before(&self.heads[place], &self.heads[best], self.descending)
+        }
+        None => true,
+      };
+      if before {
+        first = Some(place);
+      }
+      place += 1;
+    }
+    Ok(first)
+  }
+
+  /// Take the merged row of the receiver at `place` into `row`, or the
+  /// reader's row.
+  fn take_head(&mut self, place: usize, row: Option<&mut [u8]>) {
+    let head = &mut self.heads[place];
+    match row {
+      Some(into) => into[..head.row.len()].copy_from_slice(&head.row),
+      None => self.row.copy_from_slice(&head.row),
+    }
+    head.next_row += 1;
+    self.range_no = head.range;
+    self.rows_read += 1;
+  }
+
   fn send_nudge(&self, nudge: Option<u32>) {
     if let (Some(word), Some(inbox)) = (nudge, &self.inbox) {
       inbox.nudge(word);
@@ -452,6 +761,7 @@ impl ScanReader {
       used.clear();
       state.spare.push(used);
     }
+    spare_merge(&mut self.heads, &mut self.early, &mut state.spare);
     // The rows not read are dropped. No more come once `closing` is
     // set, which the executor reads under this lock.
     let mut spare = std::mem::take(&mut state.spare);
@@ -502,6 +812,15 @@ impl ScanReader {
     if !self.is_done() {
       return Err(IcError::new(err::IC_ERROR_SCAN_ACTIVE));
     }
+    if args.ordered || args.descending {
+      let index = match &self.shape.index {
+        Some(index) => index,
+        None => return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED)),
+      };
+      if args.ordered {
+        index.check_ordered(&self.pending)?;
+      }
+    }
     let mut deadline: u64 = 0;
     if args.timeout_ms > 0 {
       deadline =
@@ -517,14 +836,24 @@ impl ScanReader {
       used.clear();
       spare.push(used);
     }
+    spare_merge(&mut self.heads, &mut self.early, &mut spare);
     while let Some(mut batch) = state.full.pop_front() {
       batch.clear();
       spare.push(batch);
     }
     spare_all(&mut state.back, &mut spare);
+    // The run takes the ranges added, for the executor; the set left
+    // there, emptied by the executor or a run's never taken, takes the
+    // next.
+    let mut ranges = std::mem::take(&mut state.ranges);
+    std::mem::swap(&mut ranges, &mut self.pending);
+    self.pending.clear();
+    self.reads_range_no = ranges.reads_range_no();
+    self.single_no = ranges.first_no;
     *state = FeedState {
       run: self.run,
       spare,
+      ranges,
       ..FeedState::default()
     };
     drop(state);
@@ -532,6 +861,10 @@ impl ScanReader {
     self.rows_read = 0;
     self.started = true;
     self.read_ahead = args.read_ahead;
+    self.range_no = 0;
+    self.ordered = args.ordered;
+    self.descending = args.descending;
+    self.receivers = 0;
     self.inbox = Some(Arc::clone(inbox));
     Ok(ScanWork {
       feed: Arc::clone(&self.feed),
@@ -553,6 +886,106 @@ impl ScanReader {
       state.error = Some(error);
     }
   }
+}
+
+/// A batch to its receiver's place in the merge, or to wait with the
+/// early ones if the receiver has one already.
+fn place_batch(
+  heads: &mut Vec<MergeHead>,
+  early: &mut Vec<FeedBatch>,
+  batch: FeedBatch,
+) {
+  let place = batch.place as usize;
+  while heads.len() <= place {
+    heads.push(MergeHead::new());
+  }
+  let head = &mut heads[place];
+  if head.batch.is_some() || head.ended {
+    early.push(batch);
+    return;
+  }
+  head.batch = Some(batch);
+  head.next_row = 0;
+  head.head_at = IC_NO_HEAD;
+}
+
+/// The first batch waiting for the receiver at `place`, taken from the
+/// early ones.
+fn take_early(early: &mut Vec<FeedBatch>, place: u32) -> Option<FeedBatch> {
+  let mut at: usize = 0;
+  while at < early.len() {
+    if early[at].place == place {
+      return Some(early.remove(at));
+    }
+    at += 1;
+  }
+  None
+}
+
+/// Every batch the merge holds, emptied, onto the spares, and every
+/// receiver's part made ready for another run.
+fn spare_merge(
+  heads: &mut [MergeHead],
+  early: &mut Vec<FeedBatch>,
+  spare: &mut Vec<FeedBatch>,
+) {
+  for head in heads {
+    if let Some(mut batch) = head.batch.take() {
+      batch.clear();
+      spare.push(batch);
+    }
+    head.ended = false;
+    head.next_row = 0;
+    head.head_at = IC_NO_HEAD;
+  }
+  spare_all(early, spare);
+}
+
+/// Unpack the receiver's next row into its head for the merge, with its
+/// order key and range number, unless it is there already.
+fn fill_head(
+  rec: &Record,
+  order: &IndexOrder,
+  reads_range_no: bool,
+  single_no: u32,
+  head: &mut MergeHead,
+) -> Result<(), IcError> {
+  let at = head.next_row;
+  if head.head_at == at {
+    return Ok(());
+  }
+  let batch = match &head.batch {
+    Some(batch) => batch,
+    None => return Err(IcError::new(err::IC_ERROR_INCONSISTENT_DATA)),
+  };
+  let size = rec.row_size() as usize;
+  if head.row.len() != size {
+    head.row.resize(size, 0);
+  }
+  let mut start: usize = 0;
+  if at > 0 {
+    start = batch.row_ends[at - 1] as usize;
+  }
+  let end = batch.row_ends[at] as usize;
+  let (range_no, words) =
+    scan::split_range_no(&batch.rows[start..end], reads_range_no, single_no)?;
+  row_codec::unpack_row(rec, words, &mut head.row)?;
+  order.key_into(rec, &head.row, &mut head.key)?;
+  head.range = range_no;
+  head.head_at = at;
+  Ok(())
+}
+
+/// True if `a`'s head row comes before `b`'s: by range number, then by
+/// order key, the keys reversed for a run from the high end.
+fn head_before(a: &MergeHead, b: &MergeHead, descending: bool) -> bool {
+  if a.range != b.range {
+    return a.range < b.range;
+  }
+  if descending {
+    return a.key > b.key;
+  }
+  a.key < b.key
 }
 
 impl Drop for ScanReader {
@@ -609,6 +1042,56 @@ mod tests {
         }
       }
     }
+  }
+
+  fn of_place(place: u32, rows: &[u32], last: bool) -> FeedBatch {
+    FeedBatch {
+      place,
+      last,
+      ..batch(1, rows)
+    }
+  }
+
+  #[test]
+  fn batches_go_to_their_receivers_and_wait_their_turn() {
+    let mut heads: Vec<MergeHead> = Vec::new();
+    let mut early: Vec<FeedBatch> = Vec::new();
+    place_batch(&mut heads, &mut early, of_place(2, &[7], false));
+    assert_eq!(heads.len(), 3, "room up to its place");
+    assert!(heads[2].has_row());
+    assert!(!heads[0].has_row() && !heads[1].has_row());
+    // A second for the same receiver waits, behind any before it.
+    place_batch(&mut heads, &mut early, of_place(2, &[8], true));
+    place_batch(&mut heads, &mut early, of_place(2, &[9], true));
+    assert_eq!(early.len(), 2);
+    assert!(take_early(&mut early, 1).is_none());
+    let next = take_early(&mut early, 2).expect("the next of place 2");
+    assert_eq!(next.rows, vec![8]);
+    assert!(next.last);
+    // An ended receiver takes none.
+    heads[0].ended = true;
+    place_batch(&mut heads, &mut early, of_place(0, &[5], false));
+    assert!(heads[0].batch.is_none());
+    // Made ready for another run, every batch a spare.
+    let mut spare: Vec<FeedBatch> = Vec::new();
+    spare_merge(&mut heads, &mut early, &mut spare);
+    assert_eq!(spare.len(), 3);
+    assert!(!heads[0].ended);
+    assert!(heads[2].batch.is_none());
+    assert!(early.is_empty());
+  }
+
+  #[test]
+  fn the_reader_merges_by_range_then_by_key() {
+    let mut a = MergeHead::new();
+    a.key = vec![1, 5];
+    let mut b = MergeHead::new();
+    b.key = vec![1, 6];
+    let mut c = MergeHead::new();
+    c.range = 1;
+    assert!(head_before(&a, &b, false));
+    assert!(head_before(&b, &a, true));
+    assert!(head_before(&a, &c, false) && head_before(&a, &c, true));
   }
 
   #[test]

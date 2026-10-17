@@ -78,6 +78,7 @@ use crate::dict_cache::IndexDef;
 use crate::dict_cache::TableDef;
 use crate::index_order::IndexOrder;
 use crate::index_scan::IndexScan;
+use crate::index_scan::RangeSet;
 use crate::index_scan::ScanRange;
 use crate::node_connect::SignalView;
 use crate::query::AbortOption;
@@ -552,21 +553,14 @@ impl Scan {
     if args.callback.is_some() {
       return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
     }
-    if let Err(e) = &index.order {
-      return Err(*e);
-    }
-    index.check_run(true)
+    index.shape.check_ordered(index.pending())
   }
 
   /// The partition every range added for the next run is in, if they
   /// are all in one.
   fn pruned_partition(&self) -> Option<u32> {
     let index = self.index.as_ref()?;
-    let pending = index.pending();
-    if pending.count > 0 && pending.pruned {
-      return Some(pending.partition);
-    }
-    None
+    index.pending().pruned_partition()
   }
 
   /// The table it scans.
@@ -779,7 +773,7 @@ fn parallelism_of(args: &ScanArgs, fragments: u32, one_partition: bool) -> u32 {
 
 /// A row's words with its range number taken off the front, for a run
 /// that reads it; else the words and the number of the run's one range.
-fn split_range_no(
+pub(crate) fn split_range_no(
   words: &[u32],
   reads: bool,
   single_no: u32,
@@ -1134,7 +1128,7 @@ impl ApidConnection {
           table_id = index.index().index_id();
           table_version = index.index().index_version();
           if scan.reads_range_no {
-            read = &index.read_part_ranged;
+            read = &index.shape.read_part_ranged;
           }
           bounds.extend_from_slice(&index.run.bounds);
         }
@@ -1319,25 +1313,42 @@ impl ApidConnection {
   /// Trade a batch's rows and their ends for the buffers given, which
   /// must be empty: an executor moves a batch to its reader so, without
   /// copying a row. The batch stays with the application until it is
-  /// handed back. False if the batch is not with the application.
+  /// handed back. Its receiver's place in the run, and whether it is the
+  /// receiver's last batch, which a reader's merge needs; none if the
+  /// batch is not with the application.
   pub(crate) fn swap_scan_batch(
     &mut self,
     batch: ScanBatchId,
     rows: &mut Vec<u32>,
     row_ends: &mut Vec<u32>,
-  ) -> bool {
-    let place = match self.ready_receiver(batch) {
-      Some(place) => place,
-      None => return false,
+  ) -> Option<(u32, bool)> {
+    let place = self.ready_receiver(batch)?;
+    let scan = self.scans.get_mut(batch.scan.0)?;
+    let receiver = &mut scan.receivers[place as usize];
+    std::mem::swap(&mut receiver.rows, rows);
+    std::mem::swap(&mut receiver.row_ends, row_ends);
+    Some((place, receiver.last))
+  }
+
+  /// The next run of a scan of an ordered index reads the ranges `set`
+  /// holds, encoded already, in place of any added: how an executor
+  /// passes a reader's on. Refused on a table scan
+  /// (`IC_ERROR_NOT_SUPPORTED`).
+  pub(crate) fn set_scan_ranges(
+    &mut self,
+    id: ScanId,
+    set: &RangeSet,
+  ) -> Result<(), IcError> {
+    let scan = match self.scans.get_mut(id.0) {
+      Some(scan) => scan,
+      None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
     };
-    match self.scans.get_mut(batch.scan.0) {
-      Some(scan) => {
-        let receiver = &mut scan.receivers[place as usize];
-        std::mem::swap(&mut receiver.rows, rows);
-        std::mem::swap(&mut receiver.row_ends, row_ends);
-        true
+    match &mut scan.index {
+      Some(index) => {
+        index.set_ranges(set);
+        Ok(())
       }
-      None => false,
+      None => Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED)),
     }
   }
 
@@ -1634,7 +1645,7 @@ impl ApidConnection {
       None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
     };
     let order = match &scan.index {
-      Some(index) => match &index.order {
+      Some(index) => match &index.shape.order {
         Ok(order) => order,
         Err(e) => return Err(*e),
       },

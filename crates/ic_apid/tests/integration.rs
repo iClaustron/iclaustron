@@ -6228,13 +6228,13 @@ const IC_IT_LATIN1_WORDS: [&str; 33] = [
   "6162", "FF41",
 ];
 
-#[test]
-fn scan_index_ordered_by_each_latin1_collation() {
-  let cluster = match cluster() {
-    Some(cluster) => cluster,
-    None => return,
-  };
-  let columns: [(&str, &str); 11] = [
+/// Make the `ordl` table afresh: a CHAR or VARCHAR column for each
+/// latin1 collation, each with an ordered index `ix_<column>`, holding
+/// every byte but 0 alone, then the words, the same in every column, and
+/// a row of NULLs. The columns' names, or `None` if there is no MySQL
+/// client.
+fn setup_latin1_table() -> Option<Vec<&'static str>> {
+  let columns: [(&'static str, &str); 11] = [
     (
       "c_sw",
       "CHAR(4) CHARACTER SET latin1 COLLATE latin1_swedish_ci",
@@ -6279,7 +6279,7 @@ fn scan_index_ordered_by_each_latin1_collation() {
   ];
   let mut defs = String::new();
   let mut keys = String::new();
-  let mut names: Vec<&str> = Vec::new();
+  let mut names: Vec<&'static str> = Vec::new();
   for (name, def) in &columns {
     defs.push_str(&format!(",\n {} {}", name, def));
     keys.push_str(&format!(",\n KEY ix_{c} ({c})", c = name));
@@ -6295,9 +6295,7 @@ fn scan_index_ordered_by_each_latin1_collation() {
     defs = defs,
     keys = keys
   );
-  if mysql(&sql).is_none() {
-    return;
-  }
+  mysql(&sql)?;
   // Every byte but 0 alone, then the words.
   let mut hex: Vec<String> = Vec::new();
   let mut byte: u32 = 1;
@@ -6308,9 +6306,20 @@ fn scan_index_ordered_by_each_latin1_collation() {
   for word in &IC_IT_LATIN1_WORDS {
     hex.push(word.to_string());
   }
-  if insert_strings("ordl", columns.len(), 1, &hex, "{}").is_none() {
-    return;
-  }
+  insert_strings("ordl", columns.len(), 1, &hex, "{}")?;
+  Some(names)
+}
+
+#[test]
+fn scan_index_ordered_by_each_latin1_collation() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  let names = match setup_latin1_table() {
+    Some(names) => names,
+    None => return,
+  };
   let mut conn = cluster.global.create_connection().expect("connection");
   let t = bind(&mut conn, "ordl");
   let faults = ordered_faults(&mut conn, &t, "ordl", &names);
@@ -6578,4 +6587,265 @@ fn scan_index_refusals() {
   assert!(!conn.next_row(scan).expect("closed"));
   assert!(conn.scan(scan).expect("the scan").error().is_none());
   assert_eq!(conn.unexpected(), 0);
+}
+
+/// Every row a reader's run reads, each one's id and range number, and
+/// how the run ended.
+fn reader_rows(
+  reader: &mut ScanReader,
+  t: &Table,
+) -> (Vec<(i64, u32)>, Option<IcError>) {
+  let mut rows: Vec<(i64, u32)> = Vec::new();
+  loop {
+    match reader.next_row() {
+      Ok(true) => {
+        let id: i64 = t.get(reader.row(), "id").parse().expect("an id");
+        rows.push((id, reader.range_no()));
+      }
+      Ok(false) => return (rows, None),
+      Err(e) => return (rows, Some(e)),
+    }
+  }
+}
+
+/// A table bound through an executor, with its default record.
+fn bind_through(submitter: &Submitter, table: &str) -> Table {
+  let def = submitter.table_bind(IC_IT_DB, table).expect("bind");
+  let rec = Record::default_for(&def, None).expect("a record");
+  Table { def, rec }
+}
+
+/// A shape over the index `name` of `table`, its key record over
+/// `columns`, reading the whole row.
+fn index_shape(
+  submitter: &Submitter,
+  t: &Table,
+  table: &str,
+  name: &str,
+  columns: &[&str],
+) -> Arc<ScanShape> {
+  let index = submitter
+    .index_bind(IC_IT_DB, name, table)
+    .expect("bind the ordered index");
+  let key_rec = record_over(t, columns);
+  ScanShape::new_index(&index, &key_rec, &t.rec).expect("an index shape")
+}
+
+#[test]
+fn scan_index_through_an_executor() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_rng_table().is_none() {
+    return;
+  }
+  let executor = executor_with(&cluster, 400, 4000);
+  let submitter = executor.submitter();
+  let t = bind_through(&submitter, "rng");
+  let columns = ["a", "b"];
+  let shape = index_shape(&submitter, &t, "rng", "ix_ab", &columns);
+  let key_rec = record_over(&t, &columns);
+  let mut reader = ScanReader::new(&shape);
+  // Unordered, ordered both ways, reading ahead, and with locks; the
+  // same reader run after run, in small batches.
+  let modes = [
+    (false, false, false, ScanLock::Committed),
+    (true, false, false, ScanLock::Committed),
+    (true, true, false, ScanLock::Committed),
+    (true, false, true, ScanLock::Committed),
+    (true, true, true, ScanLock::Committed),
+    (true, false, false, ScanLock::Shared),
+    (true, true, false, ScanLock::Exclusive),
+  ];
+  let mut faults: Vec<String> = Vec::new();
+  for case in &IC_IT_AB_RANGES {
+    let ranks = mysql_ranks("rng", &rank_by("a, b"), case.filter);
+    let low = bound_row(&t, &key_rec, &columns, case.low);
+    let high = bound_row(&t, &key_rec, &columns, case.high);
+    for (ordered, descending, read_ahead, lock) in modes {
+      reader
+        .add_range(&case.range, &low, &high)
+        .expect("add the range");
+      let args = ScanArgs {
+        lock,
+        ordered,
+        descending,
+        read_ahead,
+        batch_rows: 5,
+        timeout_ms: IC_IT_SCAN_WAIT_MS as u32,
+        ..ScanArgs::default()
+      };
+      submitter.scan(&mut reader, &args).expect("submit the scan");
+      let (rows, error) = reader_rows(&mut reader, &t);
+      let what = format!(
+        "{} ordered {} desc {} ahead {} {:?}",
+        case.filter, ordered, descending, read_ahead, lock
+      );
+      if let Some(e) = error {
+        faults.push(format!("{}: error {} {}", what, e.code, e.message()));
+        continue;
+      }
+      for fault in order_faults(&rows, &ranks, ordered, descending) {
+        faults.push(format!("{}: {}", what, fault));
+      }
+    }
+  }
+  assert!(faults.is_empty(), "{}", first_faults(faults));
+  // Numbered ranges, each row's number checked: range 0, a = 3; range
+  // 1, a from 10 to 12; range 5, a above 47.
+  let filter = "a = 3 OR a BETWEEN 10 AND 12 OR a > 47";
+  let numbers = mysql_ranks(
+    "rng",
+    "CASE WHEN a = 3 THEN 0 WHEN a <= 12 THEN 1 ELSE 5 END",
+    filter,
+  );
+  let ranks = mysql_ranks("rng", &rank_by("a, b"), filter);
+  let ranges: [(u32, ScanRange, &str, &str); 3] = [
+    (0, ab(1, true, 1, true), "3", "3"),
+    (1, ab(1, true, 1, true), "10", "12"),
+    (5, ab(1, false, 0, false), "47", "0"),
+  ];
+  for (ordered, descending) in [(false, false), (true, false), (true, true)] {
+    for (range_no, range, low, high) in &ranges {
+      let numbered = ScanRange {
+        range_no: *range_no,
+        ..*range
+      };
+      let low_row = bound_row(&t, &key_rec, &columns, &[Some(*low)]);
+      let high_row = bound_row(&t, &key_rec, &columns, &[Some(*high)]);
+      reader
+        .add_range(&numbered, &low_row, &high_row)
+        .expect("add a range");
+    }
+    let args = ScanArgs {
+      ordered,
+      descending,
+      batch_rows: 3,
+      timeout_ms: IC_IT_SCAN_WAIT_MS as u32,
+      ..ScanArgs::default()
+    };
+    submitter.scan(&mut reader, &args).expect("submit");
+    let (rows, error) = reader_rows(&mut reader, &t);
+    let what = format!("numbered, ordered {} desc {}", ordered, descending);
+    assert!(error.is_none(), "{}: {:?}", what, error);
+    for fault in order_faults(&rows, &ranks, ordered, descending) {
+      faults.push(format!("{}: {}", what, fault));
+    }
+    for (id, range_no) in &rows {
+      let expected = numbers.get(id).copied().unwrap_or(-1);
+      if expected != *range_no as i64 {
+        faults.push(format!("{}: row {} in range {}", what, id, range_no));
+      }
+    }
+  }
+  assert!(faults.is_empty(), "{}", first_faults(faults));
+  // An ordered run's numbers must rise; the refused run leaves its
+  // ranges for the next, which reads the rows of a = 4 once a range.
+  let four = bound_row(&t, &key_rec, &columns, &[Some("4")]);
+  for range_no in [4, 2] {
+    let range = ScanRange {
+      range_no,
+      ..ab(1, true, 1, true)
+    };
+    reader.add_range(&range, &four, &four).expect("add");
+  }
+  let ordered = ScanArgs {
+    ordered: true,
+    ..ScanArgs::default()
+  };
+  let e = submitter
+    .scan(&mut reader, &ordered)
+    .expect_err("numbers that do not rise");
+  assert_eq!(e.code, err::IC_ERROR_BAD_RANGE);
+  submitter
+    .scan(&mut reader, &ScanArgs::default())
+    .expect("unordered");
+  let (rows, error) = reader_rows(&mut reader, &t);
+  assert!(error.is_none(), "{:?}", error);
+  let fours = count_of(&format!(
+    "SELECT COUNT(*) FROM {}.rng WHERE a = 4",
+    IC_IT_DB
+  ));
+  assert_eq!(rows.len() as i64, 2 * fours);
+  // A shape over the table has no ranges and no order; an index shape
+  // whose rows leave out an index column has no order either.
+  let table_shape = ScanShape::new(&t.def, &t.rec).expect("a table shape");
+  let mut table_reader = ScanReader::new(&table_shape);
+  let e = table_reader
+    .add_range(&ab(0, false, 0, false), &[], &[])
+    .expect_err("a table shape");
+  assert_eq!(e.code, err::IC_ERROR_NOT_SUPPORTED);
+  let e = submitter
+    .scan(&mut table_reader, &ordered)
+    .expect_err("no order");
+  assert_eq!(e.code, err::IC_ERROR_NOT_SUPPORTED);
+  let index = submitter
+    .index_bind(IC_IT_DB, "ix_ab", "rng")
+    .expect("bind the index");
+  let narrow = record_over(&t, &["id"]);
+  let narrow_shape =
+    ScanShape::new_index(&index, &key_rec, &narrow).expect("a shape");
+  let mut narrow_reader = ScanReader::new(&narrow_shape);
+  let e = submitter
+    .scan(&mut narrow_reader, &ordered)
+    .expect_err("no a or b read");
+  assert_eq!(e.code, err::IC_ERROR_KEY_RECORD);
+  // Closed early, an ordered reader runs again.
+  submitter.scan(&mut reader, &ordered).expect("submit");
+  let mut read: u32 = 0;
+  while read < 10 && reader.next_row().expect("a row") {
+    read += 1;
+  }
+  assert_eq!(read, 10);
+  reader.close();
+  assert!(reader.is_done());
+  submitter.scan(&mut reader, &ordered).expect("again");
+  let (rows, error) = reader_rows(&mut reader, &t);
+  assert!(error.is_none(), "{:?}", error);
+  let all = mysql_ranks("rng", &rank_by("a, b"), "TRUE");
+  let faults = order_faults(&rows, &all, true, false);
+  assert!(faults.is_empty(), "{}", first_faults(faults));
+}
+
+#[test]
+fn scan_index_ordered_through_an_executor_by_each_latin1_collation() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  let names = match setup_latin1_table() {
+    Some(names) => names,
+    None => return,
+  };
+  let executor = executor_with(&cluster, 400, 4000);
+  let submitter = executor.submitter();
+  let t = bind_through(&submitter, "ordl");
+  let mut faults: Vec<String> = Vec::new();
+  for column in &names {
+    let name = format!("ix_{}", column);
+    let shape = index_shape(&submitter, &t, "ordl", &name, &[*column]);
+    let mut reader = ScanReader::new(&shape);
+    let ranks = mysql_ranks("ordl", &rank_by(column), "TRUE");
+    for descending in [false, true] {
+      let args = ScanArgs {
+        ordered: true,
+        descending,
+        batch_rows: 3,
+        timeout_ms: IC_IT_SCAN_WAIT_MS as u32,
+        ..ScanArgs::default()
+      };
+      submitter.scan(&mut reader, &args).expect("submit the scan");
+      let (rows, error) = reader_rows(&mut reader, &t);
+      let what = format!("{} desc {}", column, descending);
+      if let Some(e) = error {
+        faults.push(format!("{}: error {} {}", what, e.code, e.message()));
+        continue;
+      }
+      for fault in order_faults(&rows, &ranks, true, descending) {
+        faults.push(format!("{}: {}", what, fault));
+      }
+    }
+  }
+  assert!(faults.is_empty(), "{}", first_faults(faults));
 }

@@ -23,6 +23,12 @@
 //! low bound's row as a key's is ([`hash::partition_of`]); one that
 //! cannot be worked out, as for a character column whose collation was
 //! not described, leaves the run unpruned.
+//!
+//! **Two parts**: an [`IndexShape`], what the ranges and the order are
+//! made with, which never changes and which a connection's scan and a
+//! reader's scan shape each hold; and [`RangeSet`]s, ranges encoded,
+//! held by whoever adds them: a connection's scan, or a reader, whose
+//! ranges go to the executor with its run (chapter 04, "Index scans").
 
 use std::sync::Arc;
 
@@ -86,8 +92,34 @@ pub(crate) struct RangeSet {
 }
 
 impl RangeSet {
+  /// The partition every range is in, if they are all in one.
+  pub(crate) fn pruned_partition(&self) -> Option<u32> {
+    if self.count > 0 && self.pruned {
+      return Some(self.partition);
+    }
+    None
+  }
+
+  /// True if a run of these ranges reads each row's range number: a run
+  /// of more than one.
+  pub(crate) fn reads_range_no(&self) -> bool {
+    self.count > 1
+  }
+
+  /// The same ranges as `other`, in this set's own buffer.
+  pub(crate) fn copy_from(&mut self, other: &RangeSet) {
+    self.bounds.clear();
+    self.bounds.extend_from_slice(&other.bounds);
+    self.count = other.count;
+    self.first_no = other.first_no;
+    self.last_no = other.last_no;
+    self.rising = other.rising;
+    self.pruned = other.pruned;
+    self.partition = other.partition;
+  }
+
   /// Empty, its buffer kept.
-  fn clear(&mut self) {
+  pub(crate) fn clear(&mut self) {
     self.bounds.clear();
     self.count = 0;
     self.first_no = 0;
@@ -118,11 +150,11 @@ impl RangeSet {
   }
 }
 
-/// What a scan of an ordered index has beyond a table scan: the index,
-/// its key record, the ranges added for the next run and those of the
-/// run, and the order its rows are merged in.
+/// What the ranges and the order of scans of an ordered index are made
+/// with: the index, its key record, its columns' places, and the order
+/// of rows laid out by the scan's record. It never changes.
 #[derive(Debug)]
-pub(crate) struct IndexScan {
+pub(crate) struct IndexShape {
   index: Arc<IndexDef>,
   key_rec: Record,
   /// The index's columns, in its order.
@@ -137,23 +169,19 @@ pub(crate) struct IndexScan {
   /// What a run with several ranges reads: each row's range number
   /// first, then the record's columns.
   pub(crate) read_part_ranged: Vec<u32>,
-  /// The ranges added since the last run was started.
-  pending: RangeSet,
-  /// The ranges of the run.
-  pub(crate) run: RangeSet,
 }
 
-impl IndexScan {
-  /// A scan of `index`, an ordered index, its bounds laid out by
-  /// `key_rec`, which must hold every column of the index, and its rows
-  /// by `rec`, whose read is `read_part`. Both records are over the
+impl IndexShape {
+  /// Scans of `index`, an ordered index, their bounds laid out by
+  /// `key_rec`, which must hold every column of the index, and their
+  /// rows by `rec`, whose read is `read_part`. Both records are over the
   /// index's table.
   pub(crate) fn new(
     index: &Arc<IndexDef>,
     key_rec: &Record,
     rec: &Record,
     read_part: &[u32],
-  ) -> Result<IndexScan, IcError> {
+  ) -> Result<IndexShape, IcError> {
     if !index.is_ordered() {
       return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
     }
@@ -194,19 +222,13 @@ impl IndexScan {
     read_part_ranged
       .push(column_header::column_header(scans::IC_COL_RANGE_NO, 0));
     read_part_ranged.extend_from_slice(read_part);
-    let mut pending = RangeSet::default();
-    pending.clear();
-    let mut run = RangeSet::default();
-    run.clear();
-    Ok(IndexScan {
+    Ok(IndexShape {
       index: Arc::clone(index),
       key_rec: key_rec.clone(),
       columns,
       dist_prefix,
       order: IndexOrder::new(index, rec),
       read_part_ranged,
-      pending,
-      run,
     })
   }
 
@@ -215,18 +237,19 @@ impl IndexScan {
     &self.index
   }
 
-  /// Ranges added for the next run.
-  pub(crate) fn pending(&self) -> &RangeSet {
-    &self.pending
+  /// The record bounds are laid out by.
+  pub(crate) fn key_record(&self) -> &Record {
+    &self.key_rec
   }
 
-  /// Encode a range for the next run, from `low` and `high`, rows laid
-  /// out by the key record; a row a bound does not use may be empty.
-  /// Refused with `IC_ERROR_BAD_RANGE` for a number above 4095, more
-  /// columns than the index has, or bounds too long to send; nothing is
-  /// added then.
+  /// Encode a range onto `set`, from `low` and `high`, rows laid out by
+  /// the key record; a row a bound does not use may be empty. Refused
+  /// with `IC_ERROR_BAD_RANGE` for a number above 4095, more columns
+  /// than the index has, or bounds too long to send; nothing is added
+  /// then.
   pub(crate) fn add_range(
-    &mut self,
+    &self,
+    set: &mut RangeSet,
     range: &ScanRange,
     low: &[u8],
     high: &[u8],
@@ -245,27 +268,26 @@ impl IndexScan {
     if short {
       return Err(IcError::new(err::IC_ERROR_RECORD_LAYOUT));
     }
-    let start = self.pending.bounds.len();
+    let start = set.bounds.len();
     let encoded = encode_range(
       &self.key_rec,
       &self.columns,
       range,
       low,
       high,
-      &mut self.pending.bounds,
+      &mut set.bounds,
     );
     if let Err(e) = encoded {
-      self.pending.bounds.truncate(start);
+      set.bounds.truncate(start);
       return Err(e);
     }
-    let finished =
-      scans::finish_range(&mut self.pending.bounds, start, range.range_no);
+    let finished = scans::finish_range(&mut set.bounds, start, range.range_no);
     if let Err(e) = finished {
-      self.pending.bounds.truncate(start);
+      set.bounds.truncate(start);
       return Err(e);
     }
     let partition = self.partition_of_range(range, low, high);
-    self.pending.note(range.range_no, partition);
+    set.note(range.range_no, partition);
     Ok(())
   }
 
@@ -293,13 +315,71 @@ impl IndexScan {
     }
   }
 
-  /// Refuse what a run cannot be started with: several ranges whose
-  /// numbers do not rise, for an ordered run.
-  pub(crate) fn check_run(&self, ordered: bool) -> Result<(), IcError> {
-    if ordered && self.pending.count > 1 && !self.pending.rising {
+  /// Refuse an ordered run of `set`'s ranges: an index whose order is
+  /// not known here, or several ranges whose numbers do not rise
+  /// (`IC_ERROR_BAD_RANGE`).
+  pub(crate) fn check_ordered(&self, set: &RangeSet) -> Result<(), IcError> {
+    if let Err(e) = &self.order {
+      return Err(*e);
+    }
+    if set.count > 1 && !set.rising {
       return Err(IcError::new(err::IC_ERROR_BAD_RANGE));
     }
     Ok(())
+  }
+}
+
+/// What a connection's scan of an ordered index has beyond a table
+/// scan: its shape, the ranges added for the next run, and those of the
+/// run.
+#[derive(Debug)]
+pub(crate) struct IndexScan {
+  pub(crate) shape: IndexShape,
+  /// The ranges added since the last run was started.
+  pending: RangeSet,
+  /// The ranges of the run.
+  pub(crate) run: RangeSet,
+}
+
+impl IndexScan {
+  /// A scan of `index`, as [`IndexShape::new`] makes its shape.
+  pub(crate) fn new(
+    index: &Arc<IndexDef>,
+    key_rec: &Record,
+    rec: &Record,
+    read_part: &[u32],
+  ) -> Result<IndexScan, IcError> {
+    Ok(IndexScan {
+      shape: IndexShape::new(index, key_rec, rec, read_part)?,
+      pending: RangeSet::default(),
+      run: RangeSet::default(),
+    })
+  }
+
+  /// The index scanned.
+  pub(crate) fn index(&self) -> &Arc<IndexDef> {
+    self.shape.index()
+  }
+
+  /// Ranges added for the next run.
+  pub(crate) fn pending(&self) -> &RangeSet {
+    &self.pending
+  }
+
+  /// Encode a range for the next run; see [`IndexShape::add_range`].
+  pub(crate) fn add_range(
+    &mut self,
+    range: &ScanRange,
+    low: &[u8],
+    high: &[u8],
+  ) -> Result<(), IcError> {
+    self.shape.add_range(&mut self.pending, range, low, high)
+  }
+
+  /// The next run's ranges are `set`'s, encoded already, in place of
+  /// any added: how an executor passes a reader's on.
+  pub(crate) fn set_ranges(&mut self, set: &RangeSet) {
+    self.pending.copy_from(set);
   }
 
   /// The ranges added become the run's, and the next run is given its
@@ -418,10 +498,12 @@ mod tests {
   fn ranges_rise_and_prune_only_together() {
     let set = set_with(&[(0, Some(3)), (1, Some(3)), (5, Some(3))]);
     assert!(set.rising);
-    assert!(set.pruned);
-    assert_eq!(set.partition, 3);
+    assert_eq!(set.pruned_partition(), Some(3));
     assert_eq!(set.first_no, 0);
     assert_eq!(set.count, 3);
+    assert!(set.reads_range_no());
+    assert!(!set_with(&[(4, None)]).reads_range_no());
+    assert_eq!(RangeSet::default().pruned_partition(), None);
     // A number not above the last, a second partition, or a range in
     // no single partition each undo it.
     assert!(!set_with(&[(2, None), (2, None)]).rising);
@@ -432,6 +514,12 @@ mod tests {
     let mut set = set_with(&[(7, Some(1))]);
     set.bounds.extend_from_slice(&[1, 2, 3]);
     let capacity = set.bounds.capacity();
+    // Copied, then cleared: ready for the next run, its buffer kept.
+    let mut copy = RangeSet::default();
+    copy.copy_from(&set);
+    assert_eq!(copy.bounds, set.bounds);
+    assert_eq!(copy.pruned_partition(), Some(1));
+    assert_eq!(copy.first_no, 7);
     set.clear();
     assert_eq!(set.count, 0);
     assert!(set.bounds.is_empty());

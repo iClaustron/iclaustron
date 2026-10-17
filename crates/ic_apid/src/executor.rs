@@ -56,7 +56,10 @@
 //! the reader hands the batch back, which reaches the loop as a nudge
 //! (step 1). A slow reader stalls only its own scan. Scans have a limit
 //! of their own, [`ExecutorOptions::scans`], and a queue of their own,
-//! so that neither scans nor transactions hold the other back.
+//! so that neither scans nor transactions hold the other back. A scan
+//! of an ordered index takes the reader's ranges from its feed, and an
+//! ordered one runs here unordered over every fragment, each batch
+//! going with its receiver's place, for the reader to merge.
 //!
 //! **Nothing is lost silently.** A request whose deadline has passed
 //! when its turn comes fails with `IC_ERROR_TIMEOUT`, unsent. One with
@@ -87,6 +90,7 @@ use crate::apid_conn::ApidConnection;
 use crate::apid_global::ApidGlobal;
 use crate::dict_cache::IndexDef;
 use crate::dict_cache::TableDef;
+use crate::index_scan::RangeSet;
 use crate::query;
 use crate::query::AbortOption;
 use crate::query::BatchHint;
@@ -1007,7 +1011,9 @@ impl Submitter {
   /// connection's scan; `trans` and `callback` are refused with
   /// `IC_ERROR_NOT_SUPPORTED`, as an executor's scan is in no
   /// transaction of the application's and its batches go to the
-  /// reader, and so is `read_ahead` for a locking scan. `timeout_ms`
+  /// reader, and so is `read_ahead` for a locking scan. `ordered` and
+  /// `descending` are for a shape over an ordered index, as on a
+  /// connection, the reader merging an ordered run. `timeout_ms`
   /// counts from now. A reader whose run is not over is refused with
   /// `IC_ERROR_SCAN_ACTIVE`, and a stopped executor with
   /// `IC_ERROR_EXECUTOR_STOPPED`. Not to be called on the executor's own
@@ -1168,6 +1174,8 @@ struct Runner {
   nudges: Vec<u32>,
   /// Batches handed back, while they are dealt with.
   scan_back: Vec<FeedBatch>,
+  /// A reader's ranges, while its run is started.
+  scan_ranges: RangeSet,
 }
 
 impl Runner {
@@ -1199,6 +1207,7 @@ impl Runner {
       scan_pool_of: HashMap::new(),
       nudges: Vec::new(),
       scan_back: Vec::new(),
+      scan_ranges: RangeSet::default(),
     }
   }
 
@@ -1629,9 +1638,16 @@ impl Runner {
   /// answered or dropped unstarted, and one past its deadline fails
   /// with `IC_ERROR_TIMEOUT`.
   fn admit_scan(&mut self, mut work: ScanWork) {
+    // The run's ranges are taken under the lock that says it is still
+    // the reader's, and an emptied set is left for the reader's next.
     let (gone, closing) = {
-      let state = work.feed.state.lock();
-      (state.run != work.run || state.done, state.closing)
+      let mut state = work.feed.state.lock();
+      let gone = state.run != work.run || state.done;
+      if !gone {
+        self.scan_ranges.clear();
+        std::mem::swap(&mut state.ranges, &mut self.scan_ranges);
+      }
+      (gone, state.closing)
     };
     if gone {
       work.forget();
@@ -1666,19 +1682,38 @@ impl Runner {
     args.read_ahead = false;
     args.user_ref = flight;
     args.binding = 0;
-    if let Err(e) = self.conn.start_scan(scan, &args) {
+    // An ordered run is merged by the reader: the scan here is unordered,
+    // so that its batches go to the reader as they come, over every
+    // fragment, a receiver each, as a merge needs.
+    if args.ordered {
+      args.ordered = false;
+      args.parallelism = 0;
+    }
+    let mut started = Ok(());
+    if work.shape.index_shape().is_some() {
+      started = self.conn.set_scan_ranges(scan, &self.scan_ranges);
+    }
+    if started.is_ok() {
+      started = self.conn.start_scan(scan, &args);
+    }
+    if let Err(e) = started {
       self.give_back_scan(work.shape.id(), scan);
       self.free_scan_flights.push(flight);
       work.finish(Some(e));
       return;
     }
     self.shared.scans.fetch_add(1, Ordering::Relaxed);
+    let receivers = match self.conn.scan(scan) {
+      Some(running) => running.parallelism(),
+      None => 0,
+    };
     // From here the reader may nudge. A close asked for meanwhile is
     // seen now, as it found no flight to nudge.
     let close_now = {
       let mut state = work.feed.state.lock();
       if state.run == work.run && !state.done {
         state.flight = Some(flight as u32);
+        state.receivers = receivers;
         state.closing
       } else {
         true
@@ -1724,7 +1759,14 @@ impl Runner {
     if let Some(scan) = self.scan_pools[pool].idle.pop() {
       return Ok(scan);
     }
-    self.conn.create_scan(shape.table(), shape.record())
+    match shape.index_shape() {
+      Some(index) => self.conn.create_index_scan(
+        index.index(),
+        index.key_record(),
+        shape.record(),
+      ),
+      None => self.conn.create_scan(shape.table(), shape.record()),
+    }
   }
 
   /// An idle scan back to its shape's pool, or let go of if the shape
@@ -1763,15 +1805,21 @@ impl Runner {
         continue;
       }
       let mut moved = state.spare.pop().unwrap_or_default();
-      if !self
-        .conn
-        .swap_scan_batch(batch, &mut moved.rows, &mut moved.row_ends)
-      {
-        state.spare.push(moved);
-        continue;
-      }
+      let (place, last) = match self.conn.swap_scan_batch(
+        batch,
+        &mut moved.rows,
+        &mut moved.row_ends,
+      ) {
+        Some(found) => found,
+        None => {
+          state.spare.push(moved);
+          continue;
+        }
+      };
       moved.run = run;
       moved.batch = Some(batch);
+      moved.place = place;
+      moved.last = last;
       state.full.push_back(moved);
       let wake = state.reader_waiting;
       state.reader_waiting = false;

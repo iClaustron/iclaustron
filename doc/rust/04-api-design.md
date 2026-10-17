@@ -630,9 +630,41 @@ while conn.next_row(scan)? {
   `Scan::parallelism` gives the receivers a run had, one when pruned.
 - **Takeovers** as from a table scan (8.5): an index scan's rows come
   with the table's keys.
-- **Through an executor**: a shape over the index, with ranges given
-  to the reader, after a connection's index scans pass. **C**: phase
-  8.8.
+- **Through an executor** (phase 8.7b, 2026-10-17):
+  `ScanShape::new_index(&index, &key_rec, &rec)` makes a shape over
+  the index; `reader.add_range(&range, low_row, high_row)` adds a range
+  to the reader's next run, encoded at once, and `reader.range_no()`
+  gives the row's range number. `ScanArgs::ordered` and `descending`
+  are as on a connection, and refused for a shape over a table
+  (`IC_ERROR_NOT_SUPPORTED`).
+
+  ```rust
+  let shape = ScanShape::new_index(&index, &key_rec, &rec)?;
+  let mut reader = ScanReader::new(&shape);
+  reader.add_range(&range, &low_row, &high_row)?;
+  submitter.scan(&mut reader, &ScanArgs { ordered: true, ..ScanArgs::default() })?;
+  while reader.next_row()? {
+    let row = reader.row();            // in the index's order
+  }
+  ```
+
+  The ranges are left in the reader's feed for the executor to take as
+  it starts the run, under the lock that says the run is still the
+  reader's, and the emptied set it leaves there takes the reader's
+  next, so a run after the first allocates nothing for them. They are
+  not part of the run's request, which goes through the executor's
+  inbox by value and is kept small. **The reader merges an ordered
+  run, not the executor**: a batch moves to the reader without a copy,
+  a receiver has at most one there, and the merge needs one from each,
+  so the executor's loop does no work per row for any reader. The
+  executor's scan of an ordered run is unordered, over every fragment,
+  and each batch goes with its receiver's place and whether it is the
+  receiver's last. The reader takes the row that comes first once
+  every receiver has a batch with a row or has ended, handing a
+  batch back once its rows are read, as a connection's merge does.
+  With `read_ahead` a receiver's next batch may come before its last
+  is read, and waits with the reader.
+- **C**: phase 8.8.
 
 ### Errors
 

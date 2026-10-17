@@ -1551,8 +1551,23 @@ fixes the distribution key.
 - **Passes 2026-10-17**: the eight new tests and the whole `scan_`
   group against `rondb_1107_cte_test`; the merge's order matches
   MySQL's for every type, collation and word tried.
-- **Next, 8.7b**: index scans through an executor, a shape over the
-  index and the ranges given to the reader, which merges.
+- **8.7b, through an executor, built 2026-10-17**
+  (chapter 04, "Index scans"): `ScanShape::new_index`,
+  `ScanReader::add_range` and `range_no`. The ranges wait in the
+  reader's feed for the executor to take as it starts the run, and
+  their emptied set comes back for the next. The index scan's two parts
+  are now apart in `index_scan.rs`: the `IndexShape`, which never
+  changes and which a reader's shape holds too, and `RangeSet`s, held
+  by whoever adds ranges. The executor's scan of an ordered run is
+  unordered over every fragment, each batch moved with its receiver's
+  place and last flag, and the reader merges, waiting for a row or the
+  end from every receiver; with `read_ahead` a receiver's next batch
+  waits behind its last. Tests in the `scan_` group: the twelve ranges
+  of `ix_ab` through a reader, unordered, ordered both ways, reading
+  ahead, and with shared and exclusive locks; numbered ranges; the
+  refusals; a reader closed early and run again; and an ordered run of
+  each latin1 collation, both ways. **Passes 2026-10-17**, with the
+  whole `scan_` group, against `rondb_1107_cte_test`.
 
 ### 8.8 C ABI and examples (3 days)
 
