@@ -1152,3 +1152,310 @@ fn c_api_scan_on_a_connection_and_through_an_executor() {
     ic_apid_global_free(global);
   }
 }
+
+/// Rows in the `capi_range` table, and how many share each value of a.
+const IC_IT_CAPI_RANGE_ROWS: u64 = 300;
+const IC_IT_CAPI_RANGE_EACH: u64 = 10;
+
+/// The table the index scan test reads: id 1 up, a the id modulo 30,
+/// with an ordered index over a.
+fn setup_capi_range_table() -> Option<()> {
+  mysql(&format!(
+    "CREATE DATABASE IF NOT EXISTS {db};
+     DROP TABLE IF EXISTS {db}.capi_range;
+     CREATE TABLE {db}.capi_range (
+       id INT NOT NULL PRIMARY KEY,
+       a INT NOT NULL,
+       KEY ix_a (a)
+     ) ENGINE=NDB;
+     INSERT INTO {db}.capi_range
+       WITH RECURSIVE seq (n) AS
+         (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < {rows})
+       SELECT n, n % 30 FROM seq;",
+    db = IC_IT_DB,
+    rows = IC_IT_CAPI_RANGE_ROWS
+  ))?;
+  Some(())
+}
+
+/// A range of one column, both bounds inclusive, as `range_no`.
+fn one_column_range(range_no: u32) -> IcScanRange {
+  let mut range = std::mem::MaybeUninit::<IcScanRange>::uninit();
+  // SAFETY: a local, its size given.
+  unsafe {
+    ic_scan_range_init(range.as_mut_ptr(), std::mem::size_of::<IcScanRange>());
+  }
+  // SAFETY: filled by ic_scan_range_init above.
+  let mut range = unsafe { range.assume_init() };
+  range.low_columns = 1;
+  range.low_inclusive = true;
+  range.high_columns = 1;
+  range.high_inclusive = true;
+  range.range_no = range_no;
+  range
+}
+
+/// True if `values` never fall, or with `descending` never rise.
+fn in_order(values: &[u64], descending: bool) -> bool {
+  let mut at: usize = 1;
+  while at < values.len() {
+    let rises = values[at] >= values[at - 1];
+    let falls = values[at] <= values[at - 1];
+    if (descending && !falls) || (!descending && !rises) {
+      return false;
+    }
+    at += 1;
+  }
+  true
+}
+
+#[test]
+fn c_api_index_scans_on_a_connection_and_through_an_executor() {
+  let global = match connect() {
+    Some(global) => global,
+    None => return,
+  };
+  if setup_capi_range_table().is_none() {
+    // SAFETY: the handle connect made.
+    unsafe { ic_apid_global_free(global) };
+    return;
+  }
+  let db = cs(IC_IT_DB);
+  let table_name = cs("capi_range");
+  let index_name = cs("ix_a");
+  // SAFETY: every handle below is used while alive and freed once;
+  // every pointer is to a local or a row the library gave.
+  unsafe {
+    let mut conn: *mut IcApidConnection = std::ptr::null_mut();
+    assert_eq!(ic_apid_global_create_connection(global, &mut conn), 0);
+    let mut table: *mut IcTableDef = std::ptr::null_mut();
+    let ret = ic_apid_conn_table_bind(
+      conn,
+      db.as_ptr(),
+      table_name.as_ptr(),
+      &mut table,
+    );
+    assert_eq!(ret, 0, "bind: {}", message(ret));
+    let mut index: *mut IcIndexDef = std::ptr::null_mut();
+    let ret = ic_apid_conn_index_bind(
+      conn,
+      db.as_ptr(),
+      index_name.as_ptr(),
+      table_name.as_ptr(),
+      &mut index,
+    );
+    assert_eq!(ret, 0, "index bind: {}", message(ret));
+    let a = field(table, "a");
+    let mut rec: *mut IcRecord = std::ptr::null_mut();
+    assert_eq!(
+      ic_record_create_default(table, std::ptr::null(), 0, &mut rec),
+      0
+    );
+    let mut key_rec: *mut IcRecord = std::ptr::null_mut();
+    assert_eq!(ic_record_create_default(table, &a, 1, &mut key_rec), 0);
+    let key_size = ic_record_row_size(key_rec) as usize;
+    let mut low = vec![0u8; key_size];
+    let mut high = vec![0u8; key_size];
+    put(key_rec, low.as_mut_ptr(), key_size, &[(a, "5")]);
+    put(key_rec, high.as_mut_ptr(), key_size, &[(a, "9")]);
+    let mut scan: IcScanId = 0;
+    let ret = ic_apid_index_scan_create(conn, index, key_rec, rec, &mut scan);
+    assert_eq!(ret, 0, "create: {}", message(ret));
+    let mut args = std::mem::MaybeUninit::<IcScanArgs>::uninit();
+    ic_scan_args_init(args.as_mut_ptr(), std::mem::size_of::<IcScanArgs>());
+    let mut args = args.assume_init();
+    assert!(!args.ordered && !args.descending);
+    args.batch_rows = 4;
+    args.timeout_ms = 30_000;
+    let range = one_column_range(0);
+
+    // a from 5 to 9, in the index's order both ways.
+    for descending in [false, true] {
+      let ret = ic_apid_conn_add_scan_range(
+        conn,
+        scan,
+        &range,
+        low.as_ptr(),
+        low.len(),
+        high.as_ptr(),
+        high.len(),
+      );
+      assert_eq!(ret, 0, "add a range: {}", message(ret));
+      args.ordered = true;
+      args.descending = descending;
+      assert_eq!(ic_apid_conn_start_scan(conn, scan, &args), 0);
+      let mut values: Vec<u64> = Vec::new();
+      loop {
+        let mut more = false;
+        let ret = ic_apid_conn_next_row(conn, scan, &mut more);
+        assert_eq!(ret, 0, "next row: {}", message(ret));
+        if !more {
+          break;
+        }
+        let mut len: usize = 0;
+        let row = ic_apid_scan_row(conn, scan, &mut len);
+        values.push(get(rec, row, len, a).parse::<u64>().expect("a value"));
+      }
+      assert_eq!(values.len() as u64, 5 * IC_IT_CAPI_RANGE_EACH);
+      assert!(in_order(&values, descending), "{:?}", values);
+      assert_eq!(ic_apid_scan_error(conn, scan), 0);
+    }
+
+    // Two numbered ranges, each row's number given back: 3 for a = 20,
+    // 1 for a = 2, the ranges added in the order of their numbers.
+    let mut two = vec![0u8; key_size];
+    let mut twenty = vec![0u8; key_size];
+    put(key_rec, two.as_mut_ptr(), key_size, &[(a, "2")]);
+    put(key_rec, twenty.as_mut_ptr(), key_size, &[(a, "20")]);
+    for (range_no, row) in [(1u32, &two), (3u32, &twenty)] {
+      let ret = ic_apid_conn_add_scan_range(
+        conn,
+        scan,
+        &one_column_range(range_no),
+        row.as_ptr(),
+        row.len(),
+        row.as_ptr(),
+        row.len(),
+      );
+      assert_eq!(ret, 0, "add a range: {}", message(ret));
+    }
+    args.descending = false;
+    assert_eq!(ic_apid_conn_start_scan(conn, scan, &args), 0);
+    let mut seen: Vec<(u64, u32)> = Vec::new();
+    loop {
+      let mut more = false;
+      assert_eq!(ic_apid_conn_next_row(conn, scan, &mut more), 0);
+      if !more {
+        break;
+      }
+      let mut len: usize = 0;
+      let row = ic_apid_scan_row(conn, scan, &mut len);
+      let value = get(rec, row, len, a).parse::<u64>().expect("a value");
+      seen.push((value, ic_apid_scan_range_no(conn, scan)));
+    }
+    assert_eq!(seen.len() as u64, 2 * IC_IT_CAPI_RANGE_EACH);
+    let mut at: usize = 0;
+    while at < seen.len() {
+      let expected = if (at as u64) < IC_IT_CAPI_RANGE_EACH {
+        (2, 1)
+      } else {
+        (20, 3)
+      };
+      assert_eq!(seen[at], expected, "row {}", at);
+      at += 1;
+    }
+
+    // Refusals: a number above 4095, and an order on a table scan.
+    let too_big = one_column_range(4096);
+    assert_eq!(
+      ic_apid_conn_add_scan_range(
+        conn,
+        scan,
+        &too_big,
+        low.as_ptr(),
+        low.len(),
+        high.as_ptr(),
+        high.len(),
+      ),
+      IC_ERROR_BAD_RANGE
+    );
+    let mut table_scan: IcScanId = 0;
+    assert_eq!(ic_apid_scan_create(conn, table, rec, &mut table_scan), 0);
+    assert_eq!(
+      ic_apid_conn_start_scan(conn, table_scan, &args),
+      IC_ERROR_NOT_SUPPORTED
+    );
+    assert_eq!(
+      ic_apid_conn_add_scan_range(
+        conn,
+        table_scan,
+        &range,
+        low.as_ptr(),
+        low.len(),
+        high.as_ptr(),
+        high.len(),
+      ),
+      IC_ERROR_NOT_SUPPORTED
+    );
+    assert_eq!(ic_apid_scan_free(conn, table_scan), 0);
+    assert_eq!(ic_apid_scan_free(conn, scan), 0);
+
+    // Through an executor: a shape over the index, the range added to
+    // the reader, the run merged by the reader.
+    let mut options = std::mem::MaybeUninit::<IcExecutorOptions>::uninit();
+    ic_executor_options_init(
+      options.as_mut_ptr(),
+      std::mem::size_of::<IcExecutorOptions>(),
+    );
+    let options = options.assume_init();
+    let mut executor: *mut IcApidExecutor = std::ptr::null_mut();
+    let ret = ic_apid_executor_start(global, &options, &mut executor);
+    assert_eq!(ret, 0, "start: {}", message(ret));
+    let mut submitter: *mut IcApidSubmitter = std::ptr::null_mut();
+    assert_eq!(ic_apid_executor_submitter(executor, &mut submitter), 0);
+    let mut shape: *mut IcScanShape = std::ptr::null_mut();
+    let ret = ic_scan_shape_create_index(index, key_rec, rec, &mut shape);
+    assert_eq!(ret, 0, "shape: {}", message(ret));
+    let mut reader: *mut IcScanReader = std::ptr::null_mut();
+    assert_eq!(ic_scan_reader_create(shape, &mut reader), 0);
+    for descending in [false, true] {
+      let ret = ic_scan_reader_add_range(
+        reader,
+        &range,
+        low.as_ptr(),
+        low.len(),
+        high.as_ptr(),
+        high.len(),
+      );
+      assert_eq!(ret, 0, "add a range: {}", message(ret));
+      args.descending = descending;
+      let ret = ic_apid_submitter_scan(submitter, reader, &args);
+      assert_eq!(ret, 0, "scan: {}", message(ret));
+      let mut values: Vec<u64> = Vec::new();
+      loop {
+        let mut more = false;
+        let ret = ic_scan_reader_next_row(reader, &mut more);
+        assert_eq!(ret, 0, "next row: {}", message(ret));
+        if !more {
+          break;
+        }
+        let mut len: usize = 0;
+        let row = ic_scan_reader_row(reader, &mut len);
+        values.push(get(rec, row, len, a).parse::<u64>().expect("a value"));
+        assert_eq!(ic_scan_reader_range_no(reader), 0);
+      }
+      assert_eq!(values.len() as u64, 5 * IC_IT_CAPI_RANGE_EACH);
+      assert!(in_order(&values, descending), "{:?}", values);
+      assert_eq!(ic_scan_reader_error(reader), 0);
+    }
+    // A shape over the table takes no range.
+    let mut table_shape: *mut IcScanShape = std::ptr::null_mut();
+    assert_eq!(ic_scan_shape_create(table, rec, &mut table_shape), 0);
+    let mut table_reader: *mut IcScanReader = std::ptr::null_mut();
+    assert_eq!(ic_scan_reader_create(table_shape, &mut table_reader), 0);
+    assert_eq!(
+      ic_scan_reader_add_range(
+        table_reader,
+        &range,
+        low.as_ptr(),
+        low.len(),
+        high.as_ptr(),
+        high.len(),
+      ),
+      IC_ERROR_NOT_SUPPORTED
+    );
+
+    ic_scan_reader_free(table_reader);
+    ic_scan_shape_free(table_shape);
+    ic_scan_reader_free(reader);
+    ic_scan_shape_free(shape);
+    ic_apid_submitter_free(submitter);
+    ic_apid_executor_free(executor);
+    ic_record_free(key_rec);
+    ic_record_free(rec);
+    ic_index_def_free(index);
+    ic_table_def_free(table);
+    ic_apid_conn_free(conn);
+    ic_apid_global_free(global);
+  }
+}

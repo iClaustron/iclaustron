@@ -153,6 +153,7 @@ include = ["IcApidCallback", "IcScanCallback"]
 "IcScanBatchId" = "IC_SCAN_BATCH_ID"
 "IcScanCallback" = "IC_SCAN_CALLBACK"
 "IcScanArgs" = "IC_SCAN_ARGS"
+"IcScanRange" = "IC_SCAN_RANGE"
 "IcScanShape" = "IC_SCAN_SHAPE"
 "IcScanReader" = "IC_SCAN_READER"
 "IcTakeoverArgs" = "IC_TAKEOVER_ARGS"

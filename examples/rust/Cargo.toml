@@ -36,6 +36,22 @@ path = "unique.rs"
 name = "retry"
 path = "retry.rs"
 
+[[example]]
+name = "scan"
+path = "scan.rs"
+
+[[example]]
+name = "range_scan"
+path = "range_scan.rs"
+
+[[example]]
+name = "scan_update"
+path = "scan_update.rs"
+
+[[example]]
+name = "scan_executor"
+path = "scan_executor.rs"
+
 [dependencies]
 ic_apid.workspace = true
 ic_port.workspace = true

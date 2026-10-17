@@ -4,3 +4,7 @@ key_ops
 pipeline
 unique
 retry
+scan
+range_scan
+scan_update
+scan_executor

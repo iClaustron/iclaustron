@@ -11,10 +11,13 @@
 #
 #   cc -o describe describe.c $(pkg-config --cflags --libs iclaustron)
 
-PROGRAMS = describe key_ops pipeline unique retry
+PROGRAMS = describe key_ops pipeline unique retry \
+  scan range_scan scan_update scan_executor
 
 CFLAGS ?= -O2
 CFLAGS += -std=c11 -D_POSIX_C_SOURCE=200809L -Wall -Wextra
+# scan_executor's threads.
+CFLAGS += -pthread
 
 ifdef IC_TREE
 TREE := $(abspath $(IC_TREE))

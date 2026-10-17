@@ -44,6 +44,7 @@ use ic_apid::executor::KeyOp;
 use ic_apid::executor::OpShape;
 use ic_apid::executor::Request;
 use ic_apid::executor::Submitter;
+use ic_apid::index_scan::ScanRange;
 use ic_apid::key_op;
 use ic_apid::query::AbortOption;
 use ic_apid::query::BatchHint;
@@ -300,6 +301,10 @@ pub const IC_ERROR_SCAN_ACTIVE: i32 = 7161;
 /// A takeover found no scanned row to act on: none read, or its batch
 /// handed back.
 pub const IC_ERROR_NO_SCAN_ROW: i32 = 7162;
+/// A range of an index scan that cannot be sent: its number above 4095,
+/// more columns than the index has, bounds too long, or in an ordered
+/// run of several ranges a number not above the one before.
+pub const IC_ERROR_BAD_RANGE: i32 = 7163;
 
 // ---- Types ----
 
@@ -606,6 +611,34 @@ pub struct IcScanArgs {
   >,
   /// Given back to the callback.
   pub user_ref: *mut c_void,
+  /// For a scan of an ordered index: the rows in the index's order,
+  /// merged from every fragment, read row by row
+  /// (`ic_apid_conn_next_row`, `ic_scan_reader_next_row`).
+  pub ordered: bool,
+  /// For a scan of an ordered index: each range from its high end.
+  pub descending: bool,
+}
+
+/// One range of a scan of an ordered index (`IC_SCAN_RANGE`), its bounds
+/// taken from rows laid out by the scan's key record.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct IcScanRange {
+  /// The struct's size, as `ic_scan_range_init` was given it.
+  pub size: u32,
+  /// How many of the index's leading columns the low bound takes from
+  /// its row; 0 for no low bound.
+  pub low_columns: u32,
+  /// The low bound's own values are in the range.
+  pub low_inclusive: bool,
+  /// How many of the index's leading columns the high bound takes from
+  /// its row; 0 for no high bound.
+  pub high_columns: u32,
+  /// The high bound's own values are in the range.
+  pub high_inclusive: bool,
+  /// The range's number, 0 to 4095, given back with each of its rows
+  /// when a run has several ranges.
+  pub range_no: u32,
 }
 
 /// Which node should coordinate a transaction
@@ -3021,6 +3054,8 @@ unsafe fn scan_args_from_c(args: *const IcScanArgs) -> Result<ScanArgs, i32> {
     batch_bytes: given.batch_bytes,
     timeout_ms: given.timeout_ms,
     read_ahead: given.read_ahead,
+    ordered: given.ordered,
+    descending: given.descending,
     user_ref: given.user_ref as usize,
     ..ScanArgs::default()
   };
@@ -3039,7 +3074,7 @@ unsafe fn scan_args_from_c(args: *const IcScanArgs) -> Result<ScanArgs, i32> {
 
 /// Fill `args`, `size` bytes, with the defaults: a committed read of
 /// every fragment, batches as the configuration says, no transaction,
-/// no partition, no limit, no callback.
+/// no partition, no limit, no callback, in no order.
 ///
 /// Leaves `args` as it is when `size` is smaller than this header's
 /// `IC_SCAN_ARGS`.
@@ -3064,6 +3099,8 @@ pub unsafe extern "C" fn ic_scan_args_init(args: *mut IcScanArgs, size: usize) {
     read_ahead: false,
     callback: None,
     user_ref: std::ptr::null_mut(),
+    ordered: false,
+    descending: false,
   };
   // SAFETY: the caller's promise; the struct fits.
   unsafe { args.write(value) };
@@ -3105,6 +3142,173 @@ pub unsafe extern "C" fn ic_apid_scan_create(
     Ok(Err(e)) => e.code,
     Err(code) => code,
   }
+}
+
+/// A scan of an ordered index (chapter 04, "Index scans"): its ranges
+/// laid out by `key_rec`, which must hold every column of the index,
+/// and the fields of `rec` read into its row, both records over the
+/// index's table. Made once and run again and again, each run reading
+/// the ranges added before it (`ic_apid_conn_add_scan_range`); a run
+/// given none reads the whole index.
+///
+/// Errors: `IC_ERROR_NOT_SUPPORTED` for an index that is not ordered;
+/// `IC_ERROR_KEY_RECORD` when a record is over another table, or the key
+/// record lacks a column of the index. The scan lives in the connection
+/// until `ic_apid_scan_free` or the connection's free.
+///
+/// # Safety
+///
+/// `conn`, `index`, `key_rec` and `rec` are handles not yet freed;
+/// `scan` points to a writable `IC_SCAN_ID`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_index_scan_create(
+  conn: *mut IcApidConnection,
+  index: *const IcIndexDef,
+  key_rec: *const IcRecord,
+  rec: *const IcRecord,
+  scan: *mut IcScanId,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let (index, key_rec, rec) =
+    match unsafe { (index_of(index), record_of(key_rec), record_of(rec)) } {
+      (Some(index), Some(key_rec), Some(rec)) => (index, key_rec, rec),
+      _ => return err::IC_ERROR_NULL_POINTER,
+    };
+  if scan.is_null() {
+    return err::IC_ERROR_NULL_POINTER;
+  }
+  // SAFETY: the caller's promise.
+  let made =
+    unsafe { on_conn(conn, |c| c.create_index_scan(&index.def, key_rec, rec)) };
+  match made {
+    Ok(Ok(id)) => {
+      // SAFETY: checked non-null above; the caller's promise.
+      unsafe { scan.write(id.as_u32()) };
+      0
+    }
+    Ok(Err(e)) => e.code,
+    Err(code) => code,
+  }
+}
+
+/// Fill `range`, `size` bytes, with the defaults: no bound on either
+/// side, which takes in every row, as range 0.
+///
+/// Leaves `range` as it is when `size` is smaller than this header's
+/// `IC_SCAN_RANGE`.
+///
+/// # Safety
+///
+/// A non-null `range` points to `size` writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn ic_scan_range_init(
+  range: *mut IcScanRange,
+  size: usize,
+) {
+  if range.is_null() || size < std::mem::size_of::<IcScanRange>() {
+    return;
+  }
+  let value = IcScanRange {
+    size: size as u32,
+    low_columns: 0,
+    low_inclusive: false,
+    high_columns: 0,
+    high_inclusive: false,
+    range_no: 0,
+  };
+  // SAFETY: the caller's promise; the struct fits.
+  unsafe { range.write(value) };
+}
+
+/// A range from C.
+///
+/// # Safety
+///
+/// A non-null `range` was filled by `ic_scan_range_init`.
+unsafe fn scan_range_from_c(
+  range: *const IcScanRange,
+) -> Result<ScanRange, i32> {
+  // SAFETY: the caller's promise.
+  let given = match unsafe { range.as_ref() } {
+    Some(given) => *given,
+    None => return Err(err::IC_ERROR_NULL_POINTER),
+  };
+  if (given.size as usize) < std::mem::size_of::<IcScanRange>() {
+    return Err(err::IC_ERROR_INCONSISTENT_DATA);
+  }
+  Ok(ScanRange {
+    low_columns: given.low_columns,
+    low_inclusive: given.low_inclusive,
+    high_columns: given.high_columns,
+    high_inclusive: given.high_inclusive,
+    range_no: given.range_no,
+  })
+}
+
+/// Add a range to the next run of a scan of an ordered index, its bounds
+/// taken from `low` and `high`, `low_len` and `high_len` bytes, rows laid
+/// out by the scan's key record. A bound the range does not use may be
+/// NULL with length 0. The range is encoded at once; the rows are not
+/// kept.
+///
+/// Errors: `IC_ERROR_BAD_RANGE` for a number above 4095, more columns
+/// than the index has, or bounds too long to send;
+/// `IC_ERROR_RECORD_LAYOUT` for a row shorter than the key record's;
+/// `IC_ERROR_NOT_SUPPORTED` for a scan of a table;
+/// `IC_ERROR_INCONSISTENT_DATA` for `range` not filled by
+/// `ic_scan_range_init`. Nothing is added then.
+///
+/// # Safety
+///
+/// `conn` is a connection handle not yet freed; `range` was filled by
+/// `ic_scan_range_init`; a non-null `low` or `high` points to as many
+/// readable bytes as its length says.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_conn_add_scan_range(
+  conn: *mut IcApidConnection,
+  scan: IcScanId,
+  range: *const IcScanRange,
+  low: *const u8,
+  low_len: usize,
+  high: *const u8,
+  high_len: usize,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let given = match unsafe { scan_range_from_c(range) } {
+    Ok(given) => given,
+    Err(code) => return code,
+  };
+  // SAFETY: the caller's promise.
+  let (low_row, high_row) =
+    unsafe { (row_arg(low, low_len), row_arg(high, high_len)) };
+  // SAFETY: the caller's promise.
+  let added = unsafe {
+    on_conn(conn, |c| {
+      c.add_scan_range(ScanId::from_u32(scan), &given, low_row, high_row)
+    })
+  };
+  match added {
+    Ok(Ok(())) => 0,
+    Ok(Err(e)) => e.code,
+    Err(code) => code,
+  }
+}
+
+/// The number of the range the scan's row last read is in; 0 for an id
+/// that names no scan.
+///
+/// # Safety
+///
+/// `conn` is a connection handle not yet freed.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_scan_range_no(
+  conn: *mut IcApidConnection,
+  scan: IcScanId,
+) -> u32 {
+  // SAFETY: the caller's promise.
+  let found =
+    unsafe { on_conn(conn, |c| c.scan_range_no(ScanId::from_u32(scan))) };
+  found.unwrap_or(0)
 }
 
 /// Free a scan that is not running.
@@ -4778,6 +4982,48 @@ pub unsafe extern "C" fn ic_scan_shape_create(
   })
 }
 
+/// The shape of scans of an ordered index for executors: their ranges
+/// laid out by `key_rec`, which must hold every column of the index,
+/// and their rows read into `rec`, both over the index's table. Ranges
+/// are added to each reader (`ic_scan_reader_add_range`), and the
+/// reader merges an ordered run.
+///
+/// Errors: `IC_ERROR_NOT_SUPPORTED` for an index that is not ordered;
+/// `IC_ERROR_KEY_RECORD` when a record is over another table, or the key
+/// record lacks a column of the index. The shape is the caller's, freed
+/// with `ic_scan_shape_free`.
+///
+/// # Safety
+///
+/// `index`, `key_rec` and `rec` are handles not yet freed; `shape`
+/// points to writable storage for a pointer.
+#[no_mangle]
+pub unsafe extern "C" fn ic_scan_shape_create_index(
+  index: *const IcIndexDef,
+  key_rec: *const IcRecord,
+  rec: *const IcRecord,
+  shape: *mut *mut IcScanShape,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let (index, key_rec, rec) =
+    match unsafe { (index_of(index), record_of(key_rec), record_of(rec)) } {
+      (Some(index), Some(key_rec), Some(rec)) => (index, key_rec, rec),
+      _ => return err::IC_ERROR_NULL_POINTER,
+    };
+  if shape.is_null() {
+    return err::IC_ERROR_NULL_POINTER;
+  }
+  guarded(|| match ScanShape::new_index(&index.def, key_rec, rec) {
+    Ok(made) => {
+      let handle = Box::into_raw(Box::new(made)) as *mut IcScanShape;
+      // SAFETY: checked non-null above; the caller's promise.
+      unsafe { shape.write(handle) };
+      0
+    }
+    Err(e) => e.code,
+  })
+}
+
 /// Free a scan shape handle. Readers of it keep what they need.
 ///
 /// # Safety
@@ -4975,6 +5221,59 @@ pub unsafe extern "C" fn ic_scan_reader_row(
   row
 }
 
+/// Add a range to the reader's next run, for a shape over an ordered
+/// index, as `ic_apid_conn_add_scan_range` adds one on a connection.
+///
+/// Errors: as `ic_apid_conn_add_scan_range`; `IC_ERROR_NOT_SUPPORTED`
+/// for a shape over a table.
+///
+/// # Safety
+///
+/// `reader` is a reader handle not yet freed, used by this thread alone;
+/// `range` was filled by `ic_scan_range_init`; a non-null `low` or
+/// `high` points to as many readable bytes as its length says.
+#[no_mangle]
+pub unsafe extern "C" fn ic_scan_reader_add_range(
+  reader: *mut IcScanReader,
+  range: *const IcScanRange,
+  low: *const u8,
+  low_len: usize,
+  high: *const u8,
+  high_len: usize,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let r = match unsafe { reader_of(reader) } {
+    Some(r) => r,
+    None => return err::IC_ERROR_NULL_POINTER,
+  };
+  // SAFETY: the caller's promise.
+  let given = match unsafe { scan_range_from_c(range) } {
+    Ok(given) => given,
+    Err(code) => return code,
+  };
+  // SAFETY: the caller's promise.
+  let (low_row, high_row) =
+    unsafe { (row_arg(low, low_len), row_arg(high, high_len)) };
+  guarded(|| code_of(r.add_range(&given, low_row, high_row)))
+}
+
+/// The number of the range the reader's row last read is in; 0 for a
+/// null reader.
+///
+/// # Safety
+///
+/// A non-null `reader` is a reader handle not yet freed.
+#[no_mangle]
+pub unsafe extern "C" fn ic_scan_reader_range_no(
+  reader: *const IcScanReader,
+) -> u32 {
+  // SAFETY: the caller's promise.
+  match unsafe { (reader as *const ScanReader).as_ref() } {
+    Some(r) => r.range_no(),
+    None => 0,
+  }
+}
+
 /// Rows read in the reader's run so far; 0 for a null reader.
 ///
 /// # Safety
@@ -5121,6 +5420,7 @@ mod tests {
     assert_eq!(IC_ERROR_EXECUTOR_STOPPED, err::IC_ERROR_EXECUTOR_STOPPED);
     assert_eq!(IC_ERROR_SCAN_ACTIVE, err::IC_ERROR_SCAN_ACTIVE);
     assert_eq!(IC_ERROR_NO_SCAN_ROW, err::IC_ERROR_NO_SCAN_ROW);
+    assert_eq!(IC_ERROR_BAD_RANGE, err::IC_ERROR_BAD_RANGE);
     let scan_errors: [(i32, i32); 4] = [
       (
         IC_NDB_ERROR_SCAN_NODE_FAILURE,

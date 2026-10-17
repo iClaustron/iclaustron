@@ -1,5 +1,6 @@
 /* What the C examples share: the row of ic_ex.t1 as a C struct, the
- * record over it, connecting, and stopping with the error's text.
+ * record over it, connecting, stopping with the error's text, and the
+ * rows the scan examples read.
  *
  * Copyright (c) 2026 Hopsworks and/or its affiliates.
  * Licensed under the MIT License. See LICENSE in the repository root. */
@@ -17,6 +18,14 @@
 #define EX_DB "ic_ex"
 #define EX_TABLE "t1"
 #define EX_INDEX "t1_code$unique"
+/* The ordered index a MySQL server makes for KEY t1_val (val). */
+#define EX_VAL_INDEX "t1_val"
+/* The scan examples' rows: ids from EX_SCAN_FIRST up, clear of the
+ * other examples' rows, code the same as id, and val the id negated,
+ * which no other example writes, so that a range of val finds these
+ * alone. */
+#define EX_SCAN_FIRST 200
+#define EX_SCAN_ROWS 100
 /* How long to wait for the data nodes to start, in milliseconds. */
 #define EX_START_WAIT_MS 30000
 
@@ -168,6 +177,65 @@ static inline void ex_print(const char *what, const struct t1_row *row)
     printf(", name NULL\n");
   else
     printf(", name '%.*s'\n", (int)row->name_len, row->name);
+}
+
+/* A record over one nullable field of struct t1_row, val or name: a
+ * bound of a range of the index on val, or what an update writes. */
+static inline IC_RECORD *ex_one_field_record(const IC_TABLE_DEF *table,
+                                             const char *name)
+{
+  IC_FIELD_SPEC spec;
+  IC_RECORD *rec;
+  int is_val = strcmp(name, "val") == 0;
+
+  spec.field_id = ex_field(table, name);
+  spec.offset = is_val ? offsetof(struct t1_row, val)
+                       : offsetof(struct t1_row, name_len);
+  spec.null_byte_offset = offsetof(struct t1_row, null_bits);
+  spec.null_bit = is_val ? 0 : 1;
+  EX_CHECK(ic_record_create(table, &spec, 1, sizeof(struct t1_row), &rec));
+  return rec;
+}
+
+/* Write the scan examples' rows, over whatever an earlier run left: id,
+ * code the id, val the id negated, name "row" and the id's last digit. */
+static inline void ex_write_scan_rows(IC_APID_CONNECTION *conn,
+                                      const IC_RECORD *rec)
+{
+  struct t1_row row;
+  char name[16];
+  uint32_t id;
+
+  for (id = EX_SCAN_FIRST; id < EX_SCAN_FIRST + EX_SCAN_ROWS; id++) {
+    snprintf(name, sizeof name, "row %u", (unsigned)(id % 10));
+    ex_fill(&row, id, -(int32_t)id, id, name);
+    EX_CHECK(ic_apid_conn_write(conn, IC_WRITE_KIND_WRITE, rec,
+                                (const uint8_t *)&row, sizeof row, rec,
+                                (const uint8_t *)&row, sizeof row));
+  }
+}
+
+/* A range of val from `from` to `to`, both included, numbered
+ * range_no, its bounds put into low and high: rows of a record over val
+ * alone (ex_one_field_record). */
+static inline IC_SCAN_RANGE ex_val_range(int32_t from, int32_t to,
+                                         uint32_t range_no,
+                                         struct t1_row *low,
+                                         struct t1_row *high)
+{
+  IC_SCAN_RANGE range;
+
+  ic_scan_range_init(&range, sizeof range);
+  range.low_columns = 1;
+  range.low_inclusive = true;
+  range.high_columns = 1;
+  range.high_inclusive = true;
+  range.range_no = range_no;
+  memset(low, 0, sizeof *low);
+  low->val = from;
+  memset(high, 0, sizeof *high);
+  high->val = to;
+  return range;
 }
 
 /* Flush until the transaction is done, and stop if it did not commit. */

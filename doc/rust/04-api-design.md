@@ -664,7 +664,20 @@ while conn.next_row(scan)? {
   batch back once its rows are read, as a connection's merge does.
   With `read_ahead` a receiver's next batch may come before its last
   is read, and waits with the reader.
-- **C**: phase 8.8.
+- **C** (phase 8.8, 2026-10-17): `IC_SCAN_RANGE`, filled by
+  `ic_scan_range_init(&range, sizeof range)` (no bounds, range 0), with
+  `low_columns`, `low_inclusive`, `high_columns`, `high_inclusive` and
+  `range_no`. On a connection: `ic_apid_index_scan_create(conn, index,
+  key_rec, rec, &scan)`; `ic_apid_conn_add_scan_range(conn, scan,
+  &range, low, low_len, high, high_len)`, a bound the range does not use
+  NULL with length 0, the rows copied into the encoded range and not
+  kept; `ic_apid_scan_range_no(conn, scan)`. Through an executor:
+  `ic_scan_shape_create_index(index, key_rec, rec, &shape)`,
+  `ic_scan_reader_add_range(reader, &range, low, low_len, high,
+  high_len)` and `ic_scan_reader_range_no(reader)`. `IC_SCAN_ARGS`
+  gains `ordered` and `descending` at its end; it is new in 0.2, not
+  yet released, so no shorter one is taken. `IC_ERROR_BAD_RANGE`
+  (7163).
 
 ### Errors
 
@@ -764,8 +777,8 @@ node), no events.
 | `IC_APID_SUBMITTER*` | `Submitter` | `ic_apid_executor_submitter` | `ic_apid_submitter_free` |
 | `IC_OP_SHAPE*` | `Arc<OpShape>` | `ic_op_shape_create`, `ic_op_shape_create_unique` | `ic_op_shape_free` |
 | `IC_REQUEST*` | `Request` | `ic_request_create` | `ic_request_free` |
-| `IC_SCAN_ID` | `ScanId` | `ic_apid_scan_create` | `ic_apid_scan_free` |
-| `IC_SCAN_SHAPE*` | `Arc<ScanShape>` | `ic_scan_shape_create` | `ic_scan_shape_free` |
+| `IC_SCAN_ID` | `ScanId` | `ic_apid_scan_create`, `ic_apid_index_scan_create` | `ic_apid_scan_free` |
+| `IC_SCAN_SHAPE*` | `Arc<ScanShape>` | `ic_scan_shape_create`, `ic_scan_shape_create_index` | `ic_scan_shape_free` |
 | `IC_SCAN_READER*` | `ScanReader` | `ic_scan_reader_create` | `ic_scan_reader_free` |
 
 A connection, and an executor, is freed before its global, a query,

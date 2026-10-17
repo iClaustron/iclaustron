@@ -11,5 +11,6 @@ CREATE TABLE ic_ex.t1 (
   val  INT,
   code INT UNSIGNED NOT NULL,
   name VARCHAR(32) CHARACTER SET latin1,
-  UNIQUE KEY t1_code (code)
+  UNIQUE KEY t1_code (code),
+  KEY t1_val (val)
 ) ENGINE=NDB;

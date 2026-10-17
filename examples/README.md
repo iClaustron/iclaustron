@@ -1,6 +1,6 @@
 # Examples
 
-The same five programs in Rust (`rust/`) and in C (`c/`), each against
+The same nine programs in Rust (`rust/`) and in C (`c/`), each against
 a running cluster, the development cluster of `doc/dev-cluster.md` for
 instance:
 
@@ -11,10 +11,18 @@ instance:
 | `pipeline` | many rows written asynchronously, each query's callback starting the next write, a number in flight at once |
 | `unique` | a row read and updated through a unique index |
 | `retry` | a transaction that fails with a temporary error, a lock wait that timed out, and succeeds when tried again |
+| `scan` | every row of the table by a scan of every fragment at once, row by row and then a batch at a time |
+| `range_scan` | rows by ranges of the ordered index on val, in the index's order, from either end, and several numbered ranges at once |
+| `scan_update` | rows locked by an exclusive scan on a transaction and updated through it, as `UPDATE ... WHERE` does, with one commit |
+| `scan_executor` | four threads with no connection of their own, each reading a range in order through a reader of an executor's scan |
 
 Every program takes the connectstring as its first argument
 (`localhost:1186` if none) and works on the table `ic_ex.t1`, which
-`setup.sql` makes:
+`setup.sql` makes, with a unique index on code and an ordered index on
+val. The scan programs first write rows of their own, ids 200 to 299
+with val the id negated, which no other program writes, so that a range
+of val finds them alone; a table made by an earlier `setup.sql`, without
+the index on val, is made again by running it again:
 
 ```sh
 BIN=/Users/mikael/mysql_trees/rondb_2604_main/debug_build/bin
@@ -34,6 +42,10 @@ cargo run -p ic_examples --example key_ops -- localhost:1186
 cargo run -p ic_examples --example pipeline -- localhost:1186 10000 32
 cargo run -p ic_examples --example unique -- localhost:1186
 cargo run -p ic_examples --example retry -- localhost:1186
+cargo run -p ic_examples --example scan -- localhost:1186
+cargo run -p ic_examples --example range_scan -- localhost:1186
+cargo run -p ic_examples --example scan_update -- localhost:1186
+cargo run -p ic_examples --example scan_executor -- localhost:1186
 ```
 
 ## C

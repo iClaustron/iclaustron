@@ -3,7 +3,8 @@
 
 //! What the Rust examples share (`examples/README.md`): connecting, the
 //! table `ic_ex.t1` with a record the library lays out, values put into
-//! a row and taken out of it, and waiting for a transaction.
+//! a row and taken out of it, waiting for a transaction, and the rows
+//! the scan examples read.
 //!
 //! A value in a row is kept as the data nodes keep it, so these helpers
 //! show the format: an integer in four little-endian bytes, a VARCHAR as
@@ -16,6 +17,7 @@ use ic_apid::apid_conn::ApidConnection;
 use ic_apid::apid_global::ApidGlobal;
 use ic_apid::apid_global::GlobalOptions;
 use ic_apid::dict_cache::TableDef;
+use ic_apid::key_op;
 use ic_apid::query::QueryId;
 use ic_apid::query::TransId;
 use ic_apid::record::Record;
@@ -23,6 +25,7 @@ use ic_apid::transaction::CommitState;
 use ic_apid::transaction::IC_NDB_ERROR_NO_REPLY;
 use ic_port::err;
 use ic_port::IcError;
+use ic_signals::key_ops;
 
 /// The database of the examples' table.
 pub const EX_DB: &str = "ic_ex";
@@ -30,6 +33,14 @@ pub const EX_DB: &str = "ic_ex";
 pub const EX_TABLE: &str = "t1";
 /// The hash index a MySQL server makes for `UNIQUE KEY t1_code`.
 pub const EX_INDEX: &str = "t1_code$unique";
+/// The ordered index a MySQL server makes for `KEY t1_val (val)`.
+pub const EX_VAL_INDEX: &str = "t1_val";
+/// The scan examples' rows: ids from here up, clear of the other
+/// examples' rows, code the same as id, and val the id negated, which
+/// no other example writes, so that a range of val finds these alone.
+pub const EX_SCAN_FIRST: u32 = 200;
+/// How many rows the scan examples write.
+pub const EX_SCAN_ROWS: u32 = 100;
 /// How long to wait for the data nodes to start, in milliseconds.
 pub const EX_START_WAIT_MS: u32 = 30_000;
 
@@ -341,4 +352,48 @@ pub fn committed(
     }
   }
   Err(IcError::new(IC_NDB_ERROR_NO_REPLY))
+}
+
+/// Write the scan examples' rows, over whatever an earlier run left:
+/// ids `EX_SCAN_FIRST` up, code the id, val the id negated, and name
+/// `row` and the id's last digit.
+pub fn write_scan_rows(
+  conn: &mut ApidConnection,
+  t1: &T1,
+) -> Result<(), IcError> {
+  let mut row = t1.row();
+  let mut id = EX_SCAN_FIRST;
+  while id < EX_SCAN_FIRST + EX_SCAN_ROWS {
+    let name = format!("row {}", id % 10);
+    let values = Values {
+      id,
+      val: Some(-(id as i32)),
+      code: id,
+      name: Some(&name),
+    };
+    row.fill(0);
+    t1.fill(&t1.rec, &mut row, &values)?;
+    key_op::write_key(
+      conn,
+      key_ops::IC_OP_WRITE,
+      &t1.rec,
+      &row,
+      &t1.rec,
+      &row,
+    )?;
+    id += 1;
+  }
+  Ok(())
+}
+
+/// A row of `val_rec`, a record over val alone, holding `val`: a bound
+/// of a range of the index on val.
+pub fn val_row(
+  t1: &T1,
+  val_rec: &Record,
+  val: i32,
+) -> Result<Vec<u8>, IcError> {
+  let mut row = vec![0; val_rec.row_size() as usize];
+  put_i32(val_rec, &mut row, t1.val, Some(val))?;
+  Ok(row)
 }

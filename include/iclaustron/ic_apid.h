@@ -624,6 +624,13 @@
 #define IC_ERROR_NO_SCAN_ROW 7162
 
 /*
+ A range of an index scan that cannot be sent: its number above 4095,
+ more columns than the index has, bounds too long, or in an ordered
+ run of several ranges a number not above the one before.
+ */
+#define IC_ERROR_BAD_RANGE 7163
+
+/*
  One thread's connection to the cluster (`IC_APID_CONNECTION`).
  Opaque.
  */
@@ -934,12 +941,56 @@ typedef struct {
    Given back to the callback.
    */
   void *user_ref;
+  /*
+   For a scan of an ordered index: the rows in the index's order,
+   merged from every fragment, read row by row
+   (`ic_apid_conn_next_row`, `ic_scan_reader_next_row`).
+   */
+  bool ordered;
+  /*
+   For a scan of an ordered index: each range from its high end.
+   */
+  bool descending;
 } IC_SCAN_ARGS;
 
 /*
  A scan's id in its connection (`IC_SCAN_ID`).
  */
 typedef uint32_t IC_SCAN_ID;
+
+/*
+ One range of a scan of an ordered index (`IC_SCAN_RANGE`), its bounds
+ taken from rows laid out by the scan's key record.
+ */
+typedef struct {
+  /*
+   The struct's size, as `ic_scan_range_init` was given it.
+   */
+  uint32_t size;
+  /*
+   How many of the index's leading columns the low bound takes from
+   its row; 0 for no low bound.
+   */
+  uint32_t low_columns;
+  /*
+   The low bound's own values are in the range.
+   */
+  bool low_inclusive;
+  /*
+   How many of the index's leading columns the high bound takes from
+   its row; 0 for no high bound.
+   */
+  uint32_t high_columns;
+  /*
+   The high bound's own values are in the range.
+   */
+  bool high_inclusive;
+  /*
+   The range's number, 0 to 4095, given back with each of its rows
+   when a run has several ranges.
+   */
+  uint32_t range_no;
+} IC_SCAN_RANGE;
 
 /*
  What a takeover of a scanned row asks for (`IC_TAKEOVER_ARGS`).
@@ -1994,7 +2045,7 @@ int32_t ic_apid_conn_write(IC_APID_CONNECTION *conn,
 /*
  Fill `args`, `size` bytes, with the defaults: a committed read of
  every fragment, batches as the configuration says, no transaction,
- no partition, no limit, no callback.
+ no partition, no limit, no callback, in no order.
 
  Leaves `args` as it is when `size` is smaller than this header's
  `IC_SCAN_ARGS`.
@@ -2022,6 +2073,81 @@ int32_t ic_apid_scan_create(IC_APID_CONNECTION *conn,
                             const IC_TABLE_DEF *def,
                             const IC_RECORD *rec,
                             IC_SCAN_ID *scan);
+
+/*
+ A scan of an ordered index (chapter 04, "Index scans"): its ranges
+ laid out by `key_rec`, which must hold every column of the index,
+ and the fields of `rec` read into its row, both records over the
+ index's table. Made once and run again and again, each run reading
+ the ranges added before it (`ic_apid_conn_add_scan_range`); a run
+ given none reads the whole index.
+
+ Errors: `IC_ERROR_NOT_SUPPORTED` for an index that is not ordered;
+ `IC_ERROR_KEY_RECORD` when a record is over another table, or the key
+ record lacks a column of the index. The scan lives in the connection
+ until `ic_apid_scan_free` or the connection's free.
+
+ # Safety
+
+ `conn`, `index`, `key_rec` and `rec` are handles not yet freed;
+ `scan` points to a writable `IC_SCAN_ID`.
+ */
+int32_t ic_apid_index_scan_create(IC_APID_CONNECTION *conn,
+                                  const IC_INDEX_DEF *index,
+                                  const IC_RECORD *key_rec,
+                                  const IC_RECORD *rec,
+                                  IC_SCAN_ID *scan);
+
+/*
+ Fill `range`, `size` bytes, with the defaults: no bound on either
+ side, which takes in every row, as range 0.
+
+ Leaves `range` as it is when `size` is smaller than this header's
+ `IC_SCAN_RANGE`.
+
+ # Safety
+
+ A non-null `range` points to `size` writable bytes.
+ */
+void ic_scan_range_init(IC_SCAN_RANGE *range, size_t size);
+
+/*
+ Add a range to the next run of a scan of an ordered index, its bounds
+ taken from `low` and `high`, `low_len` and `high_len` bytes, rows laid
+ out by the scan's key record. A bound the range does not use may be
+ NULL with length 0. The range is encoded at once; the rows are not
+ kept.
+
+ Errors: `IC_ERROR_BAD_RANGE` for a number above 4095, more columns
+ than the index has, or bounds too long to send;
+ `IC_ERROR_RECORD_LAYOUT` for a row shorter than the key record's;
+ `IC_ERROR_NOT_SUPPORTED` for a scan of a table;
+ `IC_ERROR_INCONSISTENT_DATA` for `range` not filled by
+ `ic_scan_range_init`. Nothing is added then.
+
+ # Safety
+
+ `conn` is a connection handle not yet freed; `range` was filled by
+ `ic_scan_range_init`; a non-null `low` or `high` points to as many
+ readable bytes as its length says.
+ */
+int32_t ic_apid_conn_add_scan_range(IC_APID_CONNECTION *conn,
+                                    IC_SCAN_ID scan,
+                                    const IC_SCAN_RANGE *range,
+                                    const uint8_t *low,
+                                    size_t low_len,
+                                    const uint8_t *high,
+                                    size_t high_len);
+
+/*
+ The number of the range the scan's row last read is in; 0 for an id
+ that names no scan.
+
+ # Safety
+
+ `conn` is a connection handle not yet freed.
+ */
+uint32_t ic_apid_scan_range_no(IC_APID_CONNECTION *conn, IC_SCAN_ID scan);
 
 /*
  Free a scan that is not running.
@@ -2765,6 +2891,28 @@ int32_t ic_scan_shape_create(const IC_TABLE_DEF *def,
                              IC_SCAN_SHAPE **shape);
 
 /*
+ The shape of scans of an ordered index for executors: their ranges
+ laid out by `key_rec`, which must hold every column of the index,
+ and their rows read into `rec`, both over the index's table. Ranges
+ are added to each reader (`ic_scan_reader_add_range`), and the
+ reader merges an ordered run.
+
+ Errors: `IC_ERROR_NOT_SUPPORTED` for an index that is not ordered;
+ `IC_ERROR_KEY_RECORD` when a record is over another table, or the key
+ record lacks a column of the index. The shape is the caller's, freed
+ with `ic_scan_shape_free`.
+
+ # Safety
+
+ `index`, `key_rec` and `rec` are handles not yet freed; `shape`
+ points to writable storage for a pointer.
+ */
+int32_t ic_scan_shape_create_index(const IC_INDEX_DEF *index,
+                                   const IC_RECORD *key_rec,
+                                   const IC_RECORD *rec,
+                                   IC_SCAN_SHAPE **shape);
+
+/*
  Free a scan shape handle. Readers of it keep what they need.
 
  # Safety
@@ -2863,6 +3011,36 @@ int32_t ic_scan_reader_next_row_into(IC_SCAN_READER *reader,
  `len` points to a writable `size_t`.
  */
 const uint8_t *ic_scan_reader_row(const IC_SCAN_READER *reader, size_t *len);
+
+/*
+ Add a range to the reader's next run, for a shape over an ordered
+ index, as `ic_apid_conn_add_scan_range` adds one on a connection.
+
+ Errors: as `ic_apid_conn_add_scan_range`; `IC_ERROR_NOT_SUPPORTED`
+ for a shape over a table.
+
+ # Safety
+
+ `reader` is a reader handle not yet freed, used by this thread alone;
+ `range` was filled by `ic_scan_range_init`; a non-null `low` or
+ `high` points to as many readable bytes as its length says.
+ */
+int32_t ic_scan_reader_add_range(IC_SCAN_READER *reader,
+                                 const IC_SCAN_RANGE *range,
+                                 const uint8_t *low,
+                                 size_t low_len,
+                                 const uint8_t *high,
+                                 size_t high_len);
+
+/*
+ The number of the range the reader's row last read is in; 0 for a
+ null reader.
+
+ # Safety
+
+ A non-null `reader` is a reader handle not yet freed.
+ */
+uint32_t ic_scan_reader_range_no(const IC_SCAN_READER *reader);
 
 /*
  Rows read in the reader's run so far; 0 for a null reader.
