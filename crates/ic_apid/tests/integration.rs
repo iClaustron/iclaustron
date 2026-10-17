@@ -17,10 +17,11 @@
 //!   makes, and they check what they wrote through it too.
 //! - `IC_TEST_NDB_MGM`: the command that runs the management client,
 //!   with its connect string (`-c localhost:1186`), for the `failure`
-//!   group, which restarts a data node twice, the second time with the
-//!   management server gone for a while. Set, it also
-//!   lets the `timeout` group stop a data node's process for a few
-//!   seconds with SIGSTOP, which needs `lsof` and the node's fixed port.
+//!   group, which restarts a data node under a transaction, and at once
+//!   during a scan, and has the management server gone for a while.
+//!   Set, it also lets the `timeout` group stop a data node's process
+//!   for a few seconds with SIGSTOP, which needs `lsof` and the node's
+//!   fixed port.
 //! - `IC_TEST_MGM_RESTART`: a command that restarts the management
 //!   server, for the `failure` group to use rather than pausing it with
 //!   SIGSTOP, which needs `lsof` and the server's port.
@@ -42,9 +43,12 @@
 //! operations for application threads through an executor (chapter 06
 //! §8.1); `scan`, which reads tables by scans in every lock mode, closes
 //! them early and prunes them (chapter 06 §8.3), and reads ordered
-//! indexes by ranges, merged in their order (chapter 06 §8.7). The
-//! `big_rows` group makes a log file group and a tablespace if the
-//! cluster has none, and keeps them.
+//! indexes by ranges, merged in their order (chapter 06 §8.7); `exit`,
+//! the runs phase 8 is accepted by: a scan of a million rows, which
+//! takes about 60 MB a data node and is dropped after, and one executor
+//! serving 1 000 threads (chapter 06 §8.8). The `big_rows` group makes a
+//! log file group and a tablespace if the cluster has none, and keeps
+//! them.
 //! Each test is its own program against the cluster, as an application
 //! would be: it takes an API node id, binds its tables, does its work
 //! through the public API and lets go.
@@ -6848,4 +6852,346 @@ fn scan_index_ordered_through_an_executor_by_each_latin1_collation() {
     }
   }
   assert!(faults.is_empty(), "{}", first_faults(faults));
+}
+
+// ---- exit: the runs phase 8 is accepted by (chapter 06 §8.8) ----
+
+/// Rows in the `big` table: the million a scan of the exit counts.
+const IC_IT_BIG_ROWS: i64 = 1_000_000;
+/// Rows each transaction writes while the table is filled.
+const IC_IT_BIG_BATCH: i64 = 250;
+/// Threads that fill it.
+const IC_IT_BIG_WRITERS: i64 = 16;
+
+#[test]
+fn exit_a_scan_of_a_million_rows_counts_what_mysql_counts() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  let sql = format!(
+    "CREATE DATABASE IF NOT EXISTS {db};
+     DROP TABLE IF EXISTS {db}.big;
+     CREATE TABLE {db}.big (
+       id INT NOT NULL PRIMARY KEY,
+       val INT NOT NULL
+     ) ENGINE=NDB;",
+    db = IC_IT_DB
+  );
+  if mysql(&sql).is_none() {
+    return;
+  }
+  // Filled through an executor by sixteen threads, a transaction of
+  // 250 writes at a time; a million rows of two integers take about
+  // 60 MB a data node (doc/dev-cluster.md).
+  let executor = executor_with(&cluster, 400, 4000);
+  let submitter = executor.submitter();
+  let t = bind_through(&submitter, "big");
+  let shape = OpShape::new(&t.def, &t.rec, &t.rec).expect("a shape");
+  let start = time::gethrtime();
+  let batches = IC_IT_BIG_ROWS / IC_IT_BIG_BATCH;
+  std::thread::scope(|scope| {
+    let mut handles = Vec::new();
+    let mut writer: i64 = 0;
+    while writer < IC_IT_BIG_WRITERS {
+      let mut mine = submitter.clone();
+      let t = &t;
+      let shape = &shape;
+      let first = writer;
+      handles.push(scope.spawn(move || {
+        let mut request = Request::new();
+        let mut batch = first;
+        while batch < batches {
+          request.clear();
+          let mut id = batch * IC_IT_BIG_BATCH + 1;
+          while id <= (batch + 1) * IC_IT_BIG_BATCH {
+            let mut op = KeyOp::write(shape, WriteKind::Write);
+            t.put(op.key_row_mut(), "id", &id.to_string());
+            t.put(op.attr_row_mut(), "id", &id.to_string());
+            t.put(op.attr_row_mut(), "val", &(id % 1000).to_string());
+            request.push(op);
+            id += 1;
+          }
+          if let Err(e) = mine.execute(&mut request) {
+            panic!(
+              "batch {}: {} ({}); a table full wants more DataMemory",
+              batch,
+              e.message(),
+              e.code
+            );
+          }
+          batch += IC_IT_BIG_WRITERS;
+        }
+      }));
+      writer += 1;
+    }
+    for handle in handles {
+      handle.join().expect("a writer");
+    }
+  });
+  let wrote = time::millis_elapsed(start, time::gethrtime());
+  println!("{} rows written in {} ms", IC_IT_BIG_ROWS, wrote);
+  let db = IC_IT_DB;
+  let counted = count_of(&format!("SELECT COUNT(*) FROM {}.big", db));
+  let summed = count_of(&format!("SELECT SUM(val) FROM {}.big", db));
+  assert_eq!(counted, IC_IT_BIG_ROWS, "what MySQL counts");
+
+  // Parallel over every fragment, on a connection, row by row.
+  let mut conn = cluster.global.create_connection().expect("connection");
+  let scan = conn.create_scan(&t.def, &t.rec).expect("create the scan");
+  let args = ScanArgs {
+    timeout_ms: 300_000,
+    ..ScanArgs::default()
+  };
+  let start = time::gethrtime();
+  conn.start_scan(scan, &args).expect("start the scan");
+  let mut rows: i64 = 0;
+  let mut sum: i64 = 0;
+  while conn.next_row(scan).expect("a row") {
+    rows += 1;
+    sum += t
+      .get(conn.scan_row(scan), "val")
+      .parse::<i64>()
+      .expect("val");
+  }
+  let read = time::millis_elapsed(start, time::gethrtime());
+  println!(
+    "a scan of {} fragments read {} rows in {} ms",
+    conn.scan(scan).expect("the scan").parallelism(),
+    rows,
+    read
+  );
+  assert_eq!(rows, counted, "the scan counts what MySQL counts");
+  assert_eq!(sum, summed, "and sums what it sums");
+  assert_eq!(
+    conn.scan(scan).expect("the scan").parallelism(),
+    t.def.info().fragment_count,
+    "every fragment at once"
+  );
+
+  // And through the executor, with a reader.
+  let scan_shape = ScanShape::new(&t.def, &t.rec).expect("a scan shape");
+  let mut reader = ScanReader::new(&scan_shape);
+  submitter.scan(&mut reader, &args).expect("submit");
+  let mut through: i64 = 0;
+  while reader.next_row().expect("a row") {
+    through += 1;
+  }
+  assert_eq!(through, counted, "through an executor too");
+  // The data nodes' memory back for the other groups.
+  mysql(&format!("DROP TABLE IF EXISTS {}.big", db));
+}
+
+/// Application threads one executor serves at once.
+const IC_IT_SCAN_THREADS: usize = 1_000;
+
+#[test]
+fn exit_one_executor_serves_1000_threads_scanning() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_scan_table().is_none() || setup_rng_table().is_none() {
+    return;
+  }
+  let executor = executor_with(&cluster, 400, 4000);
+  let submitter = executor.submitter();
+  let (scan_t, table_shape) = scan_through(&submitter);
+  let rng = bind_through(&submitter, "rng");
+  let ab_shape = index_shape(&submitter, &rng, "rng", "ix_ab", &["a", "b"]);
+  let key_rec = record_over(&rng, &["a", "b"]);
+  // How many rows each value of a has, as MySQL counts them.
+  let mut per_a: HashMap<i64, i64> = HashMap::new();
+  let counts = mysql(&format!(
+    "SELECT a, COUNT(*) FROM {}.rng GROUP BY a",
+    IC_IT_DB
+  ))
+  .expect("MySQL");
+  for line in counts.lines() {
+    let mut parts = line.split('\t');
+    let a: i64 = parts.next().expect("a").parse().expect("a");
+    let count: i64 = parts.next().expect("a count").parse().expect("count");
+    per_a.insert(a, count);
+  }
+  // Half the threads read the whole `scan` table, half a value of a in
+  // the order of ix_ab; every thread has a reader of its own, and the
+  // executor runs 64 scans at once, the rest waiting their turn.
+  let start = time::gethrtime();
+  let mut faults: Vec<String> = Vec::new();
+  std::thread::scope(|scope| {
+    let mut handles = Vec::new();
+    let mut n: usize = 0;
+    while n < IC_IT_SCAN_THREADS {
+      let mine = submitter.clone();
+      let scan_t = &scan_t;
+      let rng = &rng;
+      let key_rec = &key_rec;
+      let table_shape = &table_shape;
+      let ab_shape = &ab_shape;
+      let per_a = &per_a;
+      let thread = n;
+      let spawned = std::thread::Builder::new()
+        .stack_size(256 * 1024)
+        .spawn_scoped(scope, move || -> Result<(), String> {
+          if thread % 2 == 0 {
+            let mut reader = ScanReader::new(table_shape);
+            let args = bounded(ScanLock::Committed, thread % 4 == 0);
+            mine.scan(&mut reader, &args).map_err(|e| e.message())?;
+            let (ids, error) = reader_ids(&mut reader, scan_t);
+            if let Some(e) = error {
+              return Err(format!("thread {}: {}", thread, e.message()));
+            }
+            if !every_row_once(&ids) {
+              return Err(format!("thread {}: {} rows", thread, ids.len()));
+            }
+            return Ok(());
+          }
+          let a = (thread % 50) as i64;
+          let text = a.to_string();
+          let row = bound_row(rng, key_rec, &["a"], &[Some(text.as_str())]);
+          let mut reader = ScanReader::new(ab_shape);
+          reader
+            .add_range(&ab(1, true, 1, true), &row, &row)
+            .map_err(|e| e.message())?;
+          let args = ScanArgs {
+            ordered: true,
+            batch_rows: 4,
+            timeout_ms: IC_IT_SCAN_WAIT_MS as u32,
+            ..ScanArgs::default()
+          };
+          mine.scan(&mut reader, &args).map_err(|e| e.message())?;
+          let (rows, error) = reader_rows(&mut reader, rng);
+          if let Some(e) = error {
+            return Err(format!("thread {}: {}", thread, e.message()));
+          }
+          let expected = per_a.get(&a).copied().unwrap_or(0);
+          if rows.len() as i64 != expected {
+            return Err(format!(
+              "thread {}: a = {}: {} rows of {}",
+              thread,
+              a,
+              rows.len(),
+              expected
+            ));
+          }
+          Ok(())
+        })
+        .expect("an application thread");
+      handles.push(spawned);
+      n += 1;
+    }
+    for handle in handles {
+      match handle.join() {
+        Ok(Ok(())) => {}
+        Ok(Err(fault)) => faults.push(fault),
+        Err(_) => faults.push("a thread panicked".to_string()),
+      }
+    }
+  });
+  let took = time::millis_elapsed(start, time::gethrtime());
+  println!(
+    "{} threads, a scan each, through one executor in {} ms",
+    IC_IT_SCAN_THREADS, took
+  );
+  assert!(faults.is_empty(), "{}", first_faults(faults));
+  assert_eq!(executor.stats().scans, IC_IT_SCAN_THREADS as u64);
+}
+
+#[test]
+fn failure_a_data_node_restarted_during_a_scan_fails_it_and_a_retry_reads_all()
+{
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_scan_table().is_none() {
+    return;
+  }
+  if std::env::var("IC_TEST_NDB_MGM").is_err() {
+    eprintln!("skipped: IC_TEST_NDB_MGM is not set");
+    return;
+  }
+  let started = cluster.global.started_nodes();
+  if started.len() < 2 {
+    eprintln!("skipped: the failure group needs two started data nodes");
+    return;
+  }
+  let victim = started[1];
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let t = bind(&mut conn, "scan");
+  let scan = conn.create_scan(&t.def, &t.rec).expect("create the scan");
+  // A shared-lock scan reads each fragment at its primary replica, so
+  // whichever node coordinates, half the fragments are read at the
+  // victim. Read slowly, so that the run is still going when the victim
+  // goes down.
+  let args = ScanArgs {
+    lock: ScanLock::Shared,
+    batch_rows: 10,
+    timeout_ms: 120_000,
+    ..ScanArgs::default()
+  };
+  conn.start_scan(scan, &args).expect("start the scan");
+  let mut rows: i64 = 0;
+  while rows < 100 && conn.next_row(scan).expect("a row before") {
+    rows += 1;
+  }
+  // Restarted with -a, at once, as a node killed goes: a graceful stop
+  // could let the scan finish first.
+  eprintln!("restarting data node {} at once during the scan", victim);
+  let command = format!("{} RESTART -a", victim);
+  let restart = std::thread::spawn(move || mgm_client(&command));
+  let error = loop {
+    match conn.next_row(scan) {
+      Ok(true) => {
+        rows += 1;
+        std::thread::sleep(std::time::Duration::from_millis(10));
+      }
+      Ok(false) => panic!("the scan read {} rows to the end first", rows),
+      Err(e) => break e,
+    }
+  };
+  let _ = restart.join();
+  eprintln!(
+    "the scan failed after {} rows: {} ({})",
+    rows,
+    error.message(),
+    error.code
+  );
+  assert!(error.is_temporary(), "temporary: {}", error.code);
+  assert_ne!(error.code, err::IC_ERROR_TIMEOUT, "not by its deadline");
+
+  // Started again, it reads every row once, at the survivor: tried
+  // again while the cluster still handles the failure.
+  let mut tries: u32 = 0;
+  loop {
+    tries += 1;
+    let (ids, error) = scan_rows(&mut conn, &t, scan, &ScanArgs::default());
+    match error {
+      None => {
+        assert!(every_row_once(&ids), "{} rows", ids.len());
+        break;
+      }
+      Some(e) => {
+        assert!(e.is_temporary(), "a retry failed: {}", e.code);
+        assert!(tries < 60, "no retry read to the end: {}", e.code);
+        std::thread::sleep(std::time::Duration::from_millis(500));
+      }
+    }
+  }
+  eprintln!("the scan run again read every row, try {}", tries);
+  assert_eq!(conn.unexpected(), 0);
+
+  // Wait for the victim to be started again, so that the cluster is
+  // left as it was found and the next test finds it whole.
+  eprintln!("waiting for data node {} to start again", victim);
+  let start = time::gethrtime();
+  while cluster.global.started_nodes().len() < started.len() {
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let waited = time::millis_elapsed(start, time::gethrtime());
+    if waited >= IC_IT_RESTART_WAIT_MS {
+      let show = mgm_client("show").unwrap_or_default();
+      panic!("data node {} did not come back:\n{}", victim, show);
+    }
+  }
+  eprintln!("data node {} is started again", victim);
 }

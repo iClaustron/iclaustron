@@ -1593,9 +1593,24 @@ executor.
   `setup.sql` gains the ordered index `t1_val`. The update changes the
   name, not the column the scan goes by. The C one with threads uses
   POSIX threads, `-pthread` in the Makefile.
-- **8.8c, next**: the exit's runs that no test makes yet: a million
-  rows; 1 000 threads through one executor; a data node killed during
-  a scan.
+- **8.8c, the exit's runs, pass 2026-10-17** against
+  `rondb_1107_cte_test`, and with them phase 8's exit is met: the
+  `exit` group's `exit_a_scan_of_a_million_rows_counts_what_mysql_counts`
+  fills a table through an executor, sixteen threads of transactions of
+  250 writes, and counts and sums it by a scan of every fragment, on a
+  connection and through a reader, against MySQL's `COUNT(*)` and
+  `SUM`; `exit_one_executor_serves_1000_threads_scanning` gives a
+  thousand threads a reader each, half reading a whole table, some
+  reading ahead, half an ordered range of `ix_ab`; and the `failure`
+  group's `failure_a_data_node_restarted_during_a_scan_fails_it_and_a_retry_reads_all`
+  restarts a data node at once (`RESTART -a`) under a shared-lock
+  scan, which reads half its fragments there whichever node
+  coordinates, wants a temporary error, not the run's deadline, and
+  then every row once from the scan run again. Range scans with every
+  bound type, `ORDER BY` order in every latin1 collation, and takeovers
+  have their tests already (8.5, 8.7). NDB's 270, a node shutting down,
+  is now in the error table, temporary as NDB classes it; until then a
+  scan failing with it was taken as a permanent error.
 
 Exit: a scan of a million rows, parallel over every fragment, counts
 what MySQL counts; range scans with every bound type return what MySQL

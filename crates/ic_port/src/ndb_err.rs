@@ -281,6 +281,11 @@ const IC_NDB_ERRORS: &[ErrorEntry] = &[
   },
   // Nodes.
   ErrorEntry {
+    code: 270,
+    class: ErrorClass::NodeStopping,
+    text: "A node shut down and aborted the transaction or scan",
+  },
+  ErrorEntry {
     code: 1204,
     class: ErrorClass::NodeRecovery,
     text: "The cluster's distribution changed; try again",
@@ -529,7 +534,7 @@ mod tests {
 
   #[test]
   fn the_codes_met_so_far_are_known() {
-    for code in [626, 630, 4010, 4031, 4115, 709, 701, 243] {
+    for code in [626, 630, 4010, 4031, 4115, 709, 701, 243, 270] {
       assert!(is_known(code), "code {}", code);
       assert!(text_of(code).is_some());
     }
@@ -562,6 +567,8 @@ mod tests {
     assert_eq!(class_of(4010).category(), ErrorCategory::External);
     assert_eq!(class_of(4010).severity(), ErrorSeverity::Temporary);
     assert_eq!(class_of(4009).severity(), ErrorSeverity::Temporary);
+    // A scan whose reading node shut down is tried again.
+    assert_eq!(class_of(270).severity(), ErrorSeverity::Temporary);
     assert_eq!(class_of(4350).category(), ErrorCategory::Internal);
     assert_eq!(class_of(0).severity(), ErrorSeverity::NoError);
   }

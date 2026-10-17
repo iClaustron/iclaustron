@@ -328,8 +328,9 @@ while !conn.scan_done(scan) {
   the end; `free_scan` once it is not running.
 - **Errors** are the scan's: 274 and 266 for locks, 296 for a scan
   idle too long at the coordinator, 270 when a reading node fails
-  (temporary: the scan is started again and its rows come again), 4028
-  when the coordinator's node fails.
+  (temporary: the scan is started again and its rows come again; in
+  the error table since 2026-10-17), 4028 when the coordinator's node
+  fails.
 
 The synchronous form, scans through an executor, and the C ABI are
 phase 8.4, below.

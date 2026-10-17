@@ -89,6 +89,10 @@ nearly all of it is the tables themselves (measured 2026-10-15).
 
 MTR's default of 30 MB is too little. The last group to make its
 tables, `uk`, then has its inserts refused: "The table 'uk' is full".
+The `exit` group's scan of a million rows (chapter 06 §8.8) takes about
+60 MB more on each node while it runs, for its table and the table's
+two indexes, and drops the table after; 200M leaves room for it beside
+the rest.
 Give every data node more in the test's `.cnf`, in the cluster's
 section; a node's own section gives it to that node alone:
 
