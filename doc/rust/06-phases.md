@@ -1633,7 +1633,11 @@ gives a temporary error, and the scan started again completes.
   with our names (2026-10-19), and `tools/interp_capture.sh` captures
   MySQL's: conditions of the kinds `scans2.pcap` lacks, key operations
   with conditions true and false, and the AUTO_INCREMENT counter's
-  updates with their final reads.
+  updates with their final reads. Read the same day (chapter 05 §9.6):
+  MySQL's scans showed IS NULL, a column pair, CHAR, unsigned 64 bits,
+  NOT, OR and LIKE, and its NULL logic; the counter's programs came as
+  §16.5 reads them; but MySQL sends no program with a key operation,
+  so our refused key operations are seen first in our own tests.
 - Basic first (author, 2026-10-08): conditions comparing a column with
   a constant or with another column (=, <>, <, <=, >, >=; latin1
   strings by their collation), IS NULL and IS NOT NULL, AND, OR, NOT;
@@ -1641,9 +1645,11 @@ gives a temporary error, and the scan started again completes.
   a column set to a constant, or to itself plus or minus a constant. A
   conditional update or delete. A column's value read after an update,
   which AUTO_INCREMENT uses.
-- A key operation whose row fails its condition fails with NDB code
-  6000, ours, not 626, so that it is told from a missing row; a scan's
-  filter skips the row with 626 (author, 2026-10-19; chapter 05 §9.4).
+- A missed filter refuses with 6000, ours, where it is to abort, and
+  with 626 where it is not (author, 2026-10-19; chapter 05 §9.4): a
+  scan's filter skips the row with 626; a key operation keeps today's
+  abort option and defaults, and refuses with 6000 when it aborts on
+  error, with 626 when it ignores errors.
 - Registers allocated over the eight there are, and
   `IC_ERROR_CONDITION_TOO_COMPLEX` beyond them, as decided.
 - Later (phase 10): LIKE, regular expressions, the memory regions for

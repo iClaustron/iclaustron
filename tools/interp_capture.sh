@@ -15,6 +15,12 @@
 # printed before it says which frames are its. A statement that fails
 # is reported and the next one runs.
 #
+# A capture begun after the cluster has no handshakes; read it with the
+# data nodes' ports decoded as NDB, and the dissector takes the bytes
+# that are not text as messages:
+#
+#   tshark -r interp.pcap -d tcp.port==11861,ndb -d tcp.port==11862,ndb
+#
 # What each step is for (chapter 05 §9.6 lists what was not seen yet):
 #   - scans with conditions of kinds scans2.pcap did not have: IS NULL
 #     and IS NOT NULL, a column against another column, a CHAR column

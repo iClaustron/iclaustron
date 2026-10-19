@@ -2362,13 +2362,20 @@ Seen: comparisons 1, 2, 4 and 5 with rules 0 and 2 (§9.6). Verify:
   `include/ndbapi/NdbInterpretedCode.hpp:1216-1235`). That range is
   kept for the programs' own codes; the data nodes define none in it
   (`src/ndbapi/ndberror.cpp:106-108`).
-- **Ours** (the author, 2026-10-19): a scan's filter refuses with 626,
-  so the row is skipped; a key operation's refuses with 6000, so that
-  an application can tell a row that failed its condition from a
-  missing one (626). Our error table knows 6000 as an error the
-  program raised, permanent: "The row did not meet the operation's
-  condition". The rest of the range, 6001–6999, is left to
-  applications' own exits.
+- **Ours** (the author, 2026-10-19): the refusal's code says whether a
+  missed filter is to abort: 6000 where it is, 626 where it is not. A
+  scan's filter refuses with 626, so the row is skipped; 6000 would end
+  the scan. A key operation's abort option keeps its meaning and its
+  defaults (§6.7: writes abort on error, reads ignore errors), and its
+  filter follows it: with abort on error it refuses with 6000, so that
+  the transaction's abort says that the condition failed, not that the
+  row was missing; with errors ignored it refuses with 626, and the
+  operation fails alone as a row not found. On a key operation the
+  code does not decide the abort, the abort option does (§9.8,
+  questions 1–3). Our error table knows 6000 as an error the program
+  raised, permanent: "The row did not meet the operation's condition".
+  The rest of the range, 6001–6999, is left to applications' own
+  exits.
 - **`ACCEPT_LAST`**: as `ACCEPT`, and the fragment's scan ends after
   the row.
 
@@ -2379,7 +2386,7 @@ Seen: comparisons 1, 2, 4 and 5 with rules 0 and 2 (§9.6). Verify:
   the final updates, the final reads, the subroutines. The final updates
   are column headers and values written after the program; the final
   reads name columns read after it, which is how a counter's new value
-  comes back (§16.5).
+  comes back (§16.5; seen, §9.6).
 - **A scan** has the same five sizes; the reference sends [read,
   program, 0, 0, subroutines] (§7.2).
 - Subroutines, for `CALL`, and the parameters of 26 are in the fifth
@@ -2433,8 +2440,61 @@ one-word program, `ACCEPT_LAST` (0x00000016), after reading the
 pseudo-columns 0xFFFD, 0xFFFA, 0xFFF9, 0xFFF4, 0xFFEC, 0xFFEB and the
 partition.
 
-Not seen yet: a key operation's program, final updates and reads,
-register instructions, NULL rule 3, a column tested against a column.
+Read again on 2026-10-19, with `tools/interp_capture.sh`'s capture
+(`~/captures/interp.pcap`, steps in `interp-steps.txt`). It began
+after the cluster, so it holds no handshakes, and was read with the
+data nodes' ports decoded as NDB (`-d tcp.port==11861,ndb -d
+tcp.port==11862,ndb`): without a handshake, bytes that are not text
+are taken as messages. Its table `interp_t` has columns 0 `id INT`, 1
+`val INT`, 2 `name VARCHAR(32)` (NULL on every seventh row), 3 `code
+CHAR(4)` and 4 `big BIGINT UNSIGNED`. MySQL's scans:
+
+| Condition | Program |
+|---|---|
+| `name IS NULL` | `JUMP_IF_COLUMN_VALUE` column 2 to the `REFUSE`; `ACCEPT` |
+| `name IS NOT NULL AND val < 500` | `JUMP_IF_COLUMN_NULL` column 2 to the `REFUSE`; test 500 ≤ val (3), rule 2, to the `REFUSE`; `ACCEPT` |
+| `val > id` | `TEST_COLUMN_COLUMN` ≥ (5), rule 2, column 1 in bits 16–31 and column 0 in bits 0–15: refuse if id ≥ val |
+| `code = 'c3'` | test ≠, the value `'c3  '`: 4 bytes, the `CHAR(4)`'s whole size, padded with spaces by the client |
+| `big >= 18446744073709551500` | test > on 8 bytes: refuse if the value > big |
+| `NOT (val BETWEEN 100 AND 200)` | tests 100 > val and 200 < val, rule 3, jumping to the `ACCEPT`; then `JUMP` to the `REFUSE` |
+| `val = 10 OR name = 'r3'` | tests =, rule 3, jumping to the `ACCEPT`; then the `REFUSE` |
+| `name LIKE 'r1%'` | test NOT LIKE (7), rule 2, the pattern bare (3 bytes, no length byte): refuse if it does not match |
+
+So the other column of a column pair stands first, as the value does,
+and MySQL compiles SQL's NULL logic with the two rules: a term of an
+AND is negated and jumps to the refusal with rule 2, a term of an OR
+jumps to the acceptance with rule 3, and either way a NULL makes the
+term fail. The scans of MySQL's statistics read pseudo-columns 0xFFFD
+or 0xFFFC with the program `ACCEPT_LAST`.
+
+**MySQL sends no program with a key operation.** A read by primary key
+with a condition is a committed read and the server tests the row; an
+update or delete with one is an exclusive read and then the update or
+delete, two round trips; so is `val = val + 1`. A refused key
+operation (§9.4) is therefore first seen from our own client.
+
+**The AUTO_INCREMENT counter** (§16.5, seen live). Each operation is a
+`KEY_OP_REQ` of its own transaction on the counter table (id 2), keyed
+by the table id, an update with flags 0x8E32 (no disk, commit, execute,
+start, abort on error, interpreted):
+
+- Taking values, sizes [0, 7, 0, 1, 0]: `READ_COLUMN` r6 = column 1,
+  `SET_64` r7 = 512 (the constant's low word first), `ADD` r7 = r6 +
+  r7, `WRITE_COLUMN` column 1 = r7, `ACCEPT`; the final read names
+  column 1. The `ROW_DATA_REP` brought column 1, 8 bytes: 513, so the
+  first insert reserved 1 to 512; `KEY_OP_CONF` gave the row's length
+  as 3 words. The next three inserts sent nothing.
+- An explicit value of 100000, sizes [0, 9, 0, 1, 0]: `SET_64` r1 =
+  100001, `READ_COLUMN` r2 = column 1, `JUMP_IF_LE` to 7 if r1 ≤ r2,
+  `WRITE_COLUMN` column 1 = r1, then three `ACCEPT`s (5, 7 and 8); read
+  back 100001. The register jump compares bits 6–8 with bits 9–11, as
+  §9.2 has it. The next insert took 512 more and read back 100513.
+- `ALTER TABLE … AUTO_INCREMENT = 200000` copied the table, to id 24,
+  moved its counter up with the constant 3 (not looked into), and the
+  next insert read back 200512.
+
+Not seen yet: a refused key operation, final updates, `CALL` and
+subroutines, `SET_16`, `SET_32`, `SUBTRACT`, the immediates.
 
 ### 9.7 Our builders
 
@@ -2442,8 +2502,12 @@ The `IC_WHERE_CONDITION` and `IC_CONDITIONAL_ASSIGNMENT` builders of
 `ic_apid.h` map onto these. A column compared with a constant is
 `TEST_COLUMN_VALUE`, with another column `TEST_COLUMN_COLUMN`; IS NULL
 and IS NOT NULL are 24 and 25; AND, OR and NOT are jumps, as MySQL's
-two ranges show. An assignment reads the column into a register, sets
-or adds, and writes it back. More than eight live values is
+two ranges show. NULLs follow SQL's logic, compiled as MySQL compiles
+it (§9.6): a term of an AND jumps to the refusal with rule 2, a term of
+an OR to the acceptance with rule 3, since phase 9.1's exit compares
+our answers with MySQL's. An assignment reads the column into a
+register, sets or adds, and writes it back. More than eight live
+values is
 `IC_ERROR_CONDITION_TOO_COMPLEX` in 0.3, spilling to memory comes
 later, and LIKE (comparison 6) with phase 10. Regular expressions have
 no instruction and are evaluated in the API after the row comes, a
@@ -2458,6 +2522,36 @@ documented limitation.
    626 too, or a code of 6000–6999 so that an application can tell a
    failed condition from a missing row? Answered 2026-10-19: a code in
    the 6000 range for key operations; we took 6000 (§9.4).
+2. **What a failed condition does to the transaction (2026-10-19).** A
+   key operation that fails takes the transaction with it when its
+   abort option is "abort on error", which our writes default to
+   (§6.7; the coordinator acts on bits 12–13 of the flags); our reads
+   default to ignoring errors. So by our present defaults a
+   conditional update or delete whose row fails its condition rolls
+   the transaction back, while MySQL's `UPDATE … WHERE id = 5 AND val
+   > 100` matches no row and the transaction goes on. Shall a
+   conditional write default to ignoring its error, so that 6000 is
+   reported on the operation and the transaction continues, or keep
+   the writes' default? Answered 2026-10-19: as the reference's abort
+   option, a flag: set, the transaction aborts if anything fails to
+   read or write; not set, it does not abort when 626 or 6000 happens.
+   Ours is the abort option, `IC_ABORT_ON_ERROR` set; question 3
+   settles the default. On the wire the coordinator knows only the two:
+   an operation that aborts on error takes the transaction with it,
+   one that ignores errors fails alone whatever its code, unless the
+   error came from a backup replica or from an operation a trigger
+   made, which abort in any case
+   (`src/kernel/blocks/dbtc/DbtcMain.cpp:9545-9560, 9725-9736`). For an
+   update or a delete with a condition the errors left are 626 and
+   6000.
+3. **Whether "not set" is every write's default (2026-10-19).** Our
+   writes abort on error unless asked to ignore errors; should "not
+   set" be every write's default, so that an insert's 630 would fail
+   alone too, or only a conditional write's? Answered 2026-10-19:
+   neither; the abort option keeps today's meaning and defaults for
+   every operation, conditional or not, and the filter's code follows
+   it instead: 6000 where a missed filter is to abort, 626 where it is
+   not (§9.4).
 
 ## 10. Errors
 
@@ -2702,8 +2796,9 @@ seen live in 8.2.
   `plugin/ha_ndbcluster.cc:5299-5303`). Other nodes' cached ranges are
   not told.
 - The interpreted update is a `KEY_OP_REQ` with flags bit 15 and an
-  update; its column section begins with five size words (initial read,
-  program, final update, final read, subroutines), here 0, 7, 0, 1, 0:
+  update (seen on the wire, §9.6); its column section begins with five
+  size words (initial read, program, final update, final read,
+  subroutines), here 0, 7, 0, 1, 0:
   read the counter into a register, load the 64-bit constant, add,
   write the counter from the sum, exit with success; the final read
   names the counter column
