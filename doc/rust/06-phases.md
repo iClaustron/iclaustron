@@ -1626,7 +1626,14 @@ gives a temporary error, and the scan started again completes.
 - The encoding learned from captures of the reference's interpreted
   operations, read with the dissector, and from the author, and written
   into chapter 05 §9 in our words, with names of our own for the
-  instructions.
+  instructions. The author's account came on 2026-10-19 and is in
+  §9.1–9.5, checked against the six programs of `scans2.pcap` (§9.6);
+  questions one at a time in §9.8. The dissector decodes programs, a
+  scan's and an interpreted `KEY_OP_REQ`'s, instruction by instruction
+  with our names (2026-10-19), and `tools/interp_capture.sh` captures
+  MySQL's: conditions of the kinds `scans2.pcap` lacks, key operations
+  with conditions true and false, and the AUTO_INCREMENT counter's
+  updates with their final reads.
 - Basic first (author, 2026-10-08): conditions comparing a column with
   a constant or with another column (=, <>, <, <=, >, >=; latin1
   strings by their collation), IS NULL and IS NOT NULL, AND, OR, NOT;
@@ -1634,6 +1641,9 @@ gives a temporary error, and the scan started again completes.
   a column set to a constant, or to itself plus or minus a constant. A
   conditional update or delete. A column's value read after an update,
   which AUTO_INCREMENT uses.
+- A key operation whose row fails its condition fails with NDB code
+  6000, ours, not 626, so that it is told from a missing row; a scan's
+  filter skips the row with 626 (author, 2026-10-19; chapter 05 §9.4).
 - Registers allocated over the eight there are, and
   `IC_ERROR_CONDITION_TOO_COMPLEX` beyond them, as decided.
 - Later (phase 10): LIKE, regular expressions, the memory regions for

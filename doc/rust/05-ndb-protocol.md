@@ -2204,31 +2204,260 @@ Paths below are into that tree.
 
 ## 9. Interpreted programs
 
-The kernel interpreter is a register machine with 8 registers, labels,
-subroutines, instructions that read a column into a register and write
-one from it, constant loads, arithmetic, branches comparing two
-registers and branches comparing a column with a constant (including
-LIKE, NOT LIKE and bit masks), and exits that accept the row, reject
-it, or accept it as the last. RonDB adds memory-region instructions,
-string and integer conversions, searches and sorting, and instructions
-that write the program's output and read its input. Verify:
-`include/ndbapi/NdbInterpretedCode.hpp:80-1396`,
-`include/ndbapi/NdbScanFilter.hpp:42-105`.
+A program runs in the data node that holds the row: as a scan's
+filter, or as a key operation's condition and the updates it computes
+from the row. What follows is the author's account (2026-10-19), in our
+words and with names of our own, checked against the six programs
+MySQL sent in `scans2.pcap` (§9.6) and against the row store's code
+where the two leave a gap. The constants are `IC_INSN_<NAME>`.
 
-The `IC_WHERE_CONDITION` and `IC_CONDITIONAL_ASSIGNMENT` builders map
-onto the **full 26.10 instruction set**: memory addresses → the 8
-registers (more than 8 live values is an error in 0.1; a spill strategy
-using the memory-region instructions, which load constants into memory
-and move values between memory and registers, is decided later);
-subroutine ids → labels/subroutines; `ic_define_boolean` →
-short-circuit branches; comparators → a column-against-constant branch
-when one side is a constant and a register branch after a column read
-otherwise; `ic_define_like` → the column LIKE branch; string operations
-→ the string search and the conversion instructions. Regexp has
-no kernel counterpart and is evaluated API-side after the row is received
-(documented limitation). The exact opcode encodings are read from
-`src/ndbapi/NdbInterpretedCode.cpp` and `include/kernel/Interpreter.hpp`
-when Phase 6 starts and recorded here as §9.1.
+### 9.1 The machine
+
+- Eight registers, and a memory of a little more than 64 KB that the
+  memory instructions work on (later).
+- A register is four words: a type word; a word that only the column
+  read uses; and the 64-bit value in the last two, read as the type
+  word says. The type word has a byte per property: byte 0 is 1 for a
+  value and 0 for NULL, byte 1 is 1 for unsigned and 0 for signed,
+  byte 2 is 1 for a double and 0 for an integer, byte 3 is 0. So 0 is
+  NULL, 1 a signed integer, 0x101 an unsigned one, 0x10001 a double.
+  Verify: `include/kernel/Interpreter.hpp:40-87`.
+- An instruction is a word, some with words after it. Its number is
+  bits 0–5, plus 64 when bit 15 is set, so 0 to 127. A first register
+  is in bits 6–8, a second in 9–11, a third in 12–14, a fourth in
+  16–18. Bits 16–31, "the field" below, otherwise hold what the
+  instruction needs: a jump's distance, a column id, a 16-bit constant,
+  a memory offset. Verify: `include/kernel/Interpreter.hpp:89-104,
+  1459-1469`.
+
+### 9.2 The instructions
+
+R1 to R4 are the registers of bits 6–8, 9–11, 12–14 and 16–18. The
+basic interpreter of phase 9.1 needs these:
+
+| # | Our name | What it does |
+|---|---|---|
+| 1 | `READ_COLUMN` | R1 = the row's value of the column in the field |
+| 2 | `WRITE_COLUMN` | the column in the field = R1 |
+| 3 | `SET_NULL` | R1 = NULL |
+| 4 | `SET_16` | R1 = the field |
+| 5 | `SET_32` | R1 = the next word |
+| 6 | `SET_64` | R1 = the next two words |
+| 7 | `ADD` | R4 = R1 + R2 |
+| 8 | `SUBTRACT` | R4 = R1 − R2 |
+| 9 | `JUMP` | jump |
+| 10 | `JUMP_IF_NULL` | jump if R1 is NULL |
+| 11 | `JUMP_IF_VALUE` | jump if R1 is not NULL |
+| 12–17 | `JUMP_IF_EQ`, `_NE`, `_LT`, `_LE`, `_GT`, `_GE` | jump if R1 =, ≠, <, ≤, >, ≥ R2 |
+| 18 | `ACCEPT` | end; the row passes |
+| 19 | `REFUSE` | end; the row fails, with the error code in the field |
+| 20 | `CALL` | call a subroutine |
+| 21 | `RETURN` | return from it |
+| 22 | `ACCEPT_LAST` | end; the row passes and is the fragment's last |
+| 23 | `TEST_COLUMN_VALUE` | jump on a column compared with a value in the program (§9.3) |
+| 24 | `JUMP_IF_COLUMN_NULL` | jump if the column in word 2's field is NULL |
+| 25 | `JUMP_IF_COLUMN_VALUE` | jump if it is not NULL |
+| 26 | `TEST_COLUMN_PARAM` | as 23, against a parameter |
+| 27 | `TEST_COLUMN_COLUMN` | as 23, against another column of the row |
+| 71 | `ADD_IMM` | R3 = R1 + the field |
+| 72 | `SUBTRACT_IMM` | R3 = R1 − the field |
+
+Described, for later:
+
+| # | Our name | What it does |
+|---|---|---|
+| 28, 29 | `SHIFT_LEFT`, `SHIFT_RIGHT` | R3 = R1 shifted by R2 bits |
+| 30–35 | `MULTIPLY`, `DIVIDE`, `BIT_AND`, `BIT_OR`, `BIT_XOR`, `REMAINDER` | R3 = R1 with R2 |
+| 36 | `BIT_NOT` | R3 = R1 inverted |
+| 45 | `SET_DOUBLE` | R1 = the double in the next two words |
+| 48 | `READ_COLUMN_TO_MEMORY` | a column into memory |
+| 49–52 | `LOAD_8`, `LOAD_16`, `LOAD_32`, `LOAD_64` | R1 = memory at the field: unsigned 8, 16 or 32 bits, or signed 64 |
+| 53–56 | `STORE_8`, `STORE_16`, `STORE_32`, `STORE_64` | memory at the field = R1, in those sizes |
+| 57 | `WRITE_COLUMN_FROM_MEMORY` | a column = R2 bytes of memory at R1 |
+| 58 | `APPEND_COLUMN_FROM_MEMORY` | the same appended to a column |
+| 59 | `COPY_TO_MEMORY` | bytes from the program to memory at R1 |
+| 62 | `STORE_REGISTER` | 8 bytes of memory at the field = R1 |
+| 76–81 | `JUMP_IF_EQ_IMM`, `_NE_IMM`, `_LT_IMM`, `_LE_IMM`, `_GT_IMM`, `_GE_IMM` | jump if R1, unsigned, compares so with bits 9–14 (0 to 63) |
+| 92–99 | `SHIFT_LEFT_IMM`, `SHIFT_RIGHT_IMM`, `MULTIPLY_IMM`, `DIVIDE_IMM`, `BIT_AND_IMM`, `BIT_OR_IMM`, `BIT_XOR_IMM`, `REMAINDER_IMM` | R3 = R1 with the field (a shift below 64) |
+| 113–116 | `LOAD_8_AT` … `LOAD_64_AT` | R2 = memory at R1 |
+| 117–120 | `STORE_8_AT` … `STORE_64_AT` | memory at R2 = R1 |
+| 121 | `READ_INPUT` | R1 = the input in the field, one of 16 opaque 8-byte values |
+| 123 | `WRITE_OUTPUT` | the output in the field, one of 16, = R1 |
+| 125 | `ZERO_MEMORY` | memory zeroed, R1 and R2 the size and the offset |
+
+Not described, for now or for pushed joins: 37, 38–44, 46, 47, 60,
+61, 63, 65–70, 73–75, 82, 83, 101, 122 and 124. Unused: 0, 84–86,
+88, 89, 100, 102–112, 126, 127. Numbers 87, 90 and 91 are 23, 26 and
+27 with bit 15 set, which a comparison of 8 or more sets (§9.3).
+
+As read in the code where the account leaves a choice: `SUBTRACT_IMM`
+is R1 minus the field, not the field minus R1, and both immediates are
+unsigned, 0 to 65 535; `ADD` and
+`SUBTRACT` with a NULL operand give NULL; the jumps of 12–17 compare
+by the type words, signed, unsigned or double, and a NULL in either
+register is error 878, so a program tests for NULL first. For later:
+the code reads `ZERO_MEMORY`'s offset from R1 and its size from R2,
+the other way round from the account. Verify:
+`include/kernel/Interpreter.hpp:856-1012, 1363-1381`;
+`src/kernel/blocks/dbtup/DbtupExecQuery.cpp:7272-7400, 7557-7575,
+7608-7745`.
+
+### 9.3 Column tests (23, 26, 27)
+
+Two words, and for 23 the value after them:
+
+- **Word 1**: the instruction; the NULL rule in bits 6–7; the
+  comparison in bits 12–15; the jump's distance in the field.
+- **Word 2**: the column's id in bits 16–31; in bits 0–15 the value's
+  length in bytes (23), the parameter's number (26), or the other
+  column's id (27).
+- **The value** (23 only), padded to whole words with zero bytes, in
+  the column's own format. A fixed-size type sends the column's whole
+  size; a variable one its length bytes and its bytes, the length
+  counting both (`'r3'` is 3 bytes, 02 72 33); a LIKE pattern is sent
+  bare, as long as it is. A bit column's unused bits are zero. As the
+  reference's builder writes it (`src/ndbapi/NdbInterpretedCode.cpp:
+  1542-1628`); the wire has shown the variable one.
+
+The comparisons: 0 equal, 1 not equal, 2 less, 3 less or equal, 4
+greater, 5 greater or equal, 6 LIKE, 7 NOT LIKE, 8–11 bit masks
+(later). **The value comes first**: 2 jumps when the value is less than
+the column, that is, when the column is greater. For 27 the other
+column, in bits 0–15, stands where the value does. Strings compare by
+the column's collation, for 27 by the first column's. For 27 the data
+node reads the other column as though it had the first one's type and
+checks nothing, so only columns of one type, length, precision, scale
+and collation may be compared, and no blobs; the reference's builder
+refuses others with 4557 (`src/ndbapi/NdbInterpretedCode.cpp:
+1630-1653`; `src/kernel/blocks/dbtup/DbtupExecQuery.cpp:9773-9810`).
+Ours refuses them too.
+
+The NULL rules, when the column or the value is NULL (a value of
+length 0 is): 0, compare anyway, NULL equal to NULL and less than any
+value; 2, jump; 3, go on to the next instruction. MySQL's filters use
+2 with jumps to a `REFUSE`, so that a row whose column is NULL fails,
+as SQL has it.
+
+Seen: comparisons 1, 2, 4 and 5 with rules 0 and 2 (§9.6). Verify:
+`include/kernel/Interpreter.hpp:609-680, 1384-1455`;
+`src/kernel/blocks/dbtup/DbtupExecQuery.cpp:9693-9898`.
+
+### 9.4 Jumps and ends
+
+- **A jump's distance** is in words, counted from the jump's first
+  word. The account gives it bits 16–31; the code reads bits 16–30 as
+  the distance and bit 31 as a jump backwards
+  (`src/kernel/blocks/dbtup/DbtupExecQuery.cpp:6683-6700`). Every jump
+  seen goes forward.
+- **`ACCEPT`**: a scan returns the row; a key operation goes on to its
+  final updates and reads (§9.5).
+- **`REFUSE`** ends with the code in the field
+  (`src/kernel/blocks/dbtup/DbtupExecQuery.cpp:6949-6959`). In a scan,
+  626 and 899 skip the row and the scan goes on; any other code ends the
+  scan with it (`src/kernel/blocks/dblqh/DblqhMain.cpp:27283-27292`). A
+  key operation fails with the code
+  (`src/kernel/blocks/dblqh/DblqhMain.cpp:6801-6846`). MySQL refuses with
+  626, the reference's default, which advises 626 or a code from 6000
+  to 6999 (`src/ndbapi/NdbInterpretedCode.cpp:2233-2239`,
+  `include/ndbapi/NdbInterpretedCode.hpp:1216-1235`). That range is
+  kept for the programs' own codes; the data nodes define none in it
+  (`src/ndbapi/ndberror.cpp:106-108`).
+- **Ours** (the author, 2026-10-19): a scan's filter refuses with 626,
+  so the row is skipped; a key operation's refuses with 6000, so that
+  an application can tell a row that failed its condition from a
+  missing one (626). Our error table knows 6000 as an error the
+  program raised, permanent: "The row did not meet the operation's
+  condition". The rest of the range, 6001–6999, is left to
+  applications' own exits.
+- **`ACCEPT_LAST`**: as `ACCEPT`, and the fragment's scan ends after
+  the row.
+
+### 9.5 Where a program travels
+
+- **A key operation** sets flag bit 15 (§6.4), and its column section
+  begins with five sizes: the reads before the program, the program,
+  the final updates, the final reads, the subroutines. The final updates
+  are column headers and values written after the program; the final
+  reads name columns read after it, which is how a counter's new value
+  comes back (§16.5).
+- **A scan** has the same five sizes; the reference sends [read,
+  program, 0, 0, subroutines] (§7.2).
+- Subroutines, for `CALL`, and the parameters of 26 are in the fifth
+  part; their layout is not needed by the basic interpreter.
+
+### 9.6 Seen on the wire (`scans2.pcap`, read again 2026-10-19)
+
+The programs of MySQL's scans of `scan_t` (columns 0 `id INT`, 1 `val
+INT`, 2 `name VARCHAR(32)`), by word:
+
+`WHERE val > 190000` (frame 62075), "refuse if 190000 ≥ val, or val is
+NULL":
+
+```
+0  0x00045097  TEST_COLUMN_VALUE, NULL rule 2, ≥, jump +4 to 4
+1  0x00010004  column 1, 4 bytes
+2  0x0002e630  190000
+3  0x00000012  ACCEPT
+4  0x02720013  REFUSE 626
+```
+
+`WHERE val BETWEEN 100 AND 30000` (62918, sent along with the index
+range):
+
+```
+0  0x00074097  TEST_COLUMN_VALUE, rule 2, >, +7 to 7    100 > val
+1  0x00010004  column 1, 4 bytes
+2  0x00000064  100
+3  0x00042097  TEST_COLUMN_VALUE, rule 2, <, +4 to 7    30000 < val
+4  0x00010004  column 1, 4 bytes
+5  0x00007530  30000
+6  0x00000012  ACCEPT
+7  0x02720013  REFUSE 626
+```
+
+Two such ranges joined by OR (63781, 16 words): the first range's tests
+jump to the second range at word 7 when they fail, and a `JUMP` +9
+(0x00090009) at word 6 goes to the `ACCEPT` at word 15 when they pass;
+the second range's tests jump to the `REFUSE` at word 14, and its
+`JUMP` +2 (0x00020009) at word 13 to the `ACCEPT`. So a condition is
+compiled with its terms negated: AND falls through, OR jumps forward.
+
+`WHERE name = 'r3'` (65578): `0x00041097` (test, rule 2, ≠, +4),
+`0x00020003` (column 2, 3 bytes), `0x00337202` (02 72 33 and a pad
+byte), `ACCEPT`, `REFUSE` 626.
+
+MySQL's scan of a table of its own (table 6, frame 13131) used NULL
+rule 0 and ≠ with jumps to the `REFUSE`: column 0 = 494 and column 1 =
+1. Its sixteen statistics reads of `scan_t` (frame 14199 on) send a
+one-word program, `ACCEPT_LAST` (0x00000016), after reading the
+pseudo-columns 0xFFFD, 0xFFFA, 0xFFF9, 0xFFF4, 0xFFEC, 0xFFEB and the
+partition.
+
+Not seen yet: a key operation's program, final updates and reads,
+register instructions, NULL rule 3, a column tested against a column.
+
+### 9.7 Our builders
+
+The `IC_WHERE_CONDITION` and `IC_CONDITIONAL_ASSIGNMENT` builders of
+`ic_apid.h` map onto these. A column compared with a constant is
+`TEST_COLUMN_VALUE`, with another column `TEST_COLUMN_COLUMN`; IS NULL
+and IS NOT NULL are 24 and 25; AND, OR and NOT are jumps, as MySQL's
+two ranges show. An assignment reads the column into a register, sets
+or adds, and writes it back. More than eight live values is
+`IC_ERROR_CONDITION_TOO_COMPLEX` in 0.3, spilling to memory comes
+later, and LIKE (comparison 6) with phase 10. Regular expressions have
+no instruction and are evaluated in the API after the row comes, a
+documented limitation.
+
+### 9.8 Asked of the author
+
+1. **A key operation's failed condition (2026-10-19).** A conditional
+   update or delete whose row fails its condition ends in `REFUSE`,
+   and the operation fails with the code; the reference and MySQL use
+   626, so a failed condition reads as "no such row". Shall ours use
+   626 too, or a code of 6000–6999 so that an application can tell a
+   failed condition from a missing row? Answered 2026-10-19: a code in
+   the 6000 range for key operations; we took 6000 (§9.4).
 
 ## 10. Errors
 
