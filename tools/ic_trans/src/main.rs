@@ -6,7 +6,14 @@
 //!
 //! ```text
 //!   ic_trans -c localhost:1186 -d ictest t9 --from 100 --count 10
+//!   ic_trans -c localhost:1186 -d ictest ai --auto-increment --keep
 //! ```
+//!
+//! With `--auto-increment` the keys are a block of values from the
+//! table's AUTO_INCREMENT counter, the one MySQL servers take theirs
+//! from, so that a run can go in beside a MySQL server's inserts; the
+//! table's key must be that column alone, as a table without a primary
+//! key's hidden key is. With `--keep` the rows stay, not deleted.
 //!
 //! This is the transaction API used as an application uses it: queries
 //! made once, defined on a transaction, sent together, and taken from
@@ -42,7 +49,7 @@ use ic_signals::table_props;
 /// How long to wait for one transaction to finish.
 const IC_TRANS_WAIT_MS: u64 = 10_000;
 
-const OPTIONS: [OptionEntry; 6] = [
+const OPTIONS: [OptionEntry; 8] = [
   OptionEntry {
     long_name: "ndb-connectstring",
     short_name: b'c',
@@ -66,6 +73,18 @@ const OPTIONS: [OptionEntry; 6] = [
     short_name: b'n',
     kind: OptionKind::Int,
     help: "How many rows; the default is 10",
+  },
+  OptionEntry {
+    long_name: "auto-increment",
+    short_name: b'a',
+    kind: OptionKind::Flag,
+    help: "Take the keys from the AUTO_INCREMENT counter, not --from",
+  },
+  OptionEntry {
+    long_name: "keep",
+    short_name: b'k',
+    kind: OptionKind::Flag,
+    help: "Leave the rows in the table: no delete",
   },
   OptionEntry {
     long_name: "node-id",
@@ -149,18 +168,34 @@ fn run() -> i32 {
       return 1;
     }
   };
-  let code = run_all(&global, &database, &args[0], from, count as usize);
+  let plan = Plan {
+    database: &database,
+    table: &args[0],
+    from,
+    count: count as usize,
+    auto_increment: parser.get_flag("auto-increment"),
+    keep: parser.get_flag("keep"),
+  };
+  let code = run_all(&global, &plan);
   global.stop();
   code
 }
 
-fn run_all(
-  global: &ApidGlobal,
-  database: &str,
-  table: &str,
+/// What the command line asked for.
+struct Plan<'a> {
+  database: &'a str,
+  table: &'a str,
+  /// The first key, unless the keys come from the counter.
   from: i64,
   count: usize,
-) -> i32 {
+  /// The keys from the table's AUTO_INCREMENT counter.
+  auto_increment: bool,
+  /// No delete at the end.
+  keep: bool,
+}
+
+fn run_all(global: &ApidGlobal, plan: &Plan) -> i32 {
+  let count = plan.count;
   if global.wait_for_first_started(15_000) == 0 {
     println!("No data node is started, so there is nobody to ask");
     return 1;
@@ -172,7 +207,7 @@ fn run_all(
       return 1;
     }
   };
-  let def = match conn.table_bind(database, table) {
+  let def = match conn.table_bind(plan.database, plan.table) {
     Ok(def) => def,
     Err(e) => {
       report("Could not bind the table", &e);
@@ -189,6 +224,16 @@ fn run_all(
   if let Err(text) = check_columns(&def) {
     println!("{}", text);
     return 1;
+  }
+  let mut from = plan.from;
+  if plan.auto_increment {
+    match keys_from_counter(&conn, &def, count) {
+      Ok(first) => from = first,
+      Err(text) => {
+        println!("{}", text);
+        return 1;
+      }
+    }
   }
   // One query per row, so that a whole run is in flight at once.
   let mut queries: Vec<QueryId> = Vec::with_capacity(count);
@@ -211,7 +256,9 @@ fn run_all(
   if code == 0 {
     code = read_run(&mut conn, &def, &rec, &queries, from);
   }
-  if code == 0 {
+  if code == 0 && plan.keep {
+    println!("Kept the rows");
+  } else if code == 0 {
     code = write_run(&mut conn, &def, &rec, &queries, from, steps[1]);
   }
   if conn.unexpected() > 0 {
@@ -235,6 +282,47 @@ fn check_columns(def: &Arc<TableDef>) -> Result<(), String> {
     ));
   }
   Ok(())
+}
+
+/// The first of `count` keys in a row, reserved together from the
+/// table's AUTO_INCREMENT counter: a step of one apart, as this process
+/// keeps the default step. The column must be the whole key.
+fn keys_from_counter(
+  conn: &ApidConnection,
+  def: &Arc<TableDef>,
+  count: usize,
+) -> Result<i64, String> {
+  let column = match def.auto_increment_column() {
+    Some(column) => column,
+    None => return Err(format!("{} has no AUTO_INCREMENT column", def.name())),
+  };
+  for attr in &def.info().attributes {
+    if attr.primary_key != (attr.column_id == column) {
+      return Err(format!(
+        "The key of {} is not its AUTO_INCREMENT column alone",
+        def.name()
+      ));
+    }
+  }
+  let first = match conn.auto_increment_block(def, count as u32) {
+    Ok(first) => first,
+    Err(e) => {
+      return Err(format!(
+        "Could not take keys from the counter: {} ({})",
+        e.message(),
+        e.code
+      ))
+    }
+  };
+  let last = match first.checked_add(count as u64 - 1) {
+    Some(last) if last <= i64::MAX as u64 => last,
+    _ => return Err(format!("The counter is past {}", i64::MAX)),
+  };
+  println!(
+    "Took keys {} to {} from the AUTO_INCREMENT counter",
+    first, last
+  );
+  Ok(first as i64)
 }
 
 fn is_integer(type_code: u32) -> bool {

@@ -159,6 +159,18 @@ fn cluster_with_reply_wait(reply_wait_ms: u32) -> Option<Cluster> {
 /// As [`cluster_with_reply_wait`], with a management server given
 /// `mgm_timeout_ms` to answer once the global runs.
 fn cluster_with(reply_wait_ms: u32, mgm_timeout_ms: u32) -> Option<Cluster> {
+  let options = GlobalOptions {
+    reply_wait_ms,
+    ..GlobalOptions::default()
+  };
+  cluster_with_options(&options, mgm_timeout_ms)
+}
+
+/// As [`cluster_with`], the global started with `given`.
+fn cluster_with_options(
+  given: &GlobalOptions,
+  mgm_timeout_ms: u32,
+) -> Option<Cluster> {
   let text = match std::env::var("IC_TEST_CONNECTSTRING") {
     Ok(text) => text,
     Err(_) => {
@@ -182,10 +194,7 @@ fn cluster_with(reply_wait_ms: u32, mgm_timeout_ms: u32) -> Option<Cluster> {
         continue;
       }
     };
-    let mut options = GlobalOptions {
-      reply_wait_ms,
-      ..GlobalOptions::default()
-    };
+    let mut options = *given;
     if let Ok(text) = std::env::var("IC_TEST_RECEIVE_THREADS") {
       options.receive_threads = text.parse().unwrap_or(1);
     }
@@ -8661,4 +8670,427 @@ fn auto_increment_through_an_executor_shares_the_range() {
     conn.auto_increment(&on_conn.def).is_ok(),
     "the connection's"
   );
+}
+
+// ---- AUTO_INCREMENT, the exit (phase 9.2c) ----
+
+/// Values a refill reserves in the exit's table, few so that ours and
+/// MySQL's take from the counter in turn many times over.
+const IC_IT_AI_PREFETCH: u32 = 7;
+/// Rows a transaction of ours inserts.
+const IC_IT_AI_BATCH: usize = 20;
+/// Rounds of MySQL's rows, then ours.
+const IC_IT_AI_ROUNDS: i64 = 10;
+
+/// How many rows of a table in the test database `filter` holds for.
+fn count_where(table: &str, filter: &str) -> i64 {
+  count_of(&format!(
+    "SELECT COUNT(*) FROM {}.{} WHERE {}",
+    IC_IT_DB, table, filter
+  ))
+}
+
+/// `count` values of a table's AUTO_INCREMENT column, a call each.
+fn take_ids(conn: &ApidConnection, t: &Table, count: usize) -> Vec<u64> {
+  let mut ids: Vec<u64> = Vec::with_capacity(count);
+  while ids.len() < count {
+    ids.push(conn.auto_increment(&t.def).expect("a value"));
+  }
+  ids
+}
+
+/// Insert rows in one transaction, one on each query given, each row
+/// its columns' values as text, and wait for it to commit.
+fn insert_rows_as_text(
+  conn: &mut ApidConnection,
+  t: &Table,
+  queries: &[QueryId],
+  rows: &[Vec<(&str, String)>],
+) {
+  let tid = conn
+    .start_transaction(TransactionHint::Any, Some(&t.def))
+    .expect("a transaction");
+  let insert = WriteKeyArgs {
+    kind: WriteKind::Insert,
+    ..WriteKeyArgs::default()
+  };
+  let mut i: usize = 0;
+  while i < rows.len() {
+    let query = conn.query_mut(queries[i]).expect("the query");
+    for (column, text) in &rows[i] {
+      t.put(query.key_row_mut(), column, text);
+      t.put(query.attr_row_mut(), column, text);
+    }
+    conn
+      .write_key(queries[i], tid, &insert)
+      .expect("define the insert");
+    i += 1;
+  }
+  conn.commit_transaction(tid).expect("ask to commit");
+  let state = finish(conn, tid);
+  let error = conn.transaction(tid).expect("the transaction").error();
+  assert_eq!(state, CommitState::Committed, "{:?}", error);
+  conn.close_transaction(tid).expect("close");
+}
+
+/// Rows of `ai_exit` for our side: `ids`, by `who`, `n` each.
+fn exit_rows(
+  ids: &[u64],
+  who: &str,
+  n: i64,
+) -> Vec<Vec<(&'static str, String)>> {
+  let mut rows: Vec<Vec<(&'static str, String)>> =
+    Vec::with_capacity(ids.len());
+  for id in ids {
+    rows.push(vec![
+      ("id", id.to_string()),
+      ("who", who.to_string()),
+      ("n", n.to_string()),
+    ]);
+  }
+  rows
+}
+
+/// An insert of `count` rows by MySQL into `ai_exit`, the ids its own.
+fn mysql_exit_rows(count: u32, n: i64) -> String {
+  let mut values: Vec<String> = Vec::with_capacity(count as usize);
+  while values.len() < count as usize {
+    values.push(format!("('m', {})", n));
+  }
+  format!(
+    "INSERT INTO {}.ai_exit (who, n) VALUES {};\n",
+    IC_IT_DB,
+    values.join(", ")
+  )
+}
+
+#[test]
+fn auto_increment_inserts_beside_mysqls_give_no_duplicate() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  let made = mysql(&format!(
+    "CREATE DATABASE IF NOT EXISTS {db};
+     DROP TABLE IF EXISTS {db}.ai_exit;
+     CREATE TABLE {db}.ai_exit (
+       id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+       who CHAR(1) NOT NULL,
+       n INT NOT NULL
+     ) ENGINE=NDB DEFAULT CHARSET=latin1;",
+    db = IC_IT_DB
+  ));
+  if made.is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let t = bind(&mut conn, "ai_exit");
+  let queries = takeover_queries(&mut conn, &t, IC_IT_AI_BATCH);
+  t.def.set_auto_increment_prefetch(IC_IT_AI_PREFETCH);
+
+  // In turn: a hundred rows of MySQL's, then twenty of ours, each value
+  // asked for alone, ten times over.
+  let mut lowest = u64::MAX;
+  let mut round: i64 = 0;
+  while round < IC_IT_AI_ROUNDS {
+    mysql(&mysql_exit_rows(100, round)).expect("a MySQL client");
+    let ids = take_ids(&conn, &t, IC_IT_AI_BATCH);
+    for id in &ids {
+      lowest = lowest.min(*id);
+    }
+    insert_rows_as_text(&mut conn, &t, &queries, &exit_rows(&ids, "i", round));
+    round += 1;
+  }
+
+  // At once: five hundred rows of MySQL's, ten to a statement, from a
+  // thread of their own while five hundred of ours go in.
+  let mut script = String::new();
+  let mut statements: u32 = 0;
+  while statements < 50 {
+    script.push_str(&mysql_exit_rows(10, 99));
+    statements += 1;
+  }
+  let theirs = std::thread::spawn(move || mysql(&script));
+  let mut batch: usize = 0;
+  while batch < 25 {
+    let ids = take_ids(&conn, &t, IC_IT_AI_BATCH);
+    insert_rows_as_text(&mut conn, &t, &queries, &exit_rows(&ids, "i", 99));
+    batch += 1;
+  }
+  theirs
+    .join()
+    .expect("MySQL's inserts")
+    .expect("a MySQL client");
+  assert_eq!(count_where("ai_exit", "who = 'i'"), 700);
+  assert_eq!(count_where("ai_exit", "who = 'm'"), 1500);
+  // MySQL refilled after our first values: theirs and ours interleave.
+  let after = format!("who = 'm' AND id > {}", lowest);
+  assert!(
+    count_where("ai_exit", &after) > 0,
+    "every value of MySQL's below ours"
+  );
+
+  // MySQL's explicit value past the counter moves it for us: a block
+  // larger than the prefetch, a refill of its own, starts past it.
+  let theirs_high = conn.auto_increment_peek(&t.def).expect("peek") + 100_000;
+  mysql(&format!(
+    "INSERT INTO {}.ai_exit VALUES ({}, 'x', 0);",
+    IC_IT_DB, theirs_high
+  ))
+  .expect("a MySQL client");
+  let past = conn
+    .auto_increment_block(&t.def, IC_IT_AI_PREFETCH + 1)
+    .expect("a block");
+  assert!(
+    past > theirs_high,
+    "{} not past MySQL's {}",
+    past,
+    theirs_high
+  );
+
+  // Ours moves it for MySQL. Its own explicit value left its range
+  // empty, so the next rows it inserts come from a refill past ours.
+  let mine = conn.auto_increment_peek(&t.def).expect("peek") + 100_000;
+  insert_rows_as_text(&mut conn, &t, &queries, &exit_rows(&[mine], "y", 0));
+  conn.auto_increment_seen(&t.def, mine).expect("seen");
+  mysql(&mysql_exit_rows(600, 100)).expect("a MySQL client");
+  assert_eq!(
+    count_where(
+      "ai_exit",
+      &format!("who = 'm' AND n = 100 AND id <= {}", mine)
+    ),
+    0
+  );
+  let total = count_of(&format!("SELECT COUNT(*) FROM {}.ai_exit", IC_IT_DB));
+  assert_eq!(total, 700 + 1500 + 1 + 1 + 600);
+}
+
+#[test]
+fn auto_increment_keeps_the_step_and_offset_but_not_for_a_hidden_key() {
+  let options = GlobalOptions {
+    auto_increment_step: 10,
+    auto_increment_offset: 3,
+    ..GlobalOptions::default()
+  };
+  let cluster = match cluster_with_options(&options, 30_000) {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  let made = mysql(&format!(
+    "CREATE DATABASE IF NOT EXISTS {db};
+     DROP TABLE IF EXISTS {db}.ai_step;
+     DROP TABLE IF EXISTS {db}.ai_nopk;
+     CREATE TABLE {db}.ai_step (
+       id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+       v INT
+     ) ENGINE=NDB;
+     CREATE TABLE {db}.ai_nopk (a INT NOT NULL, b VARCHAR(10))
+       ENGINE=NDB DEFAULT CHARSET=latin1;
+     INSERT INTO {db}.ai_step (v) VALUES (1);
+     INSERT INTO {db}.ai_nopk VALUES (1, 'm');",
+    db = IC_IT_DB
+  ));
+  if made.is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let t = bind(&mut conn, "ai_step");
+  let h = bind(&mut conn, "ai_nopk");
+
+  // 10 k + 3, and a refill reserves 4096 steps.
+  let before = conn.auto_increment_peek(&t.def).expect("peek");
+  let first = conn.auto_increment(&t.def).expect("a value");
+  assert_eq!(first % 10, 3, "{}", first);
+  assert!(
+    first >= before && first < before + 10,
+    "{} at {}",
+    first,
+    before
+  );
+  let after = conn.auto_increment_peek(&t.def).expect("peek");
+  assert!(after >= before + 40_960, "the counter at {}", after);
+  let second = conn.auto_increment(&t.def).expect("a value");
+  assert_eq!(second, first + 10);
+  let block = conn.auto_increment_block(&t.def, 3).expect("a block");
+  assert_eq!(block, second + 10);
+  let next = conn.auto_increment(&t.def).expect("a value");
+  assert_eq!(next, block + 30);
+  mysql(&format!(
+    "INSERT INTO {}.ai_step VALUES ({}, 2), ({}, 2);",
+    IC_IT_DB, first, next
+  ))
+  .expect("a MySQL client");
+
+  // The hidden key takes 1 and 1, as MySQL servers give it.
+  assert!(h.def.hidden_key().is_some(), "no hidden key");
+  let before = conn.auto_increment_peek(&h.def).expect("peek");
+  let first = conn.auto_increment(&h.def).expect("a value");
+  assert!(first >= before, "{} below the counter {}", first, before);
+  let after = conn.auto_increment_peek(&h.def).expect("peek");
+  assert!(after >= first + 4096, "the counter at {}", after);
+  assert!(after < first + 40_960, "steps reserved: {}", after);
+  let second = conn.auto_increment(&h.def).expect("a value");
+  assert_eq!(second, first + 1);
+  let block = conn.auto_increment_block(&h.def, 3).expect("a block");
+  assert_eq!(block, second + 1);
+  assert_eq!(conn.auto_increment(&h.def).expect("a value"), block + 3);
+}
+
+#[test]
+fn auto_increment_a_table_without_a_primary_key_works_by_its_hidden_key() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  let made = mysql(&format!(
+    "CREATE DATABASE IF NOT EXISTS {db};
+     DROP TABLE IF EXISTS {db}.ai_nopk;
+     CREATE TABLE {db}.ai_nopk (a INT NOT NULL, b VARCHAR(10))
+       ENGINE=NDB DEFAULT CHARSET=latin1;
+     INSERT INTO {db}.ai_nopk VALUES (1, 'm'), (2, 'm'), (3, 'm');",
+    db = IC_IT_DB
+  ));
+  if made.is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let t = bind(&mut conn, "ai_nopk");
+
+  // `$PK` as the dictionary has it: the last column, the key alone,
+  // the AUTO_INCREMENT column, BIGINT UNSIGNED, never NULL.
+  let pk = t.def.hidden_key().expect("a hidden key");
+  let column = t.def.field(pk).expect("the column");
+  assert_eq!(column.name, "$PK");
+  assert!(column.primary_key && !column.nullable);
+  assert_eq!(
+    column.type_code,
+    ic_signals::table_props::IC_TYPE_BIGUNSIGNED
+  );
+  assert_eq!(pk + 1, t.def.num_fields());
+  assert_eq!(t.def.auto_increment_column(), Some(pk));
+
+  // Inserts take their keys from the counter, as MySQL's do: neither
+  // takes the other's.
+  let queries = takeover_queries(&mut conn, &t, 40);
+  let keys = take_ids(&conn, &t, 40);
+  let mut rows: Vec<Vec<(&str, String)>> = Vec::with_capacity(keys.len());
+  let mut i: usize = 0;
+  while i < keys.len() {
+    rows.push(vec![
+      ("$PK", keys[i].to_string()),
+      ("a", (100 + i).to_string()),
+      ("b", "i".to_string()),
+    ]);
+    i += 1;
+  }
+  insert_rows_as_text(&mut conn, &t, &queries, &rows);
+  mysql(&format!(
+    "INSERT INTO {}.ai_nopk VALUES (4, 'm'), (5, 'm'), (6, 'm');",
+    IC_IT_DB
+  ))
+  .expect("a MySQL client");
+  assert_eq!(count_where("ai_nopk", "1 = 1"), 46);
+
+  // A read, an update and a delete by the hidden key, as on any table.
+  let mut key = t.row();
+  t.put(&mut key, "$PK", &keys[5].to_string());
+  let mut out = t.row();
+  let found = key_op::read_committed(&mut conn, &t.rec, &key, &t.rec, &mut out)
+    .expect("a read");
+  assert!(found, "no row by its hidden key");
+  assert_eq!(t.get(&out, "a"), "105");
+  t.put(&mut out, "b", "k");
+  key_op::write_key(
+    &mut conn,
+    key_ops::IC_OP_UPDATE,
+    &t.rec,
+    &key,
+    &t.rec,
+    &out,
+  )
+  .expect("an update");
+  let mut gone = t.row();
+  t.put(&mut gone, "$PK", &keys[6].to_string());
+  key_op::write_key(
+    &mut conn,
+    key_ops::IC_OP_DELETE,
+    &t.rec,
+    &gone,
+    &t.rec,
+    &gone,
+  )
+  .expect("a delete");
+  assert_eq!(count_where("ai_nopk", "a = 105 AND b = 'k'"), 1);
+  assert_eq!(count_where("ai_nopk", "a = 106"), 0);
+
+  // A scan takes our rows over, the key only it returns: even ones
+  // updated, odd ones deleted. MySQL's are passed over.
+  let scan = conn.create_scan(&t.def, &t.rec).expect("create the scan");
+  let mut free = takeover_queries(&mut conn, &t, 50);
+  let all = free.len();
+  let tid = conn
+    .start_transaction(TransactionHint::Any, Some(&t.def))
+    .expect("start a transaction");
+  let args = ScanArgs {
+    lock: ScanLock::Exclusive,
+    trans: Some(tid),
+    timeout_ms: IC_IT_SCAN_WAIT_MS as u32,
+    ..ScanArgs::default()
+  };
+  conn.start_scan(scan, &args).expect("start the scan");
+  let mut scanned: i64 = 0;
+  while conn.next_row(scan).expect("a row") {
+    scanned += 1;
+    let row = conn.scan_row(scan);
+    // A string comes back quoted.
+    if t.get(row, "b") != "'i'" {
+      continue;
+    }
+    let a: i64 = t.get(row, "a").parse().expect("a number");
+    let hidden = t.get(row, "$PK");
+    take_back(&mut conn, &mut free);
+    let qid = free.pop().expect("a free query");
+    if a % 2 == 0 {
+      let query = conn.query_mut(qid).expect("the query");
+      t.put(query.attr_row_mut(), "$PK", &hidden);
+      t.put(query.attr_row_mut(), "a", &a.to_string());
+      t.put(query.attr_row_mut(), "b", "u");
+      conn
+        .update_scan_row(qid, scan, &TakeoverArgs::default())
+        .expect("take the row over to update it");
+    } else {
+      conn
+        .delete_scan_row(qid, scan, &TakeoverArgs::default())
+        .expect("take the row over to delete it");
+    }
+  }
+  assert_eq!(scanned, 45);
+  assert!(conn.scan(scan).expect("the scan").error().is_none());
+  let _ = conn.send_queries(true);
+  let start = time::gethrtime();
+  while free.len() < all {
+    let _ = conn.flush(100, true);
+    take_back(&mut conn, &mut free);
+    let waited = time::millis_elapsed(start, time::gethrtime());
+    assert!(waited < IC_IT_SCAN_WAIT_MS, "the takeovers did not end");
+  }
+  conn.commit_transaction(tid).expect("commit");
+  assert_eq!(finish(&mut conn, tid), CommitState::Committed);
+  conn.close_transaction(tid).expect("close");
+  assert_eq!(conn.unexpected(), 0);
+  // Of ours, 100 to 139 less 105 and 106: 19 even, 19 odd.
+  assert_eq!(count_where("ai_nopk", "b = 'u' AND a % 2 = 0"), 19);
+  assert_eq!(count_where("ai_nopk", "b = 'i'"), 0);
+  assert_eq!(count_where("ai_nopk", "b = 'm'"), 6);
+  assert_eq!(count_where("ai_nopk", "1 = 1"), 6 + 1 + 19);
+
+  // MySQL finds our rows by its own scans, and changes them as its own.
+  mysql(&format!(
+    "UPDATE {db}.ai_nopk SET b = 'v' WHERE b = 'u';
+     DELETE FROM {db}.ai_nopk WHERE b = 'k';",
+    db = IC_IT_DB
+  ))
+  .expect("a MySQL client");
+  assert_eq!(count_where("ai_nopk", "b = 'v'"), 19);
+  assert_eq!(count_where("ai_nopk", "1 = 1"), 25);
 }

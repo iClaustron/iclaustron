@@ -84,10 +84,10 @@ A whole run needs about 30 MB of data memory on each data node, and
 nearly all of it is the tables themselves (measured 2026-10-15).
 - A table takes about 650 KB on a node however few its rows: each of
   its 8 fragments there gets at least a page of each kind.
-- The run makes about 50 tables and indexes, beside the dictionary's
+- The run makes about 55 tables and indexes, beside the dictionary's
   own; the `where` and `assign` groups of phase 9.1 added four, the
-  `auto_increment` group of phase 9.2 three, and the `c_api` group's
-  test of it two.
+  `auto_increment` group of phase 9.2 six, and the `c_api` group's
+  test of it three.
 
 MTR's default of 30 MB is too little. The last group to make its
 tables, `uk`, then has its inserts refused: "The table 'uk' is full".

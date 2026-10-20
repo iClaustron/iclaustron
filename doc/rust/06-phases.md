@@ -1811,10 +1811,52 @@ From reading (chapter 05 §16.5):
   reads the field flags, and sees a stopped executor's submitter
   refuse; unit tests check 0.1's shorter options and the field info's
   size.
+- **9.2c, written 2026-10-20**: nothing new in the library for the
+  hidden key, which records, key operations, scans and takeovers
+  already handle as any column. `ic_trans` takes `--auto-increment`,
+  its run of keys one block from the table's counter, the key that
+  column alone (a hidden key is), and `--keep`, the rows left in
+  place. The exit's tests, in the `auto_increment` group:
+  - `auto_increment_inserts_beside_mysqls_give_no_duplicate`: ten
+    rounds of a hundred rows of MySQL's, then twenty of ours, each
+    value asked for alone, the table's prefetch 7 so that the two sides
+    take from the counter in turn; then five hundred of MySQL's from a
+    thread of their own while five hundred of ours go in; every row
+    inserted, and MySQL's values past our first. Then MySQL's explicit
+    value past the counter, after which our next refill starts past
+    it, and ours, after which MySQL's next six hundred rows are all
+    past it: its own explicit value had emptied its range (chapter 05
+    §16.5).
+  - `auto_increment_keeps_the_step_and_offset_but_not_for_a_hidden_key`:
+    a global with step 10 and offset 3 hands out 10 k + 3 and reserves
+    4096 steps a refill, and a hidden key's values still one apart.
+  - `auto_increment_a_table_without_a_primary_key_works_by_its_hidden_key`:
+    `$PK` as the dictionary has it; forty inserts of ours beside
+    MySQL's; a read, an update and a delete by the hidden key; a
+    locking scan that takes our rows over, updating the even and
+    deleting the odd; and MySQL updating and deleting our rows by its
+    own scans.
+  The `c_api` group's test reads a hidden key's flags too. By hand,
+  `tools/ai_interleave.sh`: MySQL clients inserting batches into one
+  table, on one or both MySQL servers, for as long as runs of
+  `ic_trans --auto-increment --keep` go in, two processes at once;
+  then every run and batch must have succeeded, every row be there,
+  the rows switch between the two sides in id order, and after
+  MySQL's explicit value past the counter, `ic_trans`'s next keys
+  start past it.
 - Exit: inserts from `ic_trans` and from a MySQL server, interleaved
   into one AUTO_INCREMENT table, give no duplicate; an explicit value
   moves the counter for both; on a table without a primary key, inserts,
-  then a scan with updates and deletes by takeover.
+  then a scan with updates and deletes by takeover. **Met 2026-10-20**:
+  the `auto_increment` group and the `c_api` group's test passed against
+  the dev cluster, the hidden key's test after a fix to the test itself
+  (it compared a text column's value without the quotes the text form
+  gives it); and `tools/ai_interleave.sh` with its defaults, twenty
+  `ic_trans` runs of 500 rows, two at once, beside two MySQL writers:
+  416 400 rows, every id once, 10 000 of them `ic_trans`'s, the rows
+  switching between the two sides 34 times in id order, and after
+  MySQL's explicit value 1 488 320, `ic_trans`'s keys starting at
+  1 488 321. With 9.1, phase 9 is done.
 
 ## Phase 10 — Later
 

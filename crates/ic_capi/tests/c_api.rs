@@ -1735,12 +1735,15 @@ fn c_api_programs_filter_scans_guard_updates_and_count() {
 // ---- AUTO_INCREMENT ----
 
 /// The tables of the AUTO_INCREMENT test, made afresh: one with such a
-/// column, two rows of MySQL's in it, and one without.
+/// column, two rows of MySQL's in it, one without, and one without a
+/// primary key.
 fn setup_capi_ai_tables() -> Option<()> {
   mysql(&format!(
     "CREATE DATABASE IF NOT EXISTS {db};
      DROP TABLE IF EXISTS {db}.capi_ai;
      DROP TABLE IF EXISTS {db}.capi_ai_plain;
+     DROP TABLE IF EXISTS {db}.capi_ai_nopk;
+     CREATE TABLE {db}.capi_ai_nopk (a INT) ENGINE=NDB;
      CREATE TABLE {db}.capi_ai (
        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
        val INT
@@ -1829,6 +1832,23 @@ fn c_api_auto_increment_on_a_connection_and_through_an_executor() {
       ic_apid_conn_auto_increment(conn, plain, &mut value),
       IC_ERROR_NO_AUTO_INCREMENT
     );
+
+    // A table without a primary key: its hidden key, last, flagged as
+    // such, takes its values from the counter in turn.
+    let nopk_name = cs("capi_ai_nopk");
+    let mut nopk: *mut IcTableDef = std::ptr::null_mut();
+    let ret =
+      ic_apid_conn_table_bind(conn, db.as_ptr(), nopk_name.as_ptr(), &mut nopk);
+    assert_eq!(ret, 0, "bind: {}", message(ret));
+    let hidden = field(nopk, "$PK");
+    assert_eq!(hidden + 1, ic_table_def_num_fields(nopk));
+    assert_eq!(field_flags(nopk, hidden), (true, true));
+    assert_eq!(field_flags(nopk, field(nopk, "a")), (false, false));
+    let mut key: u64 = 0;
+    assert_eq!(ic_apid_conn_auto_increment(conn, nopk, &mut key), 0);
+    assert_eq!(ic_apid_conn_auto_increment(conn, nopk, &mut value), 0);
+    assert_eq!(value, key + 1);
+    ic_table_def_free(nopk);
 
     // The global's prefetch: 100 reserved at once, then handed out in
     // turn.
