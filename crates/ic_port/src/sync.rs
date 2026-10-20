@@ -28,32 +28,39 @@ use std::time::Duration;
 
 /// Unordered: the mutex takes no part in ordering checks.
 pub const IC_MUTEX_LEVEL_UNORDERED: u32 = 0;
+/// A table's AUTO_INCREMENT range, held across a refill's round trip:
+/// first, since the refill takes the counter connection and what it
+/// takes in turn.
+pub const IC_MUTEX_LEVEL_AUTO_INCREMENT: u32 = 1;
+/// The connection the process keeps for the AUTO_INCREMENT counters,
+/// held for one counter operation, under a table's range.
+pub const IC_MUTEX_LEVEL_COUNTER: u32 = 2;
 /// Global dictionary cache.
-pub const IC_MUTEX_LEVEL_DICT: u32 = 1;
+pub const IC_MUTEX_LEVEL_DICT: u32 = 3;
 /// `ApidGlobal`: thread table and stop flag. Taken at start and stop,
 /// not on the signal path.
-pub const IC_MUTEX_LEVEL_GLOBAL: u32 = 2;
+pub const IC_MUTEX_LEVEL_GLOBAL: u32 = 4;
 /// One user thread's inbound signal queue.
-pub const IC_MUTEX_LEVEL_THREAD_CONN: u32 = 3;
-// Level 4 is deliberately unused. In the C it is the receive state
+pub const IC_MUTEX_LEVEL_THREAD_CONN: u32 = 5;
+// Level 6 is deliberately unused. In the C it is the receive state
 // mutex, which protects the lists that move a node from one receive
 // thread to another. Here a node is assigned to a receive thread at
 // connect and stays, so there is nothing to protect.
 /// Global socket buffer page pool.
-pub const IC_MUTEX_LEVEL_SOCK_BUF: u32 = 5;
+pub const IC_MUTEX_LEVEL_SOCK_BUF: u32 = 7;
 /// One node connection's send chain. Not its state: that has a single
 /// writer and is published through atomics, see `ic_apid::node_state`.
-pub const IC_MUTEX_LEVEL_NODE_CONN: u32 = 6;
-// Level 7 is deliberately unused. In the C it is the heartbeat mutex,
+pub const IC_MUTEX_LEVEL_NODE_CONN: u32 = 8;
+// Level 9 is deliberately unused. In the C it is the heartbeat mutex,
 // which protects the heartbeat thread's linked list of nodes. Here the
 // heartbeat thread walks the fixed node table and keeps no list.
 /// The send thread pool's queue of nodes to write for. Taken after a
 /// node's send chain has been let go of, never under it.
-pub const IC_MUTEX_LEVEL_SEND_POOL: u32 = 8;
+pub const IC_MUTEX_LEVEL_SEND_POOL: u32 = 10;
 /// A completion slot, where an executor leaves a request's result for
 /// the application thread waiting on it. Taken last: nothing is
 /// locked under it.
-pub const IC_MUTEX_LEVEL_COMPLETION: u32 = 9;
+pub const IC_MUTEX_LEVEL_COMPLETION: u32 = 11;
 
 thread_local! {
     static HELD_LEVELS: RefCell<Vec<u32>> = const { RefCell::new(Vec::new()) };

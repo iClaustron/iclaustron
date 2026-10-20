@@ -403,15 +403,17 @@ Mutex ordering levels (lock lower before higher, never the reverse):
 
 | Level | Mutex | Protects |
 |---|---|---|
-| 1 | `ApidGlobal.dict_mutex` | global dictionary cache |
-| 2 | `ApidGlobal.mutex` | thread table, stop flag; start and stop only |
-| 3 | `ThreadConnection.mutex` | one user thread's inbound queue, and an executor's requests |
-| 5 | `SockBuf.mutex` | global page pool (thread-local free lists avoid it) |
-| 6 | `NodeConnection.mutex` | one node's send chain |
-| 8 | `SendPool.mutex` | the send pool's queue of nodes to write for |
-| 9 | `Slot.state` | a completion slot, where an executor leaves a finished request; nothing is locked under it |
+| 1 | `TableDef`'s AUTO_INCREMENT range | the values a table's range holds, across a refill's round trip (phase 9.2) |
+| 2 | `ApidShared.counter` | the connection the process keeps for the AUTO_INCREMENT counters, for one counter operation |
+| 3 | `ApidGlobal.dict_mutex` | global dictionary cache |
+| 4 | `ApidGlobal.mutex` | thread table, stop flag; start and stop only |
+| 5 | `ThreadConnection.mutex` | one user thread's inbound queue, and an executor's requests |
+| 7 | `SockBuf.mutex` | global page pool (thread-local free lists avoid it) |
+| 8 | `NodeConnection.mutex` | one node's send chain |
+| 10 | `SendPool.mutex` | the send pool's queue of nodes to write for |
+| 11 | `Slot.state` | a completion slot, where an executor leaves a finished request; nothing is locked under it |
 
-Levels 4 and 7 are deliberately empty. The C has a receive state mutex
+Levels 6 and 9 are deliberately empty. The C has a receive state mutex
 for moving nodes between receive threads and a heartbeat mutex for the
 heartbeat node list; fixed assignment at connect removes the first and a
 list-free heartbeat thread removes the second. Node state itself is not

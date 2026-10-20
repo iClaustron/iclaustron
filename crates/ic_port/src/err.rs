@@ -18,7 +18,7 @@ use std::fmt;
 /// First iClaustron error code.
 pub const IC_FIRST_ERROR: i32 = 7000;
 /// Last iClaustron error code.
-pub const IC_LAST_ERROR: i32 = 7165;
+pub const IC_LAST_ERROR: i32 = 7166;
 
 /// Line was too long.
 pub const IC_ERROR_LINE_TOO_LONG: i32 = 7000;
@@ -390,6 +390,9 @@ pub const IC_ERROR_NOT_COMPARABLE: i32 = 7164;
 /// reading an input beyond the sixteenth, or put on an operation of
 /// another table than its own.
 pub const IC_ERROR_BAD_PROGRAM: i32 = 7165;
+/// An AUTO_INCREMENT value asked of a table that has no AUTO_INCREMENT
+/// column, a hidden key included.
+pub const IC_ERROR_NO_AUTO_INCREMENT: i32 = 7166;
 
 /// What kind of thing went wrong (`IC_ERROR_CATEGORY`), in the header's
 /// order.
@@ -888,6 +891,7 @@ pub fn message(code: i32) -> &'static str {
     IC_ERROR_BAD_PROGRAM => {
       "The program names what it does not have, or is for another table"
     }
+    IC_ERROR_NO_AUTO_INCREMENT => "The table has no AUTO_INCREMENT column",
     _ => "Unknown error code",
   }
 }

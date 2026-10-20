@@ -74,6 +74,7 @@ use ic_signals::table_props::HashMapProps;
 use ic_signals::table_props::TableProps;
 
 use crate::apid_conn::ApidConnection;
+use crate::auto_increment::TableCounter;
 use crate::collation_client;
 use crate::collation_map::CollationMap;
 use crate::dict_client;
@@ -102,6 +103,9 @@ pub struct TableDef {
   /// By attribute place, how each character column's text is converted,
   /// where its collation was described.
   encodings: Vec<Option<TextEncoding>>,
+  /// The AUTO_INCREMENT column and the values reserved for it, for a
+  /// table that has one (chapter 04, "AUTO_INCREMENT").
+  pub(crate) counter: Option<TableCounter>,
 }
 
 /// The place of each column in `attributes`, by column id.
@@ -137,6 +141,7 @@ impl TableDef {
   ) -> TableDef {
     let attr_index = index_attributes(&info);
     let has_blob = info.attributes.iter().any(|attr| attr.is_blob());
+    let counter = TableCounter::of(&info);
     TableDef {
       info,
       hash_map,
@@ -145,6 +150,7 @@ impl TableDef {
       has_blob,
       collations: Vec::new(),
       encodings: Vec::new(),
+      counter,
     }
   }
 

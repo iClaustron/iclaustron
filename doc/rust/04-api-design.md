@@ -817,11 +817,22 @@ AUTO_INCREMENT column as MySQL does):
   as MySQL servers keep one per table under a guard, chapter 05 §16.5):
   the table's description, shared by every connection and executor,
   holds it under a mutex. Taking a value is a short step under the
-  lock; the thread that finds the range used up refills it on its own
-  connection, holding the lock for that round trip while others wait,
-  as MySQL's guard does. So the values a process hands out come close
-  to in order across its threads, and gaps and refills do not grow
-  with the number of threads.
+  lock; the thread that finds the range used up refills it, holding
+  the lock for that round trip while others wait, as MySQL's guard
+  does. So the values a process hands out come close to in order
+  across its threads, and gaps and refills do not grow with the number
+  of threads.
+
+- **The refill goes on a connection the process keeps for the
+  counters** (built 2026-10-20, phase 9.2a), made at first use and
+  used for one counter operation at a time under a mutex of its own,
+  taken under a table's range and never the other way round. Not on
+  the caller's connection: flushing it would send the queries the
+  application had defined and not yet sent, and its poll would run
+  the application's callbacks, which may themselves ask for values of
+  the table whose lock the thread holds. An attempt whose transaction
+  has not ended a second after its own wait for replies should have
+  ended it gives the connection up, and the next makes another.
 
 - **How many values a refill reserves** (the author, 2026-10-20, Q13,
   choosing among one size for the process, a size per table beside
@@ -876,17 +887,16 @@ AUTO_INCREMENT column as MySQL does):
   `submitter.auto_increment(&table)`,
   `submitter.auto_increment_block(&table, n)`,
   `submitter.auto_increment_seen(&table, value)` and
-  `submitter.auto_increment_peek(&table)`. The calling thread
-  takes from the shared range itself; a refill, or an explicit value
-  past the counter, goes to the executor as a request of its own, the
-  counter update with its new value read after, and the thread waits
-  for it, holding the table's lock meanwhile as a connection's refill
-  does. The executor's thread never takes that lock, so the wait
-  cannot close on itself. A connection and an executor in one process
-  share each table's range. On the executor's own thread, from a
-  callback, the calls are refused with `IC_ERROR_NOT_SUPPORTED`, as
-  `execute` is, every time and not only when a refill is due, so that
-  a callback that asks does not fail only once the range runs out.
+  `submitter.auto_increment_peek(&table)`. They are the connection's:
+  the calling thread takes from the shared range itself, and a
+  refill, or an explicit value past the counter, goes on the process's
+  counter connection as from a connection, not through the executor.
+  A connection and an executor in one process share each table's
+  range. Asked from a callback on the executor's own thread, a refill
+  holds the executor for its round trip, up to 3.6 s while it retries;
+  nothing waits for itself, so the calls are not refused there (they
+  were to be, while a refill was to go through the executor, revised
+  2026-10-20 in 9.2a).
 
 - **A table without a primary key shows its hidden key as the
   dictionary has it** (the author, 2026-10-20, choosing between that

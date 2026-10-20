@@ -105,6 +105,7 @@
 pub mod adaptive_send;
 pub mod apid_conn;
 pub mod apid_global;
+pub mod auto_increment;
 pub mod collation_client;
 pub mod collation_map;
 pub mod connect_thread;

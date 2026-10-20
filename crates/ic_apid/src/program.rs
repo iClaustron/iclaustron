@@ -1234,6 +1234,18 @@ pub(crate) fn test_table() -> Arc<TableDef> {
   tests::table()
 }
 
+/// Run a program's code on the tests' model of the interpreter over a
+/// row of integer columns by id, for the tests of programs other
+/// modules build: whether it accepts, and the columns it writes.
+#[cfg(test)]
+pub(crate) fn run_model(
+  words: &[u32],
+  row: &[Option<i64>],
+  inputs: &[i64; 16],
+) -> Result<(bool, tests::Writes), String> {
+  tests::run(words, row, inputs)
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -1756,15 +1768,15 @@ mod tests {
   type Row = [Option<i64>; 7];
 
   /// The columns a program wrote, and what.
-  type Writes = Vec<(u32, Option<i64>)>;
+  pub(super) type Writes = Vec<(u32, Option<i64>)>;
 
   /// Run `words` on `row`: whether it accepts, and what it writes.
   /// Every instruction the compiler makes is here, as chapter 05 §9
   /// describes it; anything else, and a NULL register compared, is an
   /// error.
-  fn run(
+  pub(super) fn run(
     words: &[u32],
-    row: &Row,
+    row: &[Option<i64>],
     inputs: &[i64; 16],
   ) -> Result<(bool, Writes), String> {
     let mut regs: [Option<i64>; 8] = [None; 8];

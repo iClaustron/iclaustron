@@ -8409,3 +8409,112 @@ fn assign_a_missed_condition_aborts_only_where_asked() {
   }
   assert!(said, "6000 said: {:?} {:?}", query_error, trans_error);
 }
+
+// ---- AUTO_INCREMENT (phase 9.2a) ----
+
+/// The values of `id` MySQL's inserts by `who` took, at or above `low`
+/// and below `high`.
+fn ids_between(who: &str, low: u64, high: u64) -> i64 {
+  count_of(&format!(
+    "SELECT COUNT(*) FROM {}.ai_api WHERE who = '{}' AND id >= {} \
+     AND id < {}",
+    IC_IT_DB, who, low, high
+  ))
+}
+
+#[test]
+fn auto_increment_values_come_from_the_counter_mysql_uses() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  let made = mysql(&format!(
+    "CREATE DATABASE IF NOT EXISTS {db};
+     DROP TABLE IF EXISTS {db}.ai_api;
+     DROP TABLE IF EXISTS {db}.ai_plain;
+     CREATE TABLE {db}.ai_api (
+       id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+       who CHAR(1) NOT NULL
+     ) ENGINE=NDB DEFAULT CHARSET=latin1;
+     CREATE TABLE {db}.ai_plain (id INT NOT NULL PRIMARY KEY) ENGINE=NDB;
+     INSERT INTO {db}.ai_api (who) VALUES ('m'), ('m'), ('m');",
+    db = IC_IT_DB
+  ));
+  if made.is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let t = bind(&mut conn, "ai_api");
+  let id_column = t.def.field_id("id").expect("id");
+  assert_eq!(t.def.auto_increment_column(), Some(id_column));
+  assert_eq!(t.def.hidden_key(), None);
+  let plain = bind(&mut conn, "ai_plain");
+  assert_eq!(
+    conn.auto_increment(&plain.def),
+    Err(IcError::new(err::IC_ERROR_NO_AUTO_INCREMENT))
+  );
+
+  // The counter is past every value MySQL reserved, and ours start
+  // there: 4096 reserved at once, then handed out in turn.
+  let mysqls = count_of(&format!("SELECT MAX(id) FROM {}.ai_api", IC_IT_DB));
+  let before = conn.auto_increment_peek(&t.def).expect("peek");
+  assert!(before > mysqls as u64, "{} after {}", before, mysqls);
+  let first = conn.auto_increment(&t.def).expect("a value");
+  assert!(first >= before, "{} below the counter {}", first, before);
+  let after = conn.auto_increment_peek(&t.def).expect("peek");
+  assert!(after >= first + 4096, "the counter at {}", after);
+  let second = conn.auto_increment(&t.def).expect("a value");
+  assert_eq!(second, first + 1);
+  // Another connection of the process takes from the same range.
+  let other = cluster.global.create_connection().expect("a connection");
+  let third = other.auto_increment(&t.def).expect("a value");
+  assert_eq!(third, second + 1);
+  drop(other);
+
+  // Our values go in, and MySQL's next take none of ours.
+  mysql(&format!(
+    "INSERT INTO {db}.ai_api VALUES ({a}, 'i'), ({b}, 'i'), ({c}, 'i');
+     INSERT INTO {db}.ai_api (who) VALUES ('m'), ('m'), ('m'), ('m');",
+    db = IC_IT_DB,
+    a = first,
+    b = second,
+    c = third
+  ))
+  .expect("a MySQL client");
+  assert_eq!(ids_between("m", first, first + 4096), 0);
+
+  // A block that what is left cannot hold has a refill of its own.
+  let block = conn.auto_increment_block(&t.def, 5000).expect("a block");
+  assert!(block >= after, "{} below {}", block, after);
+  let after_block = conn.auto_increment_peek(&t.def).expect("peek");
+  assert!(
+    after_block >= block + 5000,
+    "the counter at {}",
+    after_block
+  );
+  let next = conn.auto_increment(&t.def).expect("a value");
+  assert!(next >= after_block, "{} below {}", next, after_block);
+
+  // An explicit value beyond the counter moves it past; one below what
+  // was handed out moves nothing.
+  let high = conn.auto_increment_peek(&t.def).expect("peek") + 100_000;
+  conn.auto_increment_seen(&t.def, high).expect("seen");
+  let moved = conn.auto_increment_peek(&t.def).expect("peek");
+  assert!(moved > high, "the counter at {} after {}", moved, high);
+  conn.auto_increment_seen(&t.def, first).expect("seen");
+  assert_eq!(conn.auto_increment_peek(&t.def).expect("peek"), moved);
+  let beyond = conn.auto_increment(&t.def).expect("a value");
+  assert!(beyond > high, "{} not past {}", beyond, high);
+
+  // MySQL's next values are past what we said too, once its own
+  // reserved values are used: none lands on ours.
+  mysql(&format!(
+    "INSERT INTO {db}.ai_api VALUES ({v}, 'i');
+     INSERT INTO {db}.ai_api (who) VALUES ('m'), ('m');",
+    db = IC_IT_DB,
+    v = beyond
+  ))
+  .expect("a MySQL client");
+  let total = count_of(&format!("SELECT COUNT(*) FROM {}.ai_api", IC_IT_DB));
+  assert_eq!(total, 3 + 3 + 4 + 1 + 2);
+}

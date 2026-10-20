@@ -1760,9 +1760,10 @@ From reading (chapter 05 §16.5):
   by the thread that finds it used up; 4096 values reserved at a time
   by default, a size per table beside it, and blocks of consecutive
   values for inserts of many rows (author, 2026-10-20, Q13). The same
-  calls on an executor's submitter, a refill going to the executor as
-  a request while the calling thread holds the lock, and a peek at the
-  counter without reserving (author, 2026-10-20). A table without a
+  calls on an executor's submitter, and a peek at the counter without
+  reserving (author, 2026-10-20). Refills go on a connection the
+  process keeps for the counters, from a connection and a submitter
+  alike (9.2a). A table without a
   primary key shows `$PK` as the ordinary column it is, its value
   taken with the same call, `table.hidden_key()` naming it (author,
   2026-10-20). Values are returned unchecked against a column
@@ -1775,6 +1776,21 @@ From reading (chapter 05 §16.5):
   an executor's submitter, and in C; **9.2c** the hidden key
   (`hidden_key`, the field flags) and the exit's group against a MySQL
   server.
+- **9.2a, written 2026-10-20** (`crates/ic_apid/src/auto_increment.rs`):
+  the range on `TableDef` under a mutex of its own, taken before every
+  other (mutex levels renumbered, chapter 02); the counter's own
+  connection in the global's shared part, let go of when the global
+  goes; `auto_increment`, `_block`, `_seen` and `_peek` on a connection;
+  `set_auto_increment_prefetch`, `auto_increment_column` and, a step
+  early, `hidden_key` on a table; the prefetch, step and offset in
+  `GlobalOptions`; `IC_ERROR_NO_AUTO_INCREMENT` (7166). The counter's
+  two programs, an add of input 0 and a move up only, are the
+  interpreter's from 9.1; unit tests check the range's arithmetic
+  against the reference's, the add's words against MySQL's capture,
+  and both programs on the model interpreter; the `auto_increment`
+  integration group takes values, blocks and explicit values beside a
+  MySQL server's inserts into one table, and reads the counter after
+  each.
 - Exit: inserts from `ic_trans` and from a MySQL server, interleaved
   into one AUTO_INCREMENT table, give no duplicate; an explicit value
   moves the counter for both; on a table without a primary key, inserts,

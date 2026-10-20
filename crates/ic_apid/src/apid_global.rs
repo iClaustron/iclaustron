@@ -73,6 +73,7 @@ use ic_port::debug::IC_HEARTBEAT_LEVEL;
 use ic_port::debug::IC_NDB_MESSAGE_LEVEL;
 use ic_port::err;
 use ic_port::sync::IcMutex;
+use ic_port::sync::IC_MUTEX_LEVEL_COUNTER;
 use ic_port::sync::IC_MUTEX_LEVEL_GLOBAL;
 use ic_port::sync::IC_MUTEX_LEVEL_NODE_CONN;
 use ic_port::time;
@@ -89,6 +90,8 @@ use ic_util::threadpool::ThreadPool;
 use crate::adaptive_send::AdaptiveSend;
 use crate::adaptive_send::IC_DEFAULT_MAX_SEND_WAIT_NANOS;
 use crate::apid_conn::ApidConnection;
+use crate::auto_increment::CounterOptions;
+use crate::auto_increment::CounterSlot;
 use crate::connect_thread;
 use crate::dict_cache::DictCache;
 use crate::heartbeat;
@@ -738,10 +741,25 @@ pub struct GlobalOptions {
   /// Used by [`ApidGlobal::connect`]; [`ApidGlobal::start`] takes it as
   /// an argument.
   pub mgm_timeout_ms: u32,
+  /// How many AUTO_INCREMENT values a refill reserves for a table that
+  /// does not say for itself (chapter 04, "AUTO_INCREMENT"); zero
+  /// counts as one.
+  pub auto_increment_prefetch: u32,
+  /// The step between the AUTO_INCREMENT values handed out, as MySQL's
+  /// `auto_increment_increment`; zero counts as one.
+  pub auto_increment_step: u32,
+  /// Where the AUTO_INCREMENT values start within the step, as MySQL's
+  /// `auto_increment_offset`; zero, or one above the step, counts as
+  /// one.
+  pub auto_increment_offset: u32,
 }
 
 /// How long a management server has to answer, unless the options say.
 pub const IC_DEFAULT_MGM_TIMEOUT_MS: u32 = 30_000;
+
+/// How many AUTO_INCREMENT values a refill reserves, unless the
+/// options or the table say: eight times a MySQL server's default.
+pub const IC_DEFAULT_AUTO_INCREMENT_PREFETCH: u32 = 4096;
 
 impl Default for GlobalOptions {
   fn default() -> GlobalOptions {
@@ -749,6 +767,9 @@ impl Default for GlobalOptions {
       receive_threads: 1,
       reply_wait_ms: 0,
       mgm_timeout_ms: IC_DEFAULT_MGM_TIMEOUT_MS,
+      auto_increment_prefetch: IC_DEFAULT_AUTO_INCREMENT_PREFETCH,
+      auto_increment_step: 1,
+      auto_increment_offset: 1,
     }
   }
 }
@@ -824,6 +845,13 @@ pub(crate) struct ApidShared {
   pub(crate) scan_batch_rows: u32,
   pub(crate) scan_batch_bytes: u32,
   pub(crate) scan_batch_bytes_total: u32,
+  /// The prefetch, step and offset of AUTO_INCREMENT values, fixed at
+  /// start from the options.
+  pub(crate) auto_increment: CounterOptions,
+  /// The connection the AUTO_INCREMENT counters are updated on, made
+  /// at first use; taken out when the global goes, as it holds the
+  /// global's shared part in turn.
+  pub(crate) counter: IcMutex<CounterSlot>,
 }
 
 impl ApidShared {
@@ -1333,6 +1361,8 @@ impl ApidGlobal {
       scan_batch_rows,
       scan_batch_bytes,
       scan_batch_bytes_total,
+      auto_increment: CounterOptions::from_options(options),
+      counter: IcMutex::new(IC_MUTEX_LEVEL_COUNTER, CounterSlot::new()),
     });
 
     let num_nodes = shared.nodes.len();
@@ -1537,7 +1567,16 @@ impl ApidGlobal {
 
   /// Stop every thread and wait for each.
   pub fn stop(&mut self) {
+    self.shared.drop_counter_link();
     self.pool.stop();
+  }
+}
+
+impl Drop for ApidGlobal {
+  fn drop(&mut self) {
+    // The counter's connection holds the shared part; it goes first, so
+    // that the shared part can go with the global.
+    self.shared.drop_counter_link();
   }
 }
 
