@@ -2830,6 +2830,9 @@ seen live in 8.2.
   `auto_increment_increment` and `auto_increment_offset`, and a cache
   size of `ndb_autoincrement_prefetch_sz` (default 512)
   (`plugin/ha_ndbcluster.cc:184-194, 12338-12340`).
+- A value that does not fit the column fails the insert in MySQL's
+  strict mode, and outside it is cut to the column's largest, so that
+  the next insert finds it taken (`/sql/handler.cc:3925-3945`).
 - After an insert with an explicit value, MySQL servers move the
   counter past it, upwards only, unless their cache or highest seen is
   already above (`src/ndbapi/Ndb.cpp:1609-1695`;

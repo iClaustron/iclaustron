@@ -785,6 +785,134 @@ between them, without subroutine ids for the caller to keep:
 
 C follows the Rust API by the ABI's rules below, as the scans' did.
 
+### AUTO_INCREMENT (phase 9.2; agreed with the author 2026-10-20)
+
+Values are asked for, not filled in (the author, 2026-10-20, choosing
+between an explicit call and an insert that fills a NULL
+AUTO_INCREMENT column as MySQL does):
+
+- **`conn.auto_increment(&table) -> u64`**: the next value of the
+  table's AUTO_INCREMENT column, from a range reserved ahead; when the
+  range is used up, one counter update reserves the next (chapter 05
+  §16.5), a round trip in the call. The application puts the value in
+  its row.
+- **`conn.auto_increment_seen(&table, value)`**: after an insert with
+  a value of the application's own, so that the counter moves past it,
+  only ever up.
+- **`conn.auto_increment_peek(&table) -> u64`** (the author,
+  2026-10-20, choosing between it and none): the counter as it stands,
+  the next value no client has reserved, by one shared read of the
+  counter row (chapter 05 §16.5), the range neither locked nor
+  touched. Advisory: not the next value this process hands out from
+  its range, and stale once any client refills. MySQL servers read it
+  for the `AUTO_INCREMENT` that `SHOW TABLE STATUS` reports; the
+  exit's test reads it to see an explicit value move the counter.
+- Defining an insert stays as it is, packing a request without a
+  round trip; filling the column as MySQL does may come later as a
+  helper over these.
+
+- **One range per table for the whole process** (the author,
+  2026-10-20, choosing between a range per connection, as the
+  reference API keeps one per connection object, and one per process,
+  as MySQL servers keep one per table under a guard, chapter 05 §16.5):
+  the table's description, shared by every connection and executor,
+  holds it under a mutex. Taking a value is a short step under the
+  lock; the thread that finds the range used up refills it on its own
+  connection, holding the lock for that round trip while others wait,
+  as MySQL's guard does. So the values a process hands out come close
+  to in order across its threads, and gaps and refills do not grow
+  with the number of threads.
+
+- **How many values a refill reserves** (the author, 2026-10-20, Q13,
+  choosing among one size for the process, a size per table beside
+  it, and a block per call beside both): all three.
+  `GlobalOptions::auto_increment_prefetch`, **4096** by default, eight
+  times the 512 MySQL servers take by default (chapter 05 §16.5);
+  `table.set_auto_increment_prefetch(n)` on the shared description, for
+  that table alone; and `conn.auto_increment_block(&table, n)`, the
+  first of `n` values in a row, reserved together, for an insert of
+  many rows, as a MySQL server raises its prefetch to the rows of a
+  bulk insert. A block the range left holds is taken from it; one it
+  does not is reserved by a refill of its own, of at least `n`.
+
+- **Step and offset, one pair for the process** (the author,
+  2026-10-20, choosing among none, one pair for the process, and a
+  pair per table): `GlobalOptions::auto_increment_step` and
+  `GlobalOptions::auto_increment_offset`, 1 and 1 by default, as
+  MySQL's `auto_increment_increment` and `auto_increment_offset`
+  (chapter 05 §16.5). A refill reserves prefetch × step; the next value
+  is the least k × step + offset above the last handed out, an offset
+  above the step counting as 1; a block of `n` is `n` values a step
+  apart. They are what tell the clusters of a replication ring apart,
+  each with its own counter, so they belong to the global, one cluster
+  each, and are set as that cluster's MySQL servers are. Within one
+  cluster, clients with different steps still never share a value, as
+  each reserves its own stretch of the counter. The hidden `$PK` always
+  takes 1 and 1, as MySQL servers do.
+
+- **The value is returned as it is** (the author, 2026-10-20, choosing
+  between that and checking it against the column's type, as MySQL
+  does, chapter 05 §16.5): an AUTO_INCREMENT column narrower than 64
+  bits is the schema's error, in the author's view, and fitting a
+  value to such a column is the application's.
+
+- **A temporary error on the counter is retried inside the call** (the
+  author, 2026-10-20, choosing between that and returning it at once):
+  repeating a counter update is always safe, as an attempt whose
+  outcome is unknown at worst leaves a gap, never a duplicate. Unlike
+  MySQL servers' 100 attempts 30–36 ms apart (chapter 05 §16.5), the
+  first pause is short, **100 µs, doubled after each failure**; once
+  **3.6 s** have passed since the first attempt the call fails with the
+  last error. A pause that would carry past that is cut to end there,
+  for one last attempt: some seventeen attempts at most, fewer as each
+  round trip counts too. The table's lock is held throughout, so
+  threads waiting for values wait behind the one retrying rather than
+  each trying the troubled counter row in turn. An error that is not
+  temporary is returned at once.
+
+- **Through an executor, the same calls on the submitter** (the
+  author, 2026-10-20, choosing between them and calls on the table's
+  description taking a connection or a submitter through a trait):
+  `submitter.auto_increment(&table)`,
+  `submitter.auto_increment_block(&table, n)`,
+  `submitter.auto_increment_seen(&table, value)` and
+  `submitter.auto_increment_peek(&table)`. The calling thread
+  takes from the shared range itself; a refill, or an explicit value
+  past the counter, goes to the executor as a request of its own, the
+  counter update with its new value read after, and the thread waits
+  for it, holding the table's lock meanwhile as a connection's refill
+  does. The executor's thread never takes that lock, so the wait
+  cannot close on itself. A connection and an executor in one process
+  share each table's range. On the executor's own thread, from a
+  callback, the calls are refused with `IC_ERROR_NOT_SUPPORTED`, as
+  `execute` is, every time and not only when a refill is due, so that
+  a callback that asks does not fail only once the range runs out.
+
+- **A table without a primary key shows its hidden key as the
+  dictionary has it** (the author, 2026-10-20, choosing between that
+  and hiding it, with inserts filling it themselves and its rows
+  reached only by a scan's takeover): `$PK` stays an ordinary last
+  column, BIGUNSIGNED, the primary key and the table's AUTO_INCREMENT
+  column (chapter 05 §16.5). An insert takes its key from
+  `auto_increment(&table)`, step and offset 1 and 1, and puts it in its
+  key record; a scan reads `$PK` as any column, and reads, updates and
+  deletes by that key work as on any table, as do takeovers.
+  `table.hidden_key() -> Option<u32>` names the column, so that tools
+  listing columns can leave it out. Nothing else is new: records, key
+  operations, scans and takeovers over `$PK` already work.
+
+C follows by the ABI's rules, a status returned and the value through
+a pointer: `ic_apid_conn_auto_increment`,
+`ic_apid_conn_auto_increment_block`,
+`ic_apid_conn_auto_increment_seen` and
+`ic_apid_conn_auto_increment_peek`, the same four as
+`ic_apid_submitter_auto_increment…`,
+`ic_table_def_set_auto_increment_prefetch`, and
+`auto_increment_prefetch`, `auto_increment_step` and
+`auto_increment_offset` at the end of `IC_GLOBAL_OPTIONS`, and
+`auto_increment` and `hidden_key` flags at the end of `IC_FIELD_INFO`,
+where their sizes keep older programs working.
+
 ### Errors
 
 `IcError` is a code: 7000 and up iClaustron's own, small positive codes

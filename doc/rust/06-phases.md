@@ -1737,8 +1737,10 @@ From reading (chapter 05 §16.5):
   reads the new value back, in a transaction of its own placed by the
   counter row's key: one round trip, the lock held only inside the data
   node. They are handed out from a range the client keeps per table;
-  the prefetch is ours to choose (Q13), step and offset follow MySQL's
-  `auto_increment_increment` and `auto_increment_offset`. Values are
+  the prefetch is ours to choose (Q13, decided 2026-10-20: 4096), step
+  and offset follow MySQL's `auto_increment_increment` and
+  `auto_increment_offset`, one pair for the process in
+  `GlobalOptions`, 1 and 1 by default (author, 2026-10-20). Values are
   unique across API nodes, not ordered, and unused ones are gaps.
 - An explicit value above the counter moves the counter past it, only
   ever upwards, by an interpreted update that writes only if larger; a
@@ -1748,7 +1750,31 @@ From reading (chapter 05 §16.5):
   as `$PK`, BIGUNSIGNED, taking values from the same counter. Inserts
   need only that. Reads, updates and deletes need the key, which only a
   scan returns (phase 8).
-- Temporary errors are retried, as MySQL servers do.
+- Temporary errors are retried inside the call, the first pause 100 µs
+  and doubled after each failure, failing once 3.6 s have passed
+  (author, 2026-10-20).
+- Values are asked for by a call of their own, and the application puts
+  them in its row; an explicit value is reported by another call, which
+  moves the counter (author, 2026-10-20; chapter 04, "AUTO_INCREMENT").
+  One range per table for the whole process, under a mutex, refilled
+  by the thread that finds it used up; 4096 values reserved at a time
+  by default, a size per table beside it, and blocks of consecutive
+  values for inserts of many rows (author, 2026-10-20, Q13). The same
+  calls on an executor's submitter, a refill going to the executor as
+  a request while the calling thread holds the lock, and a peek at the
+  counter without reserving (author, 2026-10-20). A table without a
+  primary key shows `$PK` as the ordinary column it is, its value
+  taken with the same call, `table.hidden_key()` naming it (author,
+  2026-10-20). Values are returned unchecked against a column
+  narrower than 64 bits, which is the schema's error (author,
+  2026-10-20).
+- Built in three steps: **9.2a** the counter on a connection (the
+  range on the shared description, refills, blocks, explicit values,
+  the peek, the retries and the options), its programs checked against
+  MySQL's counter update as captured (§9.1); **9.2b** the same through
+  an executor's submitter, and in C; **9.2c** the hidden key
+  (`hidden_key`, the field flags) and the exit's group against a MySQL
+  server.
 - Exit: inserts from `ic_trans` and from a MySQL server, interleaved
   into one AUTO_INCREMENT table, give no duplicate; an explicit value
   moves the counter for both; on a table without a primary key, inserts,

@@ -63,6 +63,12 @@
 | `nodeid=` and `bind-address=` (was Q9) | both in the connectstring: the node id asked of the management server, the local address every socket binds to before it connects |
 | Rows in the C API (was Q10) | the query owns its rows; C gets pointers to them, valid until the query is freed (`ic_apid_query_key_row`, `ic_apid_query_attr_row`); no copy, nothing pointing into the caller's memory |
 
+## Decided (2026-10-20)
+
+| Topic | Decision |
+|---|---|
+| AUTO_INCREMENT prefetch (was Q13) | 4096 values a refill by default (`GlobalOptions::auto_increment_prefetch`), a size per table beside it, and blocks of consecutive values per call (chapter 04, "AUTO_INCREMENT") |
+
 ## Still open
 
 The recommendation is the default and the plan proceeds on it unless
@@ -75,4 +81,3 @@ you object.
 | Q6 | Which non-C/C++ languages get a smoke-test binding (phase 10 since 2026-10-08, was phase 7)? | Suggest Python (`ctypes`) and Java (Panama) as the two that matter to RonDB users; Go and Node if cheap. |
 | Q11 | The names of signals and blocks. | The first draft is in chapter 06 §6.1; the author reviews it before the rename. |
 | Q12 | Writes through a unique index. | **Recommendation:** refuse an update through an index whose attribute record holds an indexed column, and keep refusing a write through an index (chapter 06 §6.5, item 8). |
-| Q13 | AUTO_INCREMENT prefetch: how many values the client reserves at a time. | **Recommendation:** 512 by default, as MySQL servers use, settable per table binding; decide in phase 9. |
