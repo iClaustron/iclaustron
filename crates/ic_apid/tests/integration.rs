@@ -8518,3 +8518,147 @@ fn auto_increment_values_come_from_the_counter_mysql_uses() {
   let total = count_of(&format!("SELECT COUNT(*) FROM {}.ai_api", IC_IT_DB));
   assert_eq!(total, 3 + 3 + 4 + 1 + 2);
 }
+
+// ---- AUTO_INCREMENT through an executor (phase 9.2b) ----
+
+/// The submitter and table the callback of the test below asks with.
+type AiCallbackWith = Option<(Submitter, Arc<TableDef>)>;
+
+static AI_CALLBACK_WITH: std::sync::Mutex<AiCallbackWith> =
+  std::sync::Mutex::new(None);
+/// The value the callback was given, 0 for an error.
+static AI_CALLBACK_VALUE: std::sync::atomic::AtomicU64 =
+  std::sync::atomic::AtomicU64::new(0);
+/// 0 until the callback has run, then 1, or 2 on the executor's thread.
+static AI_CALLBACK_RAN: std::sync::atomic::AtomicUsize =
+  std::sync::atomic::AtomicUsize::new(0);
+
+/// Ask for a value on the executor's own thread, the first of the
+/// table's, so that the refill goes from there. Nothing in it may
+/// panic, as a panic stops the executor.
+fn take_in_callback(_request: Request, _user_ref: usize) {
+  use std::sync::atomic::Ordering;
+  let name = std::thread::current().name().unwrap_or("").to_string();
+  let mut value: u64 = 0;
+  if let Ok(with) = AI_CALLBACK_WITH.lock() {
+    if let Some((submitter, def)) = with.as_ref() {
+      value = submitter.auto_increment(def).unwrap_or(0);
+    }
+  }
+  AI_CALLBACK_VALUE.store(value, Ordering::Relaxed);
+  let ran = if name.starts_with("ic_executor_") {
+    2
+  } else {
+    1
+  };
+  AI_CALLBACK_RAN.store(ran, Ordering::Release);
+}
+
+#[test]
+fn auto_increment_through_an_executor_shares_the_range() {
+  use std::sync::atomic::Ordering;
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  let made = mysql(&format!(
+    "CREATE DATABASE IF NOT EXISTS {db};
+     DROP TABLE IF EXISTS {db}.ai_exec;
+     CREATE TABLE {db}.ai_exec (
+       id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+       who CHAR(1) NOT NULL
+     ) ENGINE=NDB DEFAULT CHARSET=latin1;
+     INSERT INTO {db}.ai_exec (who) VALUES ('m'), ('m');",
+    db = IC_IT_DB
+  ));
+  if made.is_none() {
+    return;
+  }
+  let mut executor = executor_with(&cluster, 64, 256);
+  let mut submitter = executor.submitter();
+  let def = submitter.table_bind(IC_IT_DB, "ai_exec").expect("bind");
+  let rec = Record::default_for(&def, None).expect("a record");
+  let shape = OpShape::new(&def, &rec, &rec).expect("a shape");
+  let t = Table { def, rec };
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let on_conn = bind(&mut conn, "ai_exec");
+
+  // The first value of the table is asked for in a callback on the
+  // executor's own thread: its refill goes from there, on the
+  // counter's connection, and the executor is not held up for good.
+  let before = submitter.auto_increment_peek(&t.def).expect("peek");
+  if let Ok(mut with) = AI_CALLBACK_WITH.lock() {
+    *with = Some((executor.submitter(), Arc::clone(&t.def)));
+  }
+  submitter
+    .submit_wait(Request::new(), Done::Callback(take_in_callback, 0))
+    .expect("submitted");
+  let start = time::gethrtime();
+  while AI_CALLBACK_RAN.load(Ordering::Acquire) == 0 {
+    let waited = time::millis_elapsed(start, time::gethrtime());
+    assert!(waited < IC_IT_TRANS_WAIT_MS, "the callback did not come");
+    time::microsleep(1_000);
+  }
+  if let Ok(mut with) = AI_CALLBACK_WITH.lock() {
+    *with = None;
+  }
+  assert_eq!(
+    AI_CALLBACK_RAN.load(Ordering::Acquire),
+    2,
+    "on the executor"
+  );
+  let first = AI_CALLBACK_VALUE.load(Ordering::Relaxed);
+  assert!(first >= before, "{} below the counter {}", first, before);
+  let after = submitter.auto_increment_peek(&t.def).expect("peek");
+  assert!(after >= first + 4096, "the counter at {}", after);
+
+  // A connection and the submitter take from the same range, the
+  // table bound through each.
+  let second = conn.auto_increment(&on_conn.def).expect("a value");
+  assert_eq!(second, first + 1);
+  let third = submitter.auto_increment(&t.def).expect("a value");
+  assert_eq!(third, second + 1);
+  let block = submitter.auto_increment_block(&t.def, 10).expect("a block");
+  assert_eq!(block, third + 1);
+  let fourth = conn.auto_increment(&on_conn.def).expect("a value");
+  assert_eq!(fourth, block + 10);
+
+  // The values go in through the executor, and MySQL's next take none
+  // of them.
+  let mut request = Request::new();
+  for id in [first, second, third, block, fourth] {
+    let mut op = KeyOp::write(&shape, WriteKind::Insert);
+    t.put(op.key_row_mut(), "id", &id.to_string());
+    t.put(op.attr_row_mut(), "id", &id.to_string());
+    t.put(op.attr_row_mut(), "who", "e");
+    request.push(op);
+  }
+  submitter.execute(&mut request).expect("the inserts commit");
+  mysql(&format!(
+    "INSERT INTO {}.ai_exec (who) VALUES ('m'), ('m'), ('m');",
+    IC_IT_DB
+  ))
+  .expect("a MySQL client");
+  let total = count_of(&format!("SELECT COUNT(*) FROM {}.ai_exec", IC_IT_DB));
+  assert_eq!(total, 2 + 5 + 3);
+
+  // An explicit value past the counter, said through the submitter,
+  // moves it for the connection too.
+  let high = submitter.auto_increment_peek(&t.def).expect("peek") + 50_000;
+  submitter.auto_increment_seen(&t.def, high).expect("seen");
+  let moved = conn.auto_increment_peek(&on_conn.def).expect("peek");
+  assert!(moved > high, "the counter at {} after {}", moved, high);
+  let beyond = conn.auto_increment(&on_conn.def).expect("a value");
+  assert!(beyond > high, "{} not past {}", beyond, high);
+
+  // A stopped executor's submitter refuses them, as it does everything.
+  executor.stop();
+  assert_eq!(
+    submitter.auto_increment(&t.def),
+    Err(IcError::new(err::IC_ERROR_EXECUTOR_STOPPED))
+  );
+  assert!(
+    conn.auto_increment(&on_conn.def).is_ok(),
+    "the connection's"
+  );
+}

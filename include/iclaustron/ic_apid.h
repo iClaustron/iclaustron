@@ -75,7 +75,9 @@
  * IC_FIELD_INFO and IC_EXECUTOR_STATS are given with their size. A
  * later release adds fields at the end, and a program built against an
  * older header gets the fields it knows: IC_EXECUTOR_OPTIONS and
- * IC_EXECUTOR_STATS gained `scans` after 0.1.
+ * IC_EXECUTOR_STATS gained `scans` after 0.1, IC_GLOBAL_OPTIONS its
+ * three AUTO_INCREMENT fields, and IC_FIELD_INFO its `auto_increment`
+ * and `hidden_key` flags, in what was its padding.
  *
  * Threads. The functions that take no handle (ic_api_version,
  * ic_error_*, ic_field_type_name, the _init functions) may be called
@@ -123,6 +125,15 @@
  * the next. A query, a scan, an operation shape or a scan shape takes
  * it (ic_apid_query_set_program() and the like), and each operation or
  * run sets its inputs.
+ *
+ * AUTO_INCREMENT. Values are asked for, not filled in: the program
+ * takes one with ic_apid_conn_auto_increment(), or a block of them,
+ * puts it in its row, and after an insert with a value of its own
+ * says so with ic_apid_conn_auto_increment_seen(), which moves the
+ * counter past it. The process holds one range of values per table,
+ * shared by its connections and executors and refilled from the
+ * counter MySQL servers use, so values are unique across every client
+ * of the cluster; a submitter has the same calls.
  *
  * Panics. A panic inside the library returns IC_ERROR_INTERNAL_PANIC;
  * the connection it went through is unusable from then on, and every
@@ -667,6 +678,11 @@
 #define IC_ERROR_BAD_PROGRAM 7165
 
 /*
+ The table has no AUTO_INCREMENT column, nor a hidden key.
+ */
+#define IC_ERROR_NO_AUTO_INCREMENT 7166
+
+/*
  Equal, in a program's comparison of its first value with its second.
  */
 #define IC_CMP_EQ 0
@@ -802,6 +818,22 @@ typedef struct {
    How long a management server has to answer, in milliseconds.
    */
   uint32_t mgm_timeout_ms;
+  /*
+   How many AUTO_INCREMENT values a refill reserves for a table that
+   does not say for itself; 4096 by default, zero counting as one.
+   */
+  uint32_t auto_increment_prefetch;
+  /*
+   The step between AUTO_INCREMENT values, as MySQL's
+   `auto_increment_increment`; 1 by default, zero counting as one.
+   */
+  uint32_t auto_increment_step;
+  /*
+   Where AUTO_INCREMENT values start within the step, as MySQL's
+   `auto_increment_offset`; 1 by default, zero or one above the step
+   counting as one.
+   */
+  uint32_t auto_increment_offset;
 } IC_GLOBAL_OPTIONS;
 
 /*
@@ -864,6 +896,15 @@ typedef struct {
    A BLOB, TEXT or other blob column, which records leave out.
    */
   bool blob;
+  /*
+   The table's AUTO_INCREMENT column, a hidden key included.
+   */
+  bool auto_increment;
+  /*
+   The hidden key, `$PK`, of a table without a primary key: an
+   ordinary column, which tools listing columns may leave out.
+   */
+  bool hidden_key;
 } IC_FIELD_INFO;
 
 /*
@@ -1254,9 +1295,10 @@ size_t ic_error_message(int32_t code, char *buf, size_t len);
 const char *ic_field_type_name(uint32_t type_code);
 
 /*
- Fill `options`, `size` bytes, with the defaults.
+ Fill `options`, `size` bytes, with the defaults: the fields that fit,
+ so that a program built against an older header gets those it knows.
 
- Leaves `options` as it is when `size` is smaller than this header's
+ Leaves `options` as it is when `size` is smaller than release 0.1's
  `IC_GLOBAL_OPTIONS`.
 
  # Safety
@@ -1463,7 +1505,8 @@ int32_t ic_table_def_field_id(const IC_TABLE_DEF *def,
 
  Errors: `IC_ERROR_NO_SUCH_FIELD`; `IC_ERROR_INCONSISTENT_DATA` when `size`
  is smaller than this header's `IC_FIELD_INFO`. The name in `info` lives as
- long as the table handle.
+ long as the table handle. `auto_increment` and `hidden_key` came after
+ 0.1, in what was the struct's padding, so its size is 0.1's.
 
  # Safety
 
@@ -3643,6 +3686,156 @@ const uint8_t *ic_request_after_row(const IC_REQUEST *request,
 int32_t ic_scan_reader_set_input(IC_SCAN_READER *reader,
                                  uint32_t input,
                                  int64_t value);
+
+/*
+ The next value of the table's AUTO_INCREMENT column, into `value`,
+ for the program to put in its row (chapter 04, "AUTO_INCREMENT"):
+ from the range the process holds for the table, shared by its
+ connections and executors, or, when that is used up, from a refill,
+ a round trip on a connection the library keeps for the counters.
+ Unique across every client of the cluster, MySQL servers included,
+ not in order across them; values not used are gaps. Not checked
+ against the column's type.
+
+ Errors: `IC_ERROR_NO_AUTO_INCREMENT` for a table without such a
+ column; a temporary error still there after 3.6 s of trying again.
+
+ # Safety
+
+ `conn` is a connection handle not yet freed, used by this thread
+ alone; `def` is a table handle not yet freed; `value` points to a
+ writable `uint64_t`.
+ */
+int32_t ic_apid_conn_auto_increment(IC_APID_CONNECTION *conn,
+                                    const IC_TABLE_DEF *def,
+                                    uint64_t *value);
+
+/*
+ The first of `n` values a step apart, reserved together, into
+ `first`, for an insert of many rows: from the range if it holds
+ them all, otherwise from a refill of at least `n`, what the range
+ held then left as a gap. Zero counts as one.
+
+ Errors: as `ic_apid_conn_auto_increment`.
+
+ # Safety
+
+ As `ic_apid_conn_auto_increment`, with `first` for `value`.
+ */
+int32_t ic_apid_conn_auto_increment_block(IC_APID_CONNECTION *conn,
+                                          const IC_TABLE_DEF *def,
+                                          uint32_t n,
+                                          uint64_t *first);
+
+/*
+ After an insert with a value of the program's own in the
+ AUTO_INCREMENT column: the counter is moved past `value`, only ever
+ up, so that no client hands it out. A value within the range the
+ process holds moves only the range; one below what it handed out or
+ saw moves nothing.
+
+ Errors: as `ic_apid_conn_auto_increment`; `IC_ERROR_NOT_SUPPORTED`
+ for a value of 2^63 - 1 or more that would move the counter.
+
+ # Safety
+
+ `conn` is a connection handle not yet freed, used by this thread
+ alone; `def` is a table handle not yet freed.
+ */
+int32_t ic_apid_conn_auto_increment_seen(IC_APID_CONNECTION *conn,
+                                         const IC_TABLE_DEF *def,
+                                         uint64_t value);
+
+/*
+ The counter as it stands, into `next`: the next value no client has
+ reserved, by one read of the counter, nothing reserved and the
+ range not touched. Only advisory: not the next value this process
+ hands out from its range, and out of date once any client refills.
+
+ Errors: as `ic_apid_conn_auto_increment`.
+
+ # Safety
+
+ As `ic_apid_conn_auto_increment`, with `next` for `value`.
+ */
+int32_t ic_apid_conn_auto_increment_peek(IC_APID_CONNECTION *conn,
+                                         const IC_TABLE_DEF *def,
+                                         uint64_t *next);
+
+/*
+ As `ic_apid_conn_auto_increment`, for a thread with no connection of
+ its own. The values come from the same range, the refill on the
+ same connection for the counters, never through the executor; so
+ the call may be made from a callback on the executor's own thread,
+ which a refill holds for its round trip.
+
+ Errors: as `ic_apid_conn_auto_increment`; `IC_ERROR_EXECUTOR_STOPPED`
+ once the executor has stopped.
+
+ # Safety
+
+ `submitter` is a submitter handle not yet freed, used by this thread
+ alone; `def` is a table handle not yet freed; `value` points to a
+ writable `uint64_t`.
+ */
+int32_t ic_apid_submitter_auto_increment(IC_APID_SUBMITTER *submitter,
+                                         const IC_TABLE_DEF *def,
+                                         uint64_t *value);
+
+/*
+ As `ic_apid_conn_auto_increment_block`, through a submitter.
+
+ Errors: as `ic_apid_submitter_auto_increment`.
+
+ # Safety
+
+ As `ic_apid_submitter_auto_increment`, with `first` for `value`.
+ */
+int32_t ic_apid_submitter_auto_increment_block(IC_APID_SUBMITTER *submitter,
+                                               const IC_TABLE_DEF *def,
+                                               uint32_t n,
+                                               uint64_t *first);
+
+/*
+ As `ic_apid_conn_auto_increment_seen`, through a submitter.
+
+ Errors: as `ic_apid_conn_auto_increment_seen`;
+ `IC_ERROR_EXECUTOR_STOPPED` once the executor has stopped.
+
+ # Safety
+
+ `submitter` is a submitter handle not yet freed, used by this thread
+ alone; `def` is a table handle not yet freed.
+ */
+int32_t ic_apid_submitter_auto_increment_seen(IC_APID_SUBMITTER *submitter,
+                                              const IC_TABLE_DEF *def,
+                                              uint64_t value);
+
+/*
+ As `ic_apid_conn_auto_increment_peek`, through a submitter.
+
+ Errors: as `ic_apid_submitter_auto_increment`.
+
+ # Safety
+
+ As `ic_apid_submitter_auto_increment`, with `next` for `value`.
+ */
+int32_t ic_apid_submitter_auto_increment_peek(IC_APID_SUBMITTER *submitter,
+                                              const IC_TABLE_DEF *def,
+                                              uint64_t *next);
+
+/*
+ How many AUTO_INCREMENT values a refill reserves for this table from
+ now on, in every thread of the process, whichever handle it was
+ bound through; 0 goes back to the global's `auto_increment_prefetch`.
+ A table without an AUTO_INCREMENT column has nothing to set.
+
+ # Safety
+
+ `def` is a table handle not yet freed.
+ */
+int32_t ic_table_def_set_auto_increment_prefetch(const IC_TABLE_DEF *def,
+                                                 uint32_t prefetch);
 
 #ifdef __cplusplus
 }  // extern "C"

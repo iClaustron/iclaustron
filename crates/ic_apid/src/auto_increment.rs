@@ -9,6 +9,8 @@
 //! puts it in its row; after an insert with a value of its own it says
 //! so with [`ApidConnection::auto_increment_seen`], which moves the
 //! counter past it, only ever up. Defining an insert stays as it was.
+//! A [`Submitter`] has the same calls, for a thread with no connection
+//! of its own.
 //!
 //! **The counter** is one row per table in the counter table, stored
 //! as `sys/def/SYSTAB_0`, keyed by the table id (column 0) and holding
@@ -62,6 +64,7 @@ use crate::apid_conn::ApidConnection;
 use crate::apid_global::ApidShared;
 use crate::apid_global::GlobalOptions;
 use crate::dict_cache::TableDef;
+use crate::executor::Submitter;
 use crate::program::Cmp;
 use crate::program::Program;
 use crate::program::ProgramBuilder;
@@ -797,6 +800,48 @@ impl ApidConnection {
   /// [`auto_increment`](Self::auto_increment).
   pub fn auto_increment_peek(&self, table: &TableDef) -> Result<u64, IcError> {
     peek(&self.shared, table)
+  }
+}
+
+/// The same calls for a thread with no connection of its own. They are
+/// the connection's: the calling thread takes from the range the
+/// process holds for the table, shared with every connection and
+/// executor, and a refill goes on the counter's own connection, never
+/// through the executor. So they may be made from a callback on the
+/// executor's own thread, where a refill holds the executor for its
+/// round trip. A stopped executor's submitter refuses them, as it
+/// refuses everything, with `IC_ERROR_EXECUTOR_STOPPED`.
+impl Submitter {
+  /// As [`ApidConnection::auto_increment`]
+  /// (`ic_apid_submitter_auto_increment`).
+  pub fn auto_increment(&self, table: &TableDef) -> Result<u64, IcError> {
+    take_values(self.apid()?, table, 1)
+  }
+
+  /// As [`ApidConnection::auto_increment_block`]
+  /// (`ic_apid_submitter_auto_increment_block`).
+  pub fn auto_increment_block(
+    &self,
+    table: &TableDef,
+    n: u32,
+  ) -> Result<u64, IcError> {
+    take_values(self.apid()?, table, n)
+  }
+
+  /// As [`ApidConnection::auto_increment_seen`]
+  /// (`ic_apid_submitter_auto_increment_seen`).
+  pub fn auto_increment_seen(
+    &self,
+    table: &TableDef,
+    value: u64,
+  ) -> Result<(), IcError> {
+    report_seen(self.apid()?, table, value)
+  }
+
+  /// As [`ApidConnection::auto_increment_peek`]
+  /// (`ic_apid_submitter_auto_increment_peek`).
+  pub fn auto_increment_peek(&self, table: &TableDef) -> Result<u64, IcError> {
+    peek(self.apid()?, table)
   }
 }
 

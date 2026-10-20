@@ -321,6 +321,8 @@ pub const IC_ERROR_NOT_COMPARABLE: i32 = 7164;
 /// A program names a value, condition or input it does not have, or is
 /// put on an operation of another table.
 pub const IC_ERROR_BAD_PROGRAM: i32 = 7165;
+/// The table has no AUTO_INCREMENT column, nor a hidden key.
+pub const IC_ERROR_NO_AUTO_INCREMENT: i32 = 7166;
 
 /// Equal, in a program's comparison of its first value with its second.
 pub const IC_CMP_EQ: u32 = 0;
@@ -466,6 +468,16 @@ pub struct IcGlobalOptions {
   pub reply_wait_ms: u32,
   /// How long a management server has to answer, in milliseconds.
   pub mgm_timeout_ms: u32,
+  /// How many AUTO_INCREMENT values a refill reserves for a table that
+  /// does not say for itself; 4096 by default, zero counting as one.
+  pub auto_increment_prefetch: u32,
+  /// The step between AUTO_INCREMENT values, as MySQL's
+  /// `auto_increment_increment`; 1 by default, zero counting as one.
+  pub auto_increment_step: u32,
+  /// Where AUTO_INCREMENT values start within the step, as MySQL's
+  /// `auto_increment_offset`; 1 by default, zero or one above the step
+  /// counting as one.
+  pub auto_increment_offset: u32,
 }
 
 /// Where one field lies in a row (`IC_FIELD_SPEC`).
@@ -514,6 +526,11 @@ pub struct IcFieldInfo {
   pub distribution_key: bool,
   /// A BLOB, TEXT or other blob column, which records leave out.
   pub blob: bool,
+  /// The table's AUTO_INCREMENT column, a hidden key included.
+  pub auto_increment: bool,
+  /// The hidden key, `$PK`, of a table without a primary key: an
+  /// ordinary column, which tools listing columns may leave out.
+  pub hidden_key: bool,
 }
 
 /// What a read asks for (`IC_READ_KEY_ARGS`).
@@ -1112,9 +1129,16 @@ pub extern "C" fn ic_field_type_name(type_code: u32) -> *const c_char {
 
 // ---- The global ----
 
-/// Fill `options`, `size` bytes, with the defaults.
+/// Bytes of `IC_GLOBAL_OPTIONS` in release 0.1, before the
+/// AUTO_INCREMENT fields.
+fn global_options_0_1() -> usize {
+  std::mem::offset_of!(IcGlobalOptions, auto_increment_prefetch)
+}
+
+/// Fill `options`, `size` bytes, with the defaults: the fields that fit,
+/// so that a program built against an older header gets those it knows.
 ///
-/// Leaves `options` as it is when `size` is smaller than this header's
+/// Leaves `options` as it is when `size` is smaller than release 0.1's
 /// `IC_GLOBAL_OPTIONS`.
 ///
 /// # Safety
@@ -1125,18 +1149,43 @@ pub unsafe extern "C" fn ic_global_options_init(
   options: *mut IcGlobalOptions,
   size: usize,
 ) {
-  if options.is_null() || size < std::mem::size_of::<IcGlobalOptions>() {
+  if options.is_null() || size < global_options_0_1() {
     return;
   }
   let defaults = GlobalOptions::default();
-  let value = IcGlobalOptions {
-    size: size as u32,
-    receive_threads: defaults.receive_threads,
-    reply_wait_ms: defaults.reply_wait_ms,
-    mgm_timeout_ms: defaults.mgm_timeout_ms,
-  };
-  // SAFETY: the caller's promise; the struct fits.
-  unsafe { options.write(value) };
+  let fields: [(usize, u32); 7] = [
+    (std::mem::offset_of!(IcGlobalOptions, size), size as u32),
+    (
+      std::mem::offset_of!(IcGlobalOptions, receive_threads),
+      defaults.receive_threads,
+    ),
+    (
+      std::mem::offset_of!(IcGlobalOptions, reply_wait_ms),
+      defaults.reply_wait_ms,
+    ),
+    (
+      std::mem::offset_of!(IcGlobalOptions, mgm_timeout_ms),
+      defaults.mgm_timeout_ms,
+    ),
+    (
+      std::mem::offset_of!(IcGlobalOptions, auto_increment_prefetch),
+      defaults.auto_increment_prefetch,
+    ),
+    (
+      std::mem::offset_of!(IcGlobalOptions, auto_increment_step),
+      defaults.auto_increment_step,
+    ),
+    (
+      std::mem::offset_of!(IcGlobalOptions, auto_increment_offset),
+      defaults.auto_increment_offset,
+    ),
+  ];
+  let base = options as *mut u8;
+  for (offset, value) in fields {
+    // SAFETY: the caller's promise; each field is written only if it
+    // lies within `size` bytes.
+    unsafe { put_sized(base, size, offset, value) };
+  }
 }
 
 /// Start the Data API: ask a management server in `connect_string` for
@@ -1183,14 +1232,46 @@ pub unsafe extern "C" fn ic_apid_global_connect(
     }
   }
   let mut opts = GlobalOptions::default();
-  // SAFETY: the caller's promise.
-  if let Some(given) = unsafe { options.as_ref() } {
-    if (given.size as usize) < std::mem::size_of::<IcGlobalOptions>() {
+  if !options.is_null() {
+    let base = options as *const u8;
+    // SAFETY: the caller's promise: the struct was filled by
+    // `ic_global_options_init`, which wrote its size first.
+    let size = unsafe { get_sized::<u32>(base, 4, 0) }.unwrap_or(0) as usize;
+    if size < global_options_0_1() {
       return err::IC_ERROR_INCONSISTENT_DATA;
     }
-    opts.receive_threads = given.receive_threads;
-    opts.reply_wait_ms = given.reply_wait_ms;
-    opts.mgm_timeout_ms = given.mgm_timeout_ms;
+    let fields: [(usize, &mut u32); 6] = [
+      (
+        std::mem::offset_of!(IcGlobalOptions, receive_threads),
+        &mut opts.receive_threads,
+      ),
+      (
+        std::mem::offset_of!(IcGlobalOptions, reply_wait_ms),
+        &mut opts.reply_wait_ms,
+      ),
+      (
+        std::mem::offset_of!(IcGlobalOptions, mgm_timeout_ms),
+        &mut opts.mgm_timeout_ms,
+      ),
+      (
+        std::mem::offset_of!(IcGlobalOptions, auto_increment_prefetch),
+        &mut opts.auto_increment_prefetch,
+      ),
+      (
+        std::mem::offset_of!(IcGlobalOptions, auto_increment_step),
+        &mut opts.auto_increment_step,
+      ),
+      (
+        std::mem::offset_of!(IcGlobalOptions, auto_increment_offset),
+        &mut opts.auto_increment_offset,
+      ),
+    ];
+    for (offset, field) in fields {
+      // SAFETY: as above; each field is read only if that size holds it.
+      if let Some(value) = unsafe { get_sized::<u32>(base, size, offset) } {
+        *field = value;
+      }
+    }
   }
   guarded(|| match ApidGlobal::connect(text, name, &opts) {
     Ok(started) => {
@@ -1545,7 +1626,8 @@ pub unsafe extern "C" fn ic_table_def_field_id(
 ///
 /// Errors: `IC_ERROR_NO_SUCH_FIELD`; `IC_ERROR_INCONSISTENT_DATA` when `size`
 /// is smaller than this header's `IC_FIELD_INFO`. The name in `info` lives as
-/// long as the table handle.
+/// long as the table handle. `auto_increment` and `hidden_key` came after
+/// 0.1, in what was the struct's padding, so its size is 0.1's.
 ///
 /// # Safety
 ///
@@ -1592,6 +1674,8 @@ pub unsafe extern "C" fn ic_table_def_field(
     primary_key: attr.primary_key,
     distribution_key: attr.distribution_key,
     blob: attr.is_blob(),
+    auto_increment: table.def.auto_increment_column() == Some(field_id),
+    hidden_key: table.def.hidden_key() == Some(field_id),
   };
   // SAFETY: checked non-null and large enough above.
   unsafe { info.write(value) };
@@ -6256,6 +6340,296 @@ pub unsafe extern "C" fn ic_scan_reader_set_input(
   code_of(r.set_input(input, value))
 }
 
+// ---- AUTO_INCREMENT ----
+
+/// What a call that gives a value gives C: 0 with the value in `out`,
+/// or the error's code.
+///
+/// # Safety
+///
+/// `out` points to a writable `uint64_t`.
+unsafe fn give_value(result: Result<u64, IcError>, out: *mut u64) -> i32 {
+  match result {
+    Ok(value) => {
+      // SAFETY: the caller's promise.
+      unsafe { out.write(value) };
+      0
+    }
+    Err(e) => e.code,
+  }
+}
+
+/// The next value of the table's AUTO_INCREMENT column, into `value`,
+/// for the program to put in its row (chapter 04, "AUTO_INCREMENT"):
+/// from the range the process holds for the table, shared by its
+/// connections and executors, or, when that is used up, from a refill,
+/// a round trip on a connection the library keeps for the counters.
+/// Unique across every client of the cluster, MySQL servers included,
+/// not in order across them; values not used are gaps. Not checked
+/// against the column's type.
+///
+/// Errors: `IC_ERROR_NO_AUTO_INCREMENT` for a table without such a
+/// column; a temporary error still there after 3.6 s of trying again.
+///
+/// # Safety
+///
+/// `conn` is a connection handle not yet freed, used by this thread
+/// alone; `def` is a table handle not yet freed; `value` points to a
+/// writable `uint64_t`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_conn_auto_increment(
+  conn: *mut IcApidConnection,
+  def: *const IcTableDef,
+  value: *mut u64,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let table = match unsafe { table_of(def) } {
+    Some(table) => table,
+    None => return err::IC_ERROR_NULL_POINTER,
+  };
+  if value.is_null() {
+    return err::IC_ERROR_NULL_POINTER;
+  }
+  // SAFETY: the caller's promise.
+  match unsafe { on_conn(conn, |c| c.auto_increment(&table.def)) } {
+    // SAFETY: checked non-null above; the caller's promise.
+    Ok(result) => unsafe { give_value(result, value) },
+    Err(code) => code,
+  }
+}
+
+/// The first of `n` values a step apart, reserved together, into
+/// `first`, for an insert of many rows: from the range if it holds
+/// them all, otherwise from a refill of at least `n`, what the range
+/// held then left as a gap. Zero counts as one.
+///
+/// Errors: as `ic_apid_conn_auto_increment`.
+///
+/// # Safety
+///
+/// As `ic_apid_conn_auto_increment`, with `first` for `value`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_conn_auto_increment_block(
+  conn: *mut IcApidConnection,
+  def: *const IcTableDef,
+  n: u32,
+  first: *mut u64,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let table = match unsafe { table_of(def) } {
+    Some(table) => table,
+    None => return err::IC_ERROR_NULL_POINTER,
+  };
+  if first.is_null() {
+    return err::IC_ERROR_NULL_POINTER;
+  }
+  // SAFETY: the caller's promise.
+  match unsafe { on_conn(conn, |c| c.auto_increment_block(&table.def, n)) } {
+    // SAFETY: checked non-null above; the caller's promise.
+    Ok(result) => unsafe { give_value(result, first) },
+    Err(code) => code,
+  }
+}
+
+/// After an insert with a value of the program's own in the
+/// AUTO_INCREMENT column: the counter is moved past `value`, only ever
+/// up, so that no client hands it out. A value within the range the
+/// process holds moves only the range; one below what it handed out or
+/// saw moves nothing.
+///
+/// Errors: as `ic_apid_conn_auto_increment`; `IC_ERROR_NOT_SUPPORTED`
+/// for a value of 2^63 - 1 or more that would move the counter.
+///
+/// # Safety
+///
+/// `conn` is a connection handle not yet freed, used by this thread
+/// alone; `def` is a table handle not yet freed.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_conn_auto_increment_seen(
+  conn: *mut IcApidConnection,
+  def: *const IcTableDef,
+  value: u64,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let table = match unsafe { table_of(def) } {
+    Some(table) => table,
+    None => return err::IC_ERROR_NULL_POINTER,
+  };
+  // SAFETY: the caller's promise.
+  unsafe { conn_code(conn, |c| c.auto_increment_seen(&table.def, value)) }
+}
+
+/// The counter as it stands, into `next`: the next value no client has
+/// reserved, by one read of the counter, nothing reserved and the
+/// range not touched. Only advisory: not the next value this process
+/// hands out from its range, and out of date once any client refills.
+///
+/// Errors: as `ic_apid_conn_auto_increment`.
+///
+/// # Safety
+///
+/// As `ic_apid_conn_auto_increment`, with `next` for `value`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_conn_auto_increment_peek(
+  conn: *mut IcApidConnection,
+  def: *const IcTableDef,
+  next: *mut u64,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let table = match unsafe { table_of(def) } {
+    Some(table) => table,
+    None => return err::IC_ERROR_NULL_POINTER,
+  };
+  if next.is_null() {
+    return err::IC_ERROR_NULL_POINTER;
+  }
+  // SAFETY: the caller's promise.
+  match unsafe { on_conn(conn, |c| c.auto_increment_peek(&table.def)) } {
+    // SAFETY: checked non-null above; the caller's promise.
+    Ok(result) => unsafe { give_value(result, next) },
+    Err(code) => code,
+  }
+}
+
+/// As `ic_apid_conn_auto_increment`, for a thread with no connection of
+/// its own. The values come from the same range, the refill on the
+/// same connection for the counters, never through the executor; so
+/// the call may be made from a callback on the executor's own thread,
+/// which a refill holds for its round trip.
+///
+/// Errors: as `ic_apid_conn_auto_increment`; `IC_ERROR_EXECUTOR_STOPPED`
+/// once the executor has stopped.
+///
+/// # Safety
+///
+/// `submitter` is a submitter handle not yet freed, used by this thread
+/// alone; `def` is a table handle not yet freed; `value` points to a
+/// writable `uint64_t`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_submitter_auto_increment(
+  submitter: *mut IcApidSubmitter,
+  def: *const IcTableDef,
+  value: *mut u64,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let (s, table) = match unsafe { (submitter_of(submitter), table_of(def)) } {
+    (Some(s), Some(table)) => (s, table),
+    _ => return err::IC_ERROR_NULL_POINTER,
+  };
+  if value.is_null() {
+    return err::IC_ERROR_NULL_POINTER;
+  }
+  guarded(|| {
+    let result = s.auto_increment(&table.def);
+    // SAFETY: checked non-null above; the caller's promise.
+    unsafe { give_value(result, value) }
+  })
+}
+
+/// As `ic_apid_conn_auto_increment_block`, through a submitter.
+///
+/// Errors: as `ic_apid_submitter_auto_increment`.
+///
+/// # Safety
+///
+/// As `ic_apid_submitter_auto_increment`, with `first` for `value`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_submitter_auto_increment_block(
+  submitter: *mut IcApidSubmitter,
+  def: *const IcTableDef,
+  n: u32,
+  first: *mut u64,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let (s, table) = match unsafe { (submitter_of(submitter), table_of(def)) } {
+    (Some(s), Some(table)) => (s, table),
+    _ => return err::IC_ERROR_NULL_POINTER,
+  };
+  if first.is_null() {
+    return err::IC_ERROR_NULL_POINTER;
+  }
+  guarded(|| {
+    let result = s.auto_increment_block(&table.def, n);
+    // SAFETY: checked non-null above; the caller's promise.
+    unsafe { give_value(result, first) }
+  })
+}
+
+/// As `ic_apid_conn_auto_increment_seen`, through a submitter.
+///
+/// Errors: as `ic_apid_conn_auto_increment_seen`;
+/// `IC_ERROR_EXECUTOR_STOPPED` once the executor has stopped.
+///
+/// # Safety
+///
+/// `submitter` is a submitter handle not yet freed, used by this thread
+/// alone; `def` is a table handle not yet freed.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_submitter_auto_increment_seen(
+  submitter: *mut IcApidSubmitter,
+  def: *const IcTableDef,
+  value: u64,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let (s, table) = match unsafe { (submitter_of(submitter), table_of(def)) } {
+    (Some(s), Some(table)) => (s, table),
+    _ => return err::IC_ERROR_NULL_POINTER,
+  };
+  guarded(|| code_of(s.auto_increment_seen(&table.def, value)))
+}
+
+/// As `ic_apid_conn_auto_increment_peek`, through a submitter.
+///
+/// Errors: as `ic_apid_submitter_auto_increment`.
+///
+/// # Safety
+///
+/// As `ic_apid_submitter_auto_increment`, with `next` for `value`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_submitter_auto_increment_peek(
+  submitter: *mut IcApidSubmitter,
+  def: *const IcTableDef,
+  next: *mut u64,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let (s, table) = match unsafe { (submitter_of(submitter), table_of(def)) } {
+    (Some(s), Some(table)) => (s, table),
+    _ => return err::IC_ERROR_NULL_POINTER,
+  };
+  if next.is_null() {
+    return err::IC_ERROR_NULL_POINTER;
+  }
+  guarded(|| {
+    let result = s.auto_increment_peek(&table.def);
+    // SAFETY: checked non-null above; the caller's promise.
+    unsafe { give_value(result, next) }
+  })
+}
+
+/// How many AUTO_INCREMENT values a refill reserves for this table from
+/// now on, in every thread of the process, whichever handle it was
+/// bound through; 0 goes back to the global's `auto_increment_prefetch`.
+/// A table without an AUTO_INCREMENT column has nothing to set.
+///
+/// # Safety
+///
+/// `def` is a table handle not yet freed.
+#[no_mangle]
+pub unsafe extern "C" fn ic_table_def_set_auto_increment_prefetch(
+  def: *const IcTableDef,
+  prefetch: u32,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let table = match unsafe { table_of(def) } {
+    Some(table) => table,
+    None => return err::IC_ERROR_NULL_POINTER,
+  };
+  guarded(|| {
+    table.def.set_auto_increment_prefetch(prefetch);
+    0
+  })
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -6334,6 +6708,7 @@ mod tests {
     );
     assert_eq!(IC_ERROR_NOT_COMPARABLE, err::IC_ERROR_NOT_COMPARABLE);
     assert_eq!(IC_ERROR_BAD_PROGRAM, err::IC_ERROR_BAD_PROGRAM);
+    assert_eq!(IC_ERROR_NO_AUTO_INCREMENT, err::IC_ERROR_NO_AUTO_INCREMENT);
     assert_eq!(
       IC_NDB_ERROR_CONDITION as u16,
       ic_signals::interp::IC_REFUSE_CONDITION
@@ -6504,6 +6879,45 @@ mod tests {
       );
       ic_scan_reader_free(std::ptr::null_mut());
       ic_scan_shape_free(std::ptr::null_mut());
+      let mut value: u64 = 7;
+      assert_eq!(
+        ic_apid_conn_auto_increment(
+          std::ptr::null_mut(),
+          std::ptr::null(),
+          &mut value
+        ),
+        IC_ERROR_NULL_POINTER
+      );
+      assert_eq!(
+        ic_apid_conn_auto_increment_seen(
+          std::ptr::null_mut(),
+          std::ptr::null(),
+          5
+        ),
+        IC_ERROR_NULL_POINTER
+      );
+      assert_eq!(
+        ic_apid_submitter_auto_increment_block(
+          std::ptr::null_mut(),
+          std::ptr::null(),
+          3,
+          &mut value
+        ),
+        IC_ERROR_NULL_POINTER
+      );
+      assert_eq!(
+        ic_apid_submitter_auto_increment_peek(
+          std::ptr::null_mut(),
+          std::ptr::null(),
+          &mut value
+        ),
+        IC_ERROR_NULL_POINTER
+      );
+      assert_eq!(value, 7, "nothing written");
+      assert_eq!(
+        ic_table_def_set_auto_increment_prefetch(std::ptr::null(), 10),
+        IC_ERROR_NULL_POINTER
+      );
     }
   }
 
@@ -6679,6 +7093,59 @@ mod tests {
   }
 
   #[test]
+  fn global_options_from_an_older_header_get_the_fields_they_know() {
+    // Release 0.1's IC_GLOBAL_OPTIONS ends before the AUTO_INCREMENT
+    // fields: the init writes no further.
+    assert_eq!(global_options_0_1(), 16);
+    let mut bytes = [0xAAu8; 32];
+    // SAFETY: the buffer is a local, longer than the size given.
+    unsafe {
+      ic_global_options_init(
+        bytes.as_mut_ptr() as *mut IcGlobalOptions,
+        global_options_0_1(),
+      );
+    }
+    assert!(bytes[global_options_0_1()..].iter().all(|b| *b == 0xAA));
+    // SAFETY: as above.
+    let (size, mgm, prefetch) = unsafe {
+      let base = bytes.as_ptr();
+      let size = get_sized::<u32>(base, 4, 0).unwrap_or(0) as usize;
+      (
+        size,
+        get_sized::<u32>(
+          base,
+          size,
+          std::mem::offset_of!(IcGlobalOptions, mgm_timeout_ms),
+        ),
+        get_sized::<u32>(
+          base,
+          size,
+          std::mem::offset_of!(IcGlobalOptions, auto_increment_prefetch),
+        ),
+      )
+    };
+    assert_eq!(size, 16);
+    assert_eq!(mgm, Some(GlobalOptions::default().mgm_timeout_ms));
+    assert_eq!(prefetch, None, "not in the older struct");
+    // A smaller struct still is left as it was.
+    let mut short = [0x55u8; 12];
+    // SAFETY: the buffer is a local of the length given.
+    unsafe {
+      ic_global_options_init(short.as_mut_ptr() as *mut IcGlobalOptions, 12);
+    }
+    assert!(short.iter().all(|b| *b == 0x55));
+  }
+
+  #[test]
+  fn field_info_kept_its_size_as_it_grew() {
+    // The two flags after 0.1 took what was padding: a program built
+    // against 0.1's header gives the size the library asks for.
+    assert_eq!(std::mem::offset_of!(IcFieldInfo, auto_increment), 52);
+    assert_eq!(std::mem::offset_of!(IcFieldInfo, hidden_key), 53);
+    assert_eq!(std::mem::size_of::<IcFieldInfo>(), 56);
+  }
+
+  #[test]
   fn an_error_text_is_cut_to_the_buffer() {
     let mut buf = [0x55u8; 8];
     // SAFETY: the buffer is a local of the length given.
@@ -6720,6 +7187,10 @@ mod tests {
     };
     assert_eq!(opts.receive_threads, 1);
     assert_eq!(opts.mgm_timeout_ms, 30_000);
+    assert_eq!(opts.size as usize, std::mem::size_of::<IcGlobalOptions>());
+    assert_eq!(opts.auto_increment_prefetch, 4096);
+    assert_eq!(opts.auto_increment_step, 1);
+    assert_eq!(opts.auto_increment_offset, 1);
     assert_eq!(read.kind, IC_READ_KIND_SIMPLE);
     assert!(read.callback.is_none());
     assert_eq!(write.kind, IC_WRITE_KIND_UPDATE);

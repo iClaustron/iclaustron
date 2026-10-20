@@ -921,7 +921,14 @@ a pointer: `ic_apid_conn_auto_increment`,
 `auto_increment_prefetch`, `auto_increment_step` and
 `auto_increment_offset` at the end of `IC_GLOBAL_OPTIONS`, and
 `auto_increment` and `hidden_key` flags at the end of `IC_FIELD_INFO`,
-where their sizes keep older programs working.
+where their sizes keep older programs working. As built (2026-10-20,
+9.2b): `IC_GLOBAL_OPTIONS` is written and read field by field, each
+only where the size the program gave holds it, so a program built
+against 0.1's header, 16 bytes long, keeps the defaults for the rest,
+as `IC_EXECUTOR_OPTIONS` does; the two flags of `IC_FIELD_INFO` took
+what was its padding, so its size is 0.1's, 56 bytes. A stopped
+executor's submitter refuses the calls with `IC_ERROR_EXECUTOR_STOPPED`,
+as it refuses everything, though they never reach the executor.
 
 ### Errors
 
@@ -1158,6 +1165,17 @@ the caller frees; `ic_request_set_input(req, op, n, value)`,
 (6000), `IC_ERROR_CONDITION_TOO_COMPLEX` (7130),
 `IC_ERROR_NOT_COMPARABLE` (7164), `IC_ERROR_BAD_PROGRAM` (7165),
 `IC_PROGRAM_INPUTS` (16).
+
+AUTO_INCREMENT (phase 9.2b, 2026-10-20; "AUTO_INCREMENT" above):
+`ic_apid_conn_auto_increment(conn, def, &value)`,
+`ic_apid_conn_auto_increment_block(conn, def, n, &first)`,
+`ic_apid_conn_auto_increment_seen(conn, def, value)`,
+`ic_apid_conn_auto_increment_peek(conn, def, &next)`, and the same
+four through an executor, `ic_apid_submitter_auto_increment(sub, def,
+&value)` and the like; `ic_table_def_set_auto_increment_prefetch(def,
+n)`; `auto_increment_prefetch`, `auto_increment_step` and
+`auto_increment_offset` in `IC_GLOBAL_OPTIONS`; `auto_increment` and
+`hidden_key` in `IC_FIELD_INFO`; `IC_ERROR_NO_AUTO_INCREMENT` (7166).
 
 Errors and version: `ic_error_category`, `ic_error_severity`,
 `ic_error_is_temporary`, `ic_error_message`, `ic_api_version`.

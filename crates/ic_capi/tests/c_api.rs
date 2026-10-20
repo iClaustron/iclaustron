@@ -84,6 +84,11 @@ fn setup_capi_table() -> Option<()> {
 /// The global, connected and with a data node started, or `None`
 /// without a connectstring.
 fn connect() -> Option<*mut IcApidGlobal> {
+  connect_with(|_| {})
+}
+
+/// As [`connect`], the options as `set` changes them from the defaults.
+fn connect_with(set: fn(&mut IcGlobalOptions)) -> Option<*mut IcApidGlobal> {
   let text = match std::env::var("IC_TEST_CONNECTSTRING") {
     Ok(text) => text,
     Err(_) => {
@@ -102,7 +107,8 @@ fn connect() -> Option<*mut IcApidGlobal> {
       options.as_mut_ptr(),
       std::mem::size_of::<IcGlobalOptions>(),
     );
-    let options = options.assume_init();
+    let mut options = options.assume_init();
+    set(&mut options);
     let mut tries: u32 = 0;
     loop {
       let ret = ic_apid_global_connect(
@@ -1720,6 +1726,207 @@ fn c_api_programs_filter_scans_guard_updates_and_count() {
     assert_eq!(ic_apid_scan_free(conn, scan), 0);
     ic_record_free(key_rec);
     ic_record_free(rec);
+    ic_table_def_free(table);
+    ic_apid_conn_free(conn);
+    ic_apid_global_free(global);
+  }
+}
+
+// ---- AUTO_INCREMENT ----
+
+/// The tables of the AUTO_INCREMENT test, made afresh: one with such a
+/// column, two rows of MySQL's in it, and one without.
+fn setup_capi_ai_tables() -> Option<()> {
+  mysql(&format!(
+    "CREATE DATABASE IF NOT EXISTS {db};
+     DROP TABLE IF EXISTS {db}.capi_ai;
+     DROP TABLE IF EXISTS {db}.capi_ai_plain;
+     CREATE TABLE {db}.capi_ai (
+       id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+       val INT
+     ) ENGINE=NDB;
+     CREATE TABLE {db}.capi_ai_plain (id INT NOT NULL PRIMARY KEY)
+       ENGINE=NDB;
+     INSERT INTO {db}.capi_ai (val) VALUES (1), (2);",
+    db = IC_IT_DB
+  ))?;
+  Some(())
+}
+
+/// Whether a field is the table's AUTO_INCREMENT column, and whether it
+/// is its hidden key, as `IC_FIELD_INFO` says.
+///
+/// # Safety
+///
+/// `table` is a table handle not yet freed.
+unsafe fn field_flags(table: *const IcTableDef, id: u32) -> (bool, bool) {
+  let mut info = std::mem::MaybeUninit::<IcFieldInfo>::uninit();
+  // SAFETY: the caller's promise; the struct is a local of the size
+  // given, written whole on success.
+  unsafe {
+    let ret = ic_table_def_field(
+      table,
+      id,
+      info.as_mut_ptr(),
+      std::mem::size_of::<IcFieldInfo>(),
+    );
+    assert_eq!(ret, 0, "field {}: {}", id, message(ret));
+    let info = info.assume_init();
+    (info.auto_increment, info.hidden_key)
+  }
+}
+
+/// The counter as a peek on a connection gives it.
+///
+/// # Safety
+///
+/// `conn` and `table` are handles not yet freed.
+unsafe fn peek(conn: *mut IcApidConnection, table: *const IcTableDef) -> u64 {
+  let mut next: u64 = 0;
+  // SAFETY: the caller's promise; `next` is a local.
+  let ret = unsafe { ic_apid_conn_auto_increment_peek(conn, table, &mut next) };
+  assert_eq!(ret, 0, "peek: {}", message(ret));
+  next
+}
+
+#[test]
+fn c_api_auto_increment_on_a_connection_and_through_an_executor() {
+  // 100 values a refill, where the default is 4096.
+  let global = match connect_with(|o| o.auto_increment_prefetch = 100) {
+    Some(global) => global,
+    None => return,
+  };
+  if setup_capi_ai_tables().is_none() {
+    // SAFETY: the handle connect made.
+    unsafe { ic_apid_global_free(global) };
+    return;
+  }
+  let db = cs(IC_IT_DB);
+  let ai_name = cs("capi_ai");
+  let plain_name = cs("capi_ai_plain");
+  // SAFETY: every handle below is used while alive and freed once;
+  // every pointer is to a local.
+  unsafe {
+    let mut conn: *mut IcApidConnection = std::ptr::null_mut();
+    assert_eq!(ic_apid_global_create_connection(global, &mut conn), 0);
+    let mut table: *mut IcTableDef = std::ptr::null_mut();
+    let ret =
+      ic_apid_conn_table_bind(conn, db.as_ptr(), ai_name.as_ptr(), &mut table);
+    assert_eq!(ret, 0, "bind: {}", message(ret));
+    let mut plain: *mut IcTableDef = std::ptr::null_mut();
+    let ret = ic_apid_conn_table_bind(
+      conn,
+      db.as_ptr(),
+      plain_name.as_ptr(),
+      &mut plain,
+    );
+    assert_eq!(ret, 0, "bind: {}", message(ret));
+    assert_eq!(field_flags(table, field(table, "id")), (true, false));
+    assert_eq!(field_flags(table, field(table, "val")), (false, false));
+    assert_eq!(field_flags(plain, field(plain, "id")), (false, false));
+    let mut value: u64 = 0;
+    assert_eq!(
+      ic_apid_conn_auto_increment(conn, plain, &mut value),
+      IC_ERROR_NO_AUTO_INCREMENT
+    );
+
+    // The global's prefetch: 100 reserved at once, then handed out in
+    // turn.
+    let before = peek(conn, table);
+    assert!(before > 2, "the counter at {} after MySQL's", before);
+    let mut first: u64 = 0;
+    let ret = ic_apid_conn_auto_increment(conn, table, &mut first);
+    assert_eq!(ret, 0, "a value: {}", message(ret));
+    assert!(first >= before, "{} below the counter {}", first, before);
+    let after = peek(conn, table);
+    assert!(after >= first + 100, "the counter at {}", after);
+    assert!(after < first + 4096, "the default reserved: {}", after);
+    let mut second: u64 = 0;
+    assert_eq!(ic_apid_conn_auto_increment(conn, table, &mut second), 0);
+    assert_eq!(second, first + 1);
+
+    // A block the range left cannot hold has a refill of its own, of
+    // just the block, as it is larger than the prefetch.
+    let mut block: u64 = 0;
+    let ret = ic_apid_conn_auto_increment_block(conn, table, 150, &mut block);
+    assert_eq!(ret, 0, "a block: {}", message(ret));
+    assert!(block >= after, "{} below {}", block, after);
+    assert!(peek(conn, table) >= block + 150, "the block reserved");
+
+    // The table's own prefetch, set through one handle, holds for the
+    // handle an executor bound, and the two share the range.
+    assert_eq!(ic_table_def_set_auto_increment_prefetch(table, 1000), 0);
+    let mut executor: *mut IcApidExecutor = std::ptr::null_mut();
+    let ret = ic_apid_executor_start(global, std::ptr::null(), &mut executor);
+    assert_eq!(ret, 0, "start: {}", message(ret));
+    let mut submitter: *mut IcApidSubmitter = std::ptr::null_mut();
+    assert_eq!(ic_apid_executor_submitter(executor, &mut submitter), 0);
+    let mut through: *mut IcTableDef = std::ptr::null_mut();
+    let ret = ic_apid_submitter_table_bind(
+      submitter,
+      db.as_ptr(),
+      ai_name.as_ptr(),
+      &mut through,
+    );
+    assert_eq!(ret, 0, "bind: {}", message(ret));
+    let mut third: u64 = 0;
+    let ret = ic_apid_submitter_auto_increment(submitter, through, &mut third);
+    assert_eq!(ret, 0, "a value: {}", message(ret));
+    assert!(third >= block + 150, "{} within the block", third);
+    let mut counter: u64 = 0;
+    let ret =
+      ic_apid_submitter_auto_increment_peek(submitter, through, &mut counter);
+    assert_eq!(ret, 0, "peek: {}", message(ret));
+    assert!(counter >= third + 1000, "the counter at {}", counter);
+    let mut fourth: u64 = 0;
+    assert_eq!(ic_apid_conn_auto_increment(conn, table, &mut fourth), 0);
+    assert_eq!(fourth, third + 1);
+    let mut five: u64 = 0;
+    let ret =
+      ic_apid_submitter_auto_increment_block(submitter, through, 5, &mut five);
+    assert_eq!(ret, 0, "a block: {}", message(ret));
+    assert_eq!(five, fourth + 1);
+
+    // An explicit value past the counter, said through the submitter,
+    // moves it for the connection; one below what was handed out moves
+    // nothing.
+    let high = counter + 10_000;
+    let ret = ic_apid_submitter_auto_increment_seen(submitter, through, high);
+    assert_eq!(ret, 0, "seen: {}", message(ret));
+    let moved = peek(conn, table);
+    assert!(moved > high, "the counter at {} after {}", moved, high);
+    assert_eq!(ic_apid_conn_auto_increment_seen(conn, table, first), 0);
+    assert_eq!(peek(conn, table), moved);
+    let mut beyond: u64 = 0;
+    assert_eq!(ic_apid_conn_auto_increment(conn, table, &mut beyond), 0);
+    assert!(beyond > high, "{} not past {}", beyond, high);
+
+    // MySQL takes ours, and its own next values are none of them.
+    mysql(&format!(
+      "INSERT INTO {db}.capi_ai VALUES
+         ({a}, 10), ({b}, 10), ({c}, 10), ({d}, 10), ({e}, 10), ({f}, 10);
+       INSERT INTO {db}.capi_ai (val) VALUES (20), (20);",
+      db = IC_IT_DB,
+      a = first,
+      b = second,
+      c = block,
+      d = third,
+      e = fourth,
+      f = beyond
+    ))
+    .expect("a MySQL client");
+    let total = mysql(&format!("SELECT COUNT(*) FROM {}.capi_ai", IC_IT_DB));
+    assert_eq!(total.as_deref(), Some("10"));
+
+    // A stopped executor's submitter refuses, as it refuses everything.
+    ic_apid_executor_free(executor);
+    assert_eq!(
+      ic_apid_submitter_auto_increment(submitter, through, &mut value),
+      IC_ERROR_EXECUTOR_STOPPED
+    );
+    ic_apid_submitter_free(submitter);
+    ic_table_def_free(through);
+    ic_table_def_free(plain);
     ic_table_def_free(table);
     ic_apid_conn_free(conn);
     ic_apid_global_free(global);

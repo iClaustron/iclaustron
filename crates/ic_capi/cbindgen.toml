@@ -76,7 +76,9 @@ after_includes = """
  * IC_FIELD_INFO and IC_EXECUTOR_STATS are given with their size. A
  * later release adds fields at the end, and a program built against an
  * older header gets the fields it knows: IC_EXECUTOR_OPTIONS and
- * IC_EXECUTOR_STATS gained `scans` after 0.1.
+ * IC_EXECUTOR_STATS gained `scans` after 0.1, IC_GLOBAL_OPTIONS its
+ * three AUTO_INCREMENT fields, and IC_FIELD_INFO its `auto_increment`
+ * and `hidden_key` flags, in what was its padding.
  *
  * Threads. The functions that take no handle (ic_api_version,
  * ic_error_*, ic_field_type_name, the _init functions) may be called
@@ -124,6 +126,15 @@ after_includes = """
  * the next. A query, a scan, an operation shape or a scan shape takes
  * it (ic_apid_query_set_program() and the like), and each operation or
  * run sets its inputs.
+ *
+ * AUTO_INCREMENT. Values are asked for, not filled in: the program
+ * takes one with ic_apid_conn_auto_increment(), or a block of them,
+ * puts it in its row, and after an insert with a value of its own
+ * says so with ic_apid_conn_auto_increment_seen(), which moves the
+ * counter past it. The process holds one range of values per table,
+ * shared by its connections and executors and refilled from the
+ * counter MySQL servers use, so values are unique across every client
+ * of the cluster; a submitter has the same calls.
  *
  * Panics. A panic inside the library returns IC_ERROR_INTERNAL_PANIC;
  * the connection it went through is unusable from then on, and every

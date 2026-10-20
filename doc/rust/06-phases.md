@@ -1791,6 +1791,26 @@ From reading (chapter 05 §16.5):
   integration group takes values, blocks and explicit values beside a
   MySQL server's inserts into one table, and reads the counter after
   each.
+- **9.2b, written 2026-10-20**: the same four calls on a `Submitter`,
+  the connection's code on the global's shared part, which the
+  executor's shared state now holds; a stopped executor's submitter
+  refuses them. In C, the eight calls,
+  `ic_table_def_set_auto_increment_prefetch`, the three options at the
+  end of `IC_GLOBAL_OPTIONS`, read and written field by field so that
+  0.1's shorter struct keeps working, the two flags of `IC_FIELD_INFO`
+  in what was its padding, and `IC_ERROR_NO_AUTO_INCREMENT`; the
+  header's new part written from the Rust as cbindgen writes it. Tests:
+  the `auto_increment` group's second test takes a table's first value
+  in a callback on the executor's own thread, so that its refill goes
+  from there, then from a connection and a submitter in turn, the
+  table bound through each, inserts them through the executor beside
+  MySQL's, and moves the counter through the submitter; the `c_api`
+  group's sets the prefetch in the global's options and on the table
+  handle and checks each refill's size by the counter, takes values,
+  blocks and explicit values on a connection and through an executor,
+  reads the field flags, and sees a stopped executor's submitter
+  refuse; unit tests check 0.1's shorter options and the field info's
+  size.
 - Exit: inserts from `ic_trans` and from a MySQL server, interleaved
   into one AUTO_INCREMENT table, give no duplicate; an explicit value
   moves the counter for both; on a table without a primary key, inserts,

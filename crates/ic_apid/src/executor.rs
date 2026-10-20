@@ -88,6 +88,7 @@ use ic_port::IcError;
 
 use crate::apid_conn::ApidConnection;
 use crate::apid_global::ApidGlobal;
+use crate::apid_global::ApidShared;
 use crate::dict_cache::IndexDef;
 use crate::dict_cache::TableDef;
 use crate::index_scan::RangeSet;
@@ -855,6 +856,9 @@ pub struct ExecutorStats {
 /// What the executor's thread, its handle and its submitters share.
 struct ExecutorShared {
   stopping: AtomicBool,
+  /// The global's shared part, for the submitters' AUTO_INCREMENT
+  /// calls, which take values beside the executor, not through it.
+  apid: Arc<ApidShared>,
   /// The executor's thread, on which [`Submitter::execute`] would wait
   /// for itself.
   thread: OnceLock<ThreadId>,
@@ -928,6 +932,7 @@ impl Executor {
     inbox.open_requests(options.queue.max(1) as usize);
     let shared = Arc::new(ExecutorShared {
       stopping: AtomicBool::new(false),
+      apid: Arc::clone(&conn.shared),
       thread: OnceLock::new(),
       user_thread: conn.thread_id(),
       submitted: AtomicU64::new(0),
@@ -1180,6 +1185,16 @@ impl Submitter {
       Some(def) => Ok(def),
       None => Err(IcError::new(err::IC_ERROR_INCONSISTENT_DATA)),
     }
+  }
+
+  /// The global's shared part, for the AUTO_INCREMENT calls; refused
+  /// with `IC_ERROR_EXECUTOR_STOPPED` once the executor stops, as every
+  /// call on a submitter is then, though these never reach it.
+  pub(crate) fn apid(&self) -> Result<&Arc<ApidShared>, IcError> {
+    if self.shared.stopping.load(Ordering::Acquire) {
+      return Err(IcError::new(err::IC_ERROR_EXECUTOR_STOPPED));
+    }
+    Ok(&self.shared.apid)
   }
 
   fn bind(

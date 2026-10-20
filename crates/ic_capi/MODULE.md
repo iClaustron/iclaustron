@@ -46,13 +46,16 @@ The C code had no counterpart: its header was the API itself, with the
   binding word. A scan shape and a reader are boxes of `Arc<ScanShape>`
   and `ScanReader`; the reader's row pointer stays valid until it is
   freed.
-- `IC_EXECUTOR_OPTIONS` and `IC_EXECUTOR_STATS` grew after 0.1. Their
+- `IC_EXECUTOR_OPTIONS` and `IC_EXECUTOR_STATS` grew after 0.1, and
+  `IC_GLOBAL_OPTIONS` with AUTO_INCREMENT (phase 9.2b). Their
   fields are read and written through byte offsets (`offset_of!`,
   `get_sized`, `put_sized`), each only if the size the caller gave
   holds it, so that a program built against 0.1's header, whose
   structs are shorter, is never read or written past their end. A
   `&IcExecutorOptions` made from such a pointer would itself be wrong:
   Rust takes a reference to promise the whole struct is there.
+  `IC_FIELD_INFO`'s two AUTO_INCREMENT flags took what was its
+  padding, so its size is still 0.1's and it is written whole.
 
 ## Deviations from the C code
 
