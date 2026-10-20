@@ -1459,3 +1459,269 @@ fn c_api_index_scans_on_a_connection_and_through_an_executor() {
     ic_apid_global_free(global);
   }
 }
+
+/// Rows in the `capi_prog` table: id 1 up, val ten times the id, cnt 0.
+const IC_IT_CAPI_PROG_ROWS: i64 = 10;
+
+fn setup_capi_prog_table() -> Option<()> {
+  let mut values: Vec<String> = Vec::new();
+  let mut id: i64 = 1;
+  while id <= IC_IT_CAPI_PROG_ROWS {
+    values.push(format!("({}, {}, 0)", id, id * 10));
+    id += 1;
+  }
+  mysql(&format!(
+    "CREATE DATABASE IF NOT EXISTS {db};
+     DROP TABLE IF EXISTS {db}.capi_prog;
+     CREATE TABLE {db}.capi_prog (
+       id INT NOT NULL PRIMARY KEY,
+       val INT,
+       cnt BIGINT UNSIGNED NOT NULL
+     ) ENGINE=NDB;
+     INSERT INTO {db}.capi_prog VALUES {values};",
+    db = IC_IT_DB,
+    values = values.join(",")
+  ))?;
+  Some(())
+}
+
+#[test]
+fn c_api_programs_filter_scans_guard_updates_and_count() {
+  let global = match connect() {
+    Some(global) => global,
+    None => return,
+  };
+  if setup_capi_prog_table().is_none() {
+    // SAFETY: the handle connect made.
+    unsafe { ic_apid_global_free(global) };
+    return;
+  }
+  let db = cs(IC_IT_DB);
+  let table_name = cs("capi_prog");
+  // SAFETY: every handle below is used while alive and freed once;
+  // every pointer is to a local or a row the library gave.
+  unsafe {
+    let mut conn: *mut IcApidConnection = std::ptr::null_mut();
+    assert_eq!(ic_apid_global_create_connection(global, &mut conn), 0);
+    let mut table: *mut IcTableDef = std::ptr::null_mut();
+    let ret = ic_apid_conn_table_bind(
+      conn,
+      db.as_ptr(),
+      table_name.as_ptr(),
+      &mut table,
+    );
+    assert_eq!(ret, 0, "bind: {}", message(ret));
+    let id = field(table, "id");
+    let val = field(table, "val");
+    let cnt = field(table, "cnt");
+    let mut rec: *mut IcRecord = std::ptr::null_mut();
+    assert_eq!(
+      ic_record_create_default(table, std::ptr::null(), 0, &mut rec),
+      0
+    );
+    let mut key_rec: *mut IcRecord = std::ptr::null_mut();
+    assert_eq!(ic_record_create_default(table, &id, 1, &mut key_rec), 0);
+
+    // WHERE val > input 0, on a scan.
+    let mut builder: *mut IcProgramBuilder = std::ptr::null_mut();
+    assert_eq!(ic_program_builder_create(table, &mut builder), 0);
+    let column = ic_program_column(builder, val);
+    let low = ic_program_input(builder, 0);
+    let above = ic_program_compare(builder, IC_CMP_GT, column, low);
+    assert_ne!(above, IC_PROGRAM_NONE);
+    let mut filter: *mut IcProgram = std::ptr::null_mut();
+    let ret = ic_program_builder_finish(builder, above, &mut filter);
+    assert_eq!(ret, 0, "finish: {}", message(ret));
+    assert!(!ic_program_writes(filter));
+    assert_eq!(ic_program_inputs(filter), 1);
+    // An unknown comparison makes nothing the finish takes.
+    let none = ic_program_compare(builder, 99, column, low);
+    assert_eq!(none, IC_PROGRAM_NONE);
+    let mut refused: *mut IcProgram = std::ptr::null_mut();
+    let ret = ic_program_builder_finish(builder, none, &mut refused);
+    assert_eq!(ret, IC_ERROR_BAD_PROGRAM);
+    ic_program_builder_free(builder);
+
+    let mut scan: IcScanId = 0;
+    assert_eq!(ic_apid_scan_create(conn, table, rec, &mut scan), 0);
+    assert_eq!(ic_apid_conn_set_scan_program(conn, scan, filter), 0);
+    assert_eq!(ic_apid_conn_set_scan_input(conn, scan, 0, 45), 0);
+    assert_eq!(
+      ic_apid_conn_set_scan_input(conn, scan, 16, 1),
+      IC_ERROR_BAD_PROGRAM
+    );
+    let mut args = std::mem::MaybeUninit::<IcScanArgs>::uninit();
+    ic_scan_args_init(args.as_mut_ptr(), std::mem::size_of::<IcScanArgs>());
+    let args = args.assume_init();
+    assert_eq!(ic_apid_conn_start_scan(conn, scan, &args), 0);
+    let mut ids: Vec<i64> = Vec::new();
+    let mut more = true;
+    let mut len: usize = 0;
+    loop {
+      let ret = ic_apid_conn_next_row(conn, scan, &mut more);
+      assert_eq!(ret, 0, "next row: {}", message(ret));
+      if !more {
+        break;
+      }
+      let row = ic_apid_scan_row(conn, scan, &mut len);
+      ids.push(get(rec, row, len, id).parse().expect("an id"));
+    }
+    ids.sort();
+    assert_eq!(ids, [5, 6, 7, 8, 9, 10], "val above 45");
+
+    // WHERE val < input 0, val = val + 1, on an update of row 3.
+    assert_eq!(ic_program_builder_create(table, &mut builder), 0);
+    let column = ic_program_column(builder, val);
+    let high = ic_program_input(builder, 0);
+    let below = ic_program_compare(builder, IC_CMP_LT, column, high);
+    let one = ic_program_integer(builder, 1);
+    let sum = ic_program_add(builder, column, one);
+    assert_eq!(ic_program_assign(builder, val, sum), 0);
+    let mut guard: *mut IcProgram = std::ptr::null_mut();
+    assert_eq!(ic_program_builder_finish(builder, below, &mut guard), 0);
+    assert!(ic_program_writes(guard));
+    ic_program_builder_free(builder);
+    let mut query: IcQueryId = 0;
+    assert_eq!(
+      ic_apid_query_create(conn, table, key_rec, key_rec, &mut query),
+      0
+    );
+    assert_eq!(ic_apid_query_set_program(conn, query, guard), 0);
+    let key = ic_apid_query_key_row(conn, query, &mut len);
+    put(key_rec, key, len, &[(id, "3")]);
+    let mut write = std::mem::MaybeUninit::<IcWriteKeyArgs>::uninit();
+    ic_write_key_args_init(
+      write.as_mut_ptr(),
+      std::mem::size_of::<IcWriteKeyArgs>(),
+    );
+    let mut write = write.assume_init();
+    write.kind = IC_WRITE_KIND_UPDATE;
+    // Row 3's val is 30: below 20 it is not, below 40 it is.
+    for (limit, error, state, after) in [
+      (
+        20,
+        IC_NDB_ERROR_CONDITION,
+        IC_COMMIT_STATE_ROLLED_BACK,
+        "30",
+      ),
+      (40, 0, IC_COMMIT_STATE_COMMITTED, "31"),
+    ] {
+      assert_eq!(ic_apid_query_set_input(conn, query, 0, limit), 0);
+      let hint = ic_apid_conn_hint_for_key(conn, table, key_rec, key, len);
+      let mut trans: IcTransId = 0;
+      assert_eq!(
+        ic_apid_conn_start_transaction(conn, hint, table, &mut trans),
+        0
+      );
+      let ret = ic_apid_conn_write_key(conn, query, trans, &write);
+      assert_eq!(ret, 0, "define: {}", message(ret));
+      assert_eq!(ic_apid_conn_commit_transaction(conn, trans), 0);
+      assert_eq!(finish(conn, trans), state, "below {}", limit);
+      let seen = [
+        ic_apid_query_error(conn, query),
+        ic_apid_transaction_error(conn, trans),
+      ];
+      assert!(seen.contains(&error), "below {}: {:?}", limit, seen);
+      let mut done: IcQueryId = 0;
+      while ic_apid_conn_get_next_executed_query(conn, &mut done) {}
+      assert_eq!(ic_apid_conn_close_transaction(conn, trans), 0);
+      let seen_sql = mysql(&format!(
+        "SELECT val FROM {}.capi_prog WHERE id = 3",
+        IC_IT_DB
+      ));
+      assert_eq!(seen_sql, Some(after.to_string()), "below {}", limit);
+    }
+
+    // cnt = cnt + input 0 through an executor, cnt read back after.
+    assert_eq!(ic_program_builder_create(table, &mut builder), 0);
+    let column = ic_program_column(builder, cnt);
+    let n = ic_program_input(builder, 0);
+    let sum = ic_program_add(builder, column, n);
+    assert_eq!(ic_program_assign(builder, cnt, sum), 0);
+    let mut counter: *mut IcProgram = std::ptr::null_mut();
+    let ret = ic_program_builder_finish_no_condition(builder, &mut counter);
+    assert_eq!(ret, 0, "finish: {}", message(ret));
+    ic_program_builder_free(builder);
+    let mut options = std::mem::MaybeUninit::<IcExecutorOptions>::uninit();
+    ic_executor_options_init(
+      options.as_mut_ptr(),
+      std::mem::size_of::<IcExecutorOptions>(),
+    );
+    let options = options.assume_init();
+    let mut executor: *mut IcApidExecutor = std::ptr::null_mut();
+    assert_eq!(ic_apid_executor_start(global, &options, &mut executor), 0);
+    let mut submitter: *mut IcApidSubmitter = std::ptr::null_mut();
+    assert_eq!(ic_apid_executor_submitter(executor, &mut submitter), 0);
+    // The executor's own binding of the table, and records over it; the
+    // program, made over the connection's, is for the same table.
+    let mut etable: *mut IcTableDef = std::ptr::null_mut();
+    let ret = ic_apid_submitter_table_bind(
+      submitter,
+      db.as_ptr(),
+      table_name.as_ptr(),
+      &mut etable,
+    );
+    assert_eq!(ret, 0, "bind: {}", message(ret));
+    let mut ekey_rec: *mut IcRecord = std::ptr::null_mut();
+    assert_eq!(ic_record_create_default(etable, &id, 1, &mut ekey_rec), 0);
+    let mut ecnt_rec: *mut IcRecord = std::ptr::null_mut();
+    assert_eq!(ic_record_create_default(etable, &cnt, 1, &mut ecnt_rec), 0);
+    let mut plain: *mut IcOpShape = std::ptr::null_mut();
+    assert_eq!(
+      ic_op_shape_create(etable, ekey_rec, ekey_rec, &mut plain),
+      0
+    );
+    let mut counting: *mut IcOpShape = std::ptr::null_mut();
+    assert_eq!(ic_op_shape_with_program(plain, counter, &mut counting), 0);
+    let mut reading: *mut IcOpShape = std::ptr::null_mut();
+    assert_eq!(
+      ic_op_shape_reading_after(counting, ecnt_rec, &mut reading),
+      0
+    );
+    let mut request: *mut IcRequest = std::ptr::null_mut();
+    assert_eq!(ic_request_create(&mut request), 0);
+    let mut op: u32 = 0;
+    assert_eq!(
+      ic_request_add_write(request, reading, IC_WRITE_KIND_UPDATE, &mut op),
+      0
+    );
+    let row = ic_request_key_row(request, op, &mut len);
+    put(ekey_rec, row, len, &[(id, "7")]);
+    let mut total: i64 = 0;
+    for step in [5i64, 6, 7] {
+      assert_eq!(ic_request_set_input(request, op, 0, step), 0);
+      let ret = ic_apid_submitter_execute(submitter, request);
+      assert_eq!(ret, 0, "count: {}", message(ret));
+      assert_eq!(ic_request_op_error(request, op), 0);
+      total += step;
+      let after = ic_request_after_row(request, op, &mut len);
+      assert!(!after.is_null());
+      assert_eq!(get(ecnt_rec, after, len, cnt), total.to_string());
+    }
+    let seen_sql = mysql(&format!(
+      "SELECT cnt FROM {}.capi_prog WHERE id = 7",
+      IC_IT_DB
+    ));
+    assert_eq!(seen_sql, Some(total.to_string()));
+
+    ic_request_free(request);
+    ic_op_shape_free(reading);
+    ic_op_shape_free(counting);
+    ic_op_shape_free(plain);
+    ic_record_free(ecnt_rec);
+    ic_record_free(ekey_rec);
+    ic_table_def_free(etable);
+    ic_apid_submitter_free(submitter);
+    ic_apid_executor_free(executor);
+    ic_program_free(counter);
+    ic_program_free(guard);
+    ic_program_free(filter);
+    assert_eq!(ic_apid_query_free(conn, query), 0);
+    assert_eq!(ic_apid_scan_free(conn, scan), 0);
+    ic_record_free(key_rec);
+    ic_record_free(rec);
+    ic_table_def_free(table);
+    ic_apid_conn_free(conn);
+    ic_apid_global_free(global);
+  }
+}

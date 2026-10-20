@@ -1697,9 +1697,34 @@ gives a temporary error, and the scan started again completes.
   a program handle, and a setter for each place a program goes; the
   header's new part written from the Rust by a script that gives
   cbindgen's own output for the scans through an executor word for
-  word. Next: the exit's groups.
+  word. Then the exit's groups, written the same day:
+  - `where`: 400 rows filled by MySQL, with latin1 strings whose case
+    the collation folds, one with a trailing space, a CHAR, an
+    unsigned column and BIGINTs beyond 32 bits, NULLs in every
+    nullable column. A hundred conditions are drawn, every kind of
+    term the compiler knows joined by AND, OR and NOT, with inputs
+    and sums. Each filters a scan on a connection, a scan through an
+    executor, a range of an ordered index, and key reads of every row
+    on a connection and through an executor, and each must give the
+    ids MySQL's SELECT gives.
+  - `assign`: twin tables with the same 200 rows. Sixty statements are
+    drawn, conditional updates of constants, sums and inputs, some
+    assigned only under a condition of their own (MySQL's `IF`), and
+    a few deletes; ours runs on one twin, alternately on a connection
+    and through an executor, MySQL's on the other, and the twins must
+    match after each. The counter reads its new value back after each
+    of forty updates, on a connection and through an executor; a
+    missed condition rolls back with 6000 where the operation aborts
+    on error, and fails alone with 626 where it ignores errors, for
+    writes and for a locked read.
+  - The C ABI's: a filtered scan, a guarded update that says 6000 or
+    passes, and the counter through an executor with its reads after
+    (`crates/ic_capi/tests/c_api.rs`).
 - Exit: integration groups `where` and `assign` match MySQL on
-  generated data, on key operations and on scans.
+  generated data, on key operations and on scans. **Met 2026-10-20**:
+  both groups and the C ABI's test passed against the dev cluster on
+  their first run, every drawn condition and statement agreeing with
+  MySQL.
 
 ### 9.2 AUTO_INCREMENT and tables without a primary key (1.5 weeks)
 

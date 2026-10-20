@@ -46,9 +46,13 @@
 //! indexes by ranges, merged in their order (chapter 06 §8.7); `exit`,
 //! the runs phase 8 is accepted by: a scan of a million rows, which
 //! takes about 60 MB a data node and is dropped after, and one executor
-//! serving 1 000 threads (chapter 06 §8.8). The `big_rows` group makes a
-//! log file group and a tablespace if the cluster has none, and keeps
-//! them.
+//! serving 1 000 threads (chapter 06 §8.8); `where`, which filters
+//! scans and key reads by drawn conditions and compares the rows with
+//! what MySQL selects, and `assign`, which runs drawn conditional
+//! updates and deletes on one of twin tables while MySQL runs them on
+//! the other, and compares the twins (chapter 06 §9.1). The `big_rows`
+//! group makes a log file group and a tablespace if the cluster has
+//! none, and keeps them.
 //! Each test is its own program against the cluster, as an application
 //! would be: it takes an API node id, binds its tables, does its work
 //! through the public API and lets go.
@@ -79,6 +83,11 @@ use ic_apid::executor::Request;
 use ic_apid::executor::Submitter;
 use ic_apid::index_scan::ScanRange;
 use ic_apid::key_op;
+use ic_apid::program::Cmp;
+use ic_apid::program::Cond;
+use ic_apid::program::Program;
+use ic_apid::program::ProgramBuilder;
+use ic_apid::program::Value;
 use ic_apid::query::AbortOption;
 use ic_apid::query::QueryId;
 use ic_apid::query::QueryState;
@@ -7194,4 +7203,1209 @@ fn failure_a_data_node_restarted_during_a_scan_fails_it_and_a_retry_reads_all()
     }
   }
   eprintln!("data node {} is started again", victim);
+}
+
+// ---- where and assign: programs against MySQL (chapter 06 §9.1) ----
+
+/// Rows of the `wh` table the `where` group fills.
+const IC_IT_WH_ROWS: i64 = 400;
+/// Rows of the twin tables of the `assign` group.
+const IC_IT_ASG_ROWS: i64 = 200;
+/// Conditions the `where` group draws, each run every way it runs.
+const IC_IT_WHERE_CONDS: u32 = 100;
+/// Statements the `assign` group draws.
+const IC_IT_ASSIGN_STATEMENTS: u32 = 60;
+/// Operations defined on one transaction, or put in one request.
+const IC_IT_OPS_PER_TRANS: usize = 100;
+/// Strings of a VARCHAR: cases a latin1 collation folds, letters beyond
+/// ASCII, the empty one, and one with a trailing space, which pads.
+const IC_IT_NAMES: [&str; 7] = ["abc", "ABC", "abd", "b", "åäö", "", "abc "];
+/// Strings of a CHAR(4).
+const IC_IT_CODES: [&str; 4] = ["c1", "C1", "c2", "zz"];
+/// The inputs a drawn program reads, of the sixteen.
+const IC_IT_INPUTS: usize = 5;
+
+/// Numbers drawn the same way every run.
+struct Draw {
+  state: u64,
+}
+
+impl Draw {
+  fn new(seed: u64) -> Draw {
+    Draw {
+      state: seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1,
+    }
+  }
+
+  /// 0 to `n` − 1.
+  fn below(&mut self, n: u32) -> u32 {
+    self.state ^= self.state << 13;
+    self.state ^= self.state >> 7;
+    self.state ^= self.state << 17;
+    ((self.state >> 32) as u32) % n
+  }
+
+  /// `low` to `high`, both in.
+  fn range(&mut self, low: i64, high: i64) -> i64 {
+    low + self.below((high - low + 1) as u32) as i64
+  }
+
+  /// True one time in `n`.
+  fn one_in(&mut self, n: u32) -> bool {
+    self.below(n) == 0
+  }
+}
+
+/// What a column holds, for what its constants are drawn from and what
+/// it is compared with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Kind {
+  Int,
+  Uint,
+  Big,
+  Name,
+  Code,
+}
+
+/// A column of a table the groups draw over: its name, kind, and
+/// whether it may be NULL.
+#[derive(Clone, Copy)]
+struct DrawColumn {
+  name: &'static str,
+  kind: Kind,
+  nullable: bool,
+}
+
+const fn draw_column(
+  name: &'static str,
+  kind: Kind,
+  nullable: bool,
+) -> DrawColumn {
+  DrawColumn {
+    name,
+    kind,
+    nullable,
+  }
+}
+
+/// A table the groups draw conditions over.
+struct Schema {
+  columns: &'static [DrawColumn],
+  /// Its INT columns, which compare with each other and take sums.
+  ints: &'static [&'static str],
+  /// The signed columns compared with inputs.
+  signed: &'static [&'static str],
+  /// An unsigned column, summed with integers of no sign only, as MySQL
+  /// refuses a negative unsigned value.
+  unsigned: &'static str,
+}
+
+/// `wh`: what the `where` group filters.
+const IC_IT_WH: Schema = Schema {
+  columns: &[
+    draw_column("id", Kind::Int, false),
+    draw_column("a", Kind::Int, true),
+    draw_column("b", Kind::Int, true),
+    draw_column("n", Kind::Int, false),
+    draw_column("u", Kind::Uint, true),
+    draw_column("big", Kind::Big, true),
+    draw_column("name", Kind::Name, true),
+    draw_column("code", Kind::Code, true),
+  ],
+  ints: &["id", "a", "b", "n"],
+  signed: &["id", "a", "b", "n", "big"],
+  unsigned: "u",
+};
+
+/// The twins of the `assign` group.
+const IC_IT_ASG: Schema = Schema {
+  columns: &[
+    draw_column("id", Kind::Int, false),
+    draw_column("v", Kind::Int, true),
+    draw_column("w", Kind::Int, true),
+    draw_column("cnt", Kind::Uint, false),
+    draw_column("name", Kind::Name, true),
+  ],
+  ints: &["id", "v", "w"],
+  signed: &["id", "v", "w"],
+  unsigned: "cnt",
+};
+
+/// A value of a column as text, as `text_row` takes it: NULL now and
+/// then where the column may be.
+fn draw_value(draw: &mut Draw, column: &DrawColumn) -> String {
+  if column.nullable && draw.one_in(6) {
+    return "NULL".to_string();
+  }
+  match column.kind {
+    Kind::Int => draw.range(-20, 20).to_string(),
+    Kind::Uint => draw.range(0, 40).to_string(),
+    Kind::Big => {
+      (draw.range(-3, 3) * (1i64 << 40) + draw.range(-5, 5)).to_string()
+    }
+    Kind::Name => IC_IT_NAMES[draw.below(7) as usize].to_string(),
+    Kind::Code => IC_IT_CODES[draw.below(4) as usize].to_string(),
+  }
+}
+
+/// A value's text as SQL: a string quoted, a number and NULL as they
+/// are.
+fn sql_literal(kind: Kind, text: &str) -> String {
+  if text == "NULL" {
+    return text.to_string();
+  }
+  match kind {
+    Kind::Name | Kind::Code => format!("'{}'", text),
+    _ => text.to_string(),
+  }
+}
+
+/// `count` rows of `schema` as the values of an INSERT, ids from 1, the
+/// other columns drawn; the INT columns of the `assign` twins drawn
+/// wider, and their counter from 0 to 1000.
+fn insert_values(draw: &mut Draw, schema: &Schema, count: i64) -> String {
+  let mut sql = String::new();
+  let mut id: i64 = 1;
+  while id <= count {
+    if id > 1 {
+      sql.push(',');
+    }
+    sql.push_str(&format!("({}", id));
+    let mut place: usize = 1;
+    while place < schema.columns.len() {
+      let column = &schema.columns[place];
+      let mut text = draw_value(draw, column);
+      if count == IC_IT_ASG_ROWS && text != "NULL" {
+        if column.kind == Kind::Int {
+          text = draw.range(-1000, 1000).to_string();
+        } else if column.kind == Kind::Uint {
+          text = draw.range(0, 1000).to_string();
+        }
+      }
+      sql.push(',');
+      sql.push_str(&sql_literal(column.kind, &text));
+      place += 1;
+    }
+    sql.push(')');
+    id += 1;
+  }
+  sql
+}
+
+/// Make `wh` afresh, filled through MySQL, or `None` without a client.
+fn fill_wh() -> Option<()> {
+  let mut draw = Draw::new(2026_10_20);
+  let sql = format!(
+    "CREATE DATABASE IF NOT EXISTS {db};
+     DROP TABLE IF EXISTS {db}.wh;
+     CREATE TABLE {db}.wh (
+       id INT NOT NULL PRIMARY KEY,
+       a INT, b INT, n INT NOT NULL,
+       u INT UNSIGNED, big BIGINT,
+       name VARCHAR(16), code CHAR(4),
+       KEY ix_a (a)
+     ) ENGINE=NDB DEFAULT CHARSET=latin1;
+     INSERT INTO {db}.wh VALUES {values};",
+    db = IC_IT_DB,
+    values = insert_values(&mut draw, &IC_IT_WH, IC_IT_WH_ROWS)
+  );
+  mysql(&sql)?;
+  Some(())
+}
+
+/// Make the `assign` twins afresh, with the same rows, or `None`
+/// without a client.
+fn fill_asg() -> Option<()> {
+  let mut draw = Draw::new(20_261_021);
+  let sql = format!(
+    "CREATE DATABASE IF NOT EXISTS {db};
+     DROP TABLE IF EXISTS {db}.asg_api;
+     DROP TABLE IF EXISTS {db}.asg_sql;
+     CREATE TABLE {db}.asg_api (
+       id INT NOT NULL PRIMARY KEY,
+       v INT, w INT, cnt BIGINT UNSIGNED NOT NULL,
+       name VARCHAR(16)
+     ) ENGINE=NDB DEFAULT CHARSET=latin1;
+     CREATE TABLE {db}.asg_sql LIKE {db}.asg_api;
+     INSERT INTO {db}.asg_api VALUES {values};
+     INSERT INTO {db}.asg_sql SELECT * FROM {db}.asg_api;",
+    db = IC_IT_DB,
+    values = insert_values(&mut draw, &IC_IT_ASG, IC_IT_ASG_ROWS)
+  );
+  mysql(&sql)?;
+  Some(())
+}
+
+/// The ids a query prints, one a line.
+fn sql_ids(sql: &str) -> Vec<i64> {
+  let text = mysql(sql).expect("a MySQL client");
+  let mut ids: Vec<i64> = Vec::new();
+  for line in text.lines() {
+    if !line.is_empty() {
+      ids.push(line.trim().parse().expect("an id"));
+    }
+  }
+  ids
+}
+
+/// A condition drawn over a table: the program's tree in a builder, the
+/// inputs it is given, and the same condition as SQL with the inputs'
+/// values in their places.
+struct CondDraw<'a> {
+  draw: Draw,
+  b: ProgramBuilder,
+  t: &'a Table,
+  schema: &'a Schema,
+  inputs: [i64; 16],
+}
+
+impl<'a> CondDraw<'a> {
+  /// A drawing over `t`, numbered `seed`, with its inputs drawn: the
+  /// last of them never negative, for an unsigned column.
+  fn new(t: &'a Table, schema: &'a Schema, seed: u64) -> CondDraw<'a> {
+    let mut draw = Draw::new(seed);
+    let mut inputs = [0i64; 16];
+    let mut input: usize = 0;
+    while input < IC_IT_INPUTS {
+      inputs[input] = draw.range(-20, 20);
+      input += 1;
+    }
+    inputs[IC_IT_INPUTS - 1] = draw.range(0, 20);
+    CondDraw {
+      draw,
+      b: ProgramBuilder::new(&t.def),
+      t,
+      schema,
+      inputs,
+    }
+  }
+
+  fn id(&self, name: &str) -> u32 {
+    self.t.def.field_id(name).expect("a column")
+  }
+
+  fn column(&mut self, name: &str) -> Value {
+    let id = self.id(name);
+    self.b.column(id)
+  }
+
+  fn pick(&mut self, names: &[&'static str]) -> &'static str {
+    names[self.draw.below(names.len() as u32) as usize]
+  }
+
+  /// A constant of `column`, drawn from a row of it, and its SQL.
+  fn constant(&mut self, column: &DrawColumn) -> (Value, String) {
+    let text = draw_value(&mut self.draw, column);
+    let mut row = self.t.row();
+    self.t.put(&mut row, column.name, &text);
+    let id = self.id(column.name);
+    let k = self.b.constant(&self.t.rec, &row, id);
+    (k, sql_literal(column.kind, &text))
+  }
+
+  /// One of the six comparisons, and its SQL.
+  fn cmp(&mut self) -> (Cmp, &'static str) {
+    let cmps = [
+      (Cmp::Eq, "="),
+      (Cmp::Ne, "<>"),
+      (Cmp::Lt, "<"),
+      (Cmp::Le, "<="),
+      (Cmp::Gt, ">"),
+      (Cmp::Ge, ">="),
+    ];
+    cmps[self.draw.below(6) as usize]
+  }
+
+  /// A term: a column against a constant of its own or another column,
+  /// a NULL test, or a comparison worked out in registers.
+  fn term(&mut self) -> (Cond, String) {
+    let (cmp, op) = self.cmp();
+    match self.draw.below(8) {
+      0..=2 => {
+        let columns = self.schema.columns;
+        let column = columns[self.draw.below(columns.len() as u32) as usize];
+        let c = self.column(column.name);
+        let (k, literal) = self.constant(&column);
+        if self.draw.one_in(2) {
+          let sql = format!("{} {} {}", column.name, op, literal);
+          (self.b.compare(cmp, c, k), sql)
+        } else {
+          let sql = format!("{} {} {}", literal, op, column.name);
+          (self.b.compare(cmp, k, c), sql)
+        }
+      }
+      3 => {
+        let ints = self.schema.ints;
+        let x = self.pick(ints);
+        let y = self.pick(ints);
+        let (cx, cy) = (self.column(x), self.column(y));
+        (self.b.compare(cmp, cx, cy), format!("{} {} {}", x, op, y))
+      }
+      4 => {
+        let columns = self.schema.columns;
+        let name = columns[self.draw.below(columns.len() as u32) as usize].name;
+        let c = self.column(name);
+        if self.draw.one_in(2) {
+          (self.b.is_null(c), format!("{} IS NULL", name))
+        } else {
+          (self.b.is_not_null(c), format!("{} IS NOT NULL", name))
+        }
+      }
+      5 => {
+        let signed = self.schema.signed;
+        let name = self.pick(signed);
+        let input = self.draw.below(IC_IT_INPUTS as u32 - 1);
+        let c = self.column(name);
+        let i = self.b.input(input);
+        let sql = format!("{} {} {}", name, op, self.inputs[input as usize]);
+        (self.b.compare(cmp, c, i), sql)
+      }
+      6 => {
+        let ints = self.schema.ints;
+        let x = self.pick(ints);
+        let y = self.pick(ints);
+        let k = self.draw.range(-10, 10);
+        let (cx, cy) = (self.column(x), self.column(y));
+        let kv = self.b.integer(k);
+        let (sum, sql) = if self.draw.one_in(2) {
+          (self.b.add(cx, kv), format!("{} + {}", x, k))
+        } else {
+          (self.b.subtract(cx, kv), format!("{} - {}", x, k))
+        };
+        let sql = format!("{} {} {}", sql, op, y);
+        (self.b.compare(cmp, sum, cy), sql)
+      }
+      _ => {
+        let name = self.schema.unsigned;
+        let k = self.draw.range(0, 10);
+        let input = self.draw.below(IC_IT_INPUTS as u32);
+        let c = self.column(name);
+        let kv = self.b.integer(k);
+        let sum = self.b.add(c, kv);
+        let i = self.b.input(input);
+        let value = self.inputs[input as usize];
+        let sql = format!("{} + {} {} {}", name, k, op, value);
+        (self.b.compare(cmp, sum, i), sql)
+      }
+    }
+  }
+
+  /// A condition: terms joined by AND, OR and NOT, three deep at most.
+  fn cond(&mut self, depth: u32) -> (Cond, String) {
+    let ways = if depth >= 3 { 1 } else { 5 };
+    match self.draw.below(ways) {
+      0 | 1 => self.term(),
+      2 => {
+        let (x, sql) = self.cond(depth + 1);
+        (self.b.not(x), format!("(NOT {})", sql))
+      }
+      3 => {
+        let (x, sx) = self.cond(depth + 1);
+        let (y, sy) = self.cond(depth + 1);
+        (self.b.and(x, y), format!("({} AND {})", sx, sy))
+      }
+      _ => {
+        let (x, sx) = self.cond(depth + 1);
+        let (y, sy) = self.cond(depth + 1);
+        (self.b.or(x, y), format!("({} OR {})", sx, sy))
+      }
+    }
+  }
+}
+
+/// A program drawn over a table: compiled, its inputs, and its
+/// condition and assignments as SQL.
+struct Drawn {
+  program: Arc<Program>,
+  inputs: [i64; 16],
+  /// The WHERE condition; "TRUE" for a program with none.
+  sql: String,
+  /// The SET list of an update, empty for a filter or a delete.
+  sets: String,
+}
+
+/// Condition `index` of the `where` group, over `wh`.
+fn draw_where(t: &Table, index: u32) -> Drawn {
+  let mut d = CondDraw::new(t, &IC_IT_WH, 1000 + index as u64);
+  let (top, sql) = d.cond(0);
+  let program = match d.b.finish(Some(top)) {
+    Ok(program) => program,
+    Err(e) => {
+      panic!("condition {}: {} ({}): {}", index, e.message(), e.code, sql)
+    }
+  };
+  Drawn {
+    program,
+    inputs: d.inputs,
+    sql,
+    sets: String::new(),
+  }
+}
+
+/// Where the ids we read differ from MySQL's, if they do.
+fn id_faults(
+  faults: &mut Vec<String>,
+  way: &str,
+  drawn: &Drawn,
+  index: u32,
+  want: &[i64],
+  got: &[i64],
+  error: Option<IcError>,
+) {
+  if let Some(e) = error {
+    faults.push(format!(
+      "{} {}: error {} ({}) for {}",
+      way,
+      index,
+      e.code,
+      e.message(),
+      drawn.sql
+    ));
+    return;
+  }
+  if want != got {
+    let mut extra: Vec<i64> = Vec::new();
+    for id in got {
+      if !want.contains(id) {
+        extra.push(*id);
+      }
+    }
+    let mut missing: Vec<i64> = Vec::new();
+    for id in want {
+      if !got.contains(id) {
+        missing.push(*id);
+      }
+    }
+    extra.truncate(8);
+    missing.truncate(8);
+    faults.push(format!(
+      "{} {}: {} rows, MySQL's {}; ours alone {:?}, MySQL's alone {:?}, \
+       inputs {:?}: {}",
+      way,
+      index,
+      got.len(),
+      want.len(),
+      extra,
+      missing,
+      &drawn.inputs[..IC_IT_INPUTS],
+      drawn.sql
+    ));
+  }
+}
+
+#[test]
+fn where_scans_filter_as_mysql_does() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if fill_wh().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let t = bind(&mut conn, "wh");
+  let scan = conn.create_scan(&t.def, &t.rec).expect("a scan");
+  let index = conn.index_bind(IC_IT_DB, "ix_a", "wh").expect("ix_a");
+  let a = t.def.field_id("a").expect("a");
+  let key_rec = Record::default_for(&t.def, Some(&[a])).expect("a key");
+  let ranged = conn
+    .create_index_scan(&index, &key_rec, &t.rec)
+    .expect("an index scan");
+  let mut low = vec![0u8; key_rec.row_size() as usize];
+  let mut high = vec![0u8; key_rec.row_size() as usize];
+  text_row::put_value(&key_rec, 0, "-5", &mut low).expect("low");
+  text_row::put_value(&key_rec, 0, "5", &mut high).expect("high");
+  let between = ScanRange {
+    low_columns: 1,
+    low_inclusive: true,
+    high_columns: 1,
+    high_inclusive: true,
+    range_no: 0,
+  };
+  let executor = executor_with(&cluster, 64, 256);
+  let submitter = executor.submitter();
+  let te = bind_through(&submitter, "wh");
+  let plain = ScanShape::new(&te.def, &te.rec).expect("a scan shape");
+  let db = IC_IT_DB;
+  let mut faults: Vec<String> = Vec::new();
+  let mut index_no: u32 = 0;
+  while index_no < IC_IT_WHERE_CONDS {
+    let drawn = draw_where(&t, index_no);
+    let want = sql_ids(&format!(
+      "SELECT id FROM {}.wh WHERE {} ORDER BY id",
+      db, drawn.sql
+    ));
+
+    // A table scan on the connection.
+    conn
+      .set_scan_program(scan, Some(&drawn.program))
+      .expect("the program");
+    let mut input: u32 = 0;
+    while input < IC_IT_INPUTS as u32 {
+      let value = drawn.inputs[input as usize];
+      conn.set_scan_input(scan, input, value).expect("an input");
+      input += 1;
+    }
+    let (mut got, error) = scan_rows(&mut conn, &t, scan, &ScanArgs::default());
+    got.sort();
+    id_faults(&mut faults, "scan", &drawn, index_no, &want, &got, error);
+
+    // Through an executor, with a reader.
+    let shape = plain.with_program(&drawn.program).expect("a shape");
+    let mut reader = ScanReader::new(&shape);
+    input = 0;
+    while input < IC_IT_INPUTS as u32 {
+      let value = drawn.inputs[input as usize];
+      reader.set_input(input, value).expect("an input");
+      input += 1;
+    }
+    let args = ScanArgs::default();
+    submitter.scan(&mut reader, &args).expect("submit the scan");
+    let (rows, error) = reader_rows(&mut reader, &te);
+    let mut got: Vec<i64> = Vec::new();
+    for (id, _) in rows {
+      got.push(id);
+    }
+    got.sort();
+    id_faults(&mut faults, "reader", &drawn, index_no, &want, &got, error);
+
+    // A range of the ordered index, filtered.
+    let want = sql_ids(&format!(
+      "SELECT id FROM {}.wh WHERE a BETWEEN -5 AND 5 AND {} ORDER BY id",
+      db, drawn.sql
+    ));
+    conn
+      .set_scan_program(ranged, Some(&drawn.program))
+      .expect("the program");
+    input = 0;
+    while input < IC_IT_INPUTS as u32 {
+      let value = drawn.inputs[input as usize];
+      conn.set_scan_input(ranged, input, value).expect("an input");
+      input += 1;
+    }
+    conn
+      .add_scan_range(ranged, &between, &low, &high)
+      .expect("the range");
+    let (mut got, error) =
+      scan_rows(&mut conn, &t, ranged, &ScanArgs::default());
+    got.sort();
+    id_faults(&mut faults, "range", &drawn, index_no, &want, &got, error);
+    index_no += 1;
+  }
+  assert!(faults.is_empty(), "{}", first_faults(faults));
+}
+
+#[test]
+fn where_key_reads_filter_as_mysql_does() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if fill_wh().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let t = bind(&mut conn, "wh");
+  let mut queries: Vec<QueryId> = Vec::new();
+  while queries.len() < IC_IT_OPS_PER_TRANS {
+    let qid = conn.create_query(&t.def, &t.rec, &t.rec).expect("a query");
+    queries.push(qid);
+  }
+  let executor = executor_with(&cluster, 64, 256);
+  let mut submitter = executor.submitter();
+  let te = bind_through(&submitter, "wh");
+  let plain = OpShape::new(&te.def, &te.rec, &te.rec).expect("a shape");
+  // Every row, and a few that are not there, which no condition passes.
+  let mut ids: Vec<i64> = Vec::new();
+  let mut id: i64 = 1;
+  while id <= IC_IT_WH_ROWS + 5 {
+    ids.push(id);
+    id += 1;
+  }
+  let read = ReadKeyArgs {
+    kind: ReadKind::Committed,
+    abort_option: AbortOption::IgnoreError,
+    ..ReadKeyArgs::default()
+  };
+  let db = IC_IT_DB;
+  let mut faults: Vec<String> = Vec::new();
+  let mut index_no: u32 = 0;
+  while index_no < IC_IT_WHERE_CONDS {
+    let drawn = draw_where(&t, index_no);
+    let want = sql_ids(&format!(
+      "SELECT id FROM {}.wh WHERE {} ORDER BY id",
+      db, drawn.sql
+    ));
+
+    // On the connection, a hundred reads a transaction.
+    let mut got: Vec<i64> = Vec::new();
+    let mut odd: Option<IcError> = None;
+    for chunk in ids.chunks(IC_IT_OPS_PER_TRANS) {
+      let tid = conn
+        .start_transaction(TransactionHint::Any, Some(&t.def))
+        .expect("a transaction");
+      let mut slot: usize = 0;
+      while slot < chunk.len() {
+        let id = &chunk[slot];
+        let qid = queries[slot];
+        let query = conn.query_mut(qid).expect("the query");
+        query
+          .set_program(Some(&drawn.program))
+          .expect("the program");
+        let mut input: u32 = 0;
+        while input < IC_IT_INPUTS as u32 {
+          let value = drawn.inputs[input as usize];
+          query.set_input(input, value).expect("an input");
+          input += 1;
+        }
+        t.put(query.key_row_mut(), "id", &id.to_string());
+        conn.read_key(qid, tid, &read).expect("define the read");
+        slot += 1;
+      }
+      conn.commit_transaction(tid).expect("commit");
+      assert_eq!(finish(&mut conn, tid), CommitState::Committed);
+      conn.close_transaction(tid).expect("close");
+      slot = 0;
+      while slot < chunk.len() {
+        let id = &chunk[slot];
+        let query = conn.query(queries[slot]).expect("the query");
+        match query.error() {
+          None => got.push(*id),
+          Some(e) if e.code == key_op::IC_NDB_ERROR_NO_SUCH_ROW as i32 => {}
+          Some(e) => odd = Some(e),
+        }
+        slot += 1;
+      }
+    }
+    id_faults(&mut faults, "read", &drawn, index_no, &want, &got, odd);
+
+    // Through an executor, a hundred reads a request.
+    let shape = plain.with_program(&drawn.program).expect("a shape");
+    let mut got: Vec<i64> = Vec::new();
+    let mut odd: Option<IcError> = None;
+    for chunk in ids.chunks(IC_IT_OPS_PER_TRANS) {
+      let mut request = Request::new();
+      for id in chunk {
+        let mut op = KeyOp::read(&shape, ReadKind::Committed);
+        op.set_abort_option(AbortOption::IgnoreError);
+        let mut input: u32 = 0;
+        while input < IC_IT_INPUTS as u32 {
+          let value = drawn.inputs[input as usize];
+          op.set_input(input, value).expect("an input");
+          input += 1;
+        }
+        te.put(op.key_row_mut(), "id", &id.to_string());
+        request.push(op);
+      }
+      submitter.execute(&mut request).expect("run the request");
+      let mut place: usize = 0;
+      while place < chunk.len() {
+        let id = &chunk[place];
+        match request.ops()[place].error() {
+          None => got.push(*id),
+          Some(e) if e.code == key_op::IC_NDB_ERROR_NO_SUCH_ROW as i32 => {}
+          Some(e) => odd = Some(e),
+        }
+        place += 1;
+      }
+    }
+    id_faults(&mut faults, "op", &drawn, index_no, &want, &got, odd);
+    index_no += 1;
+  }
+  assert!(faults.is_empty(), "{}", first_faults(faults));
+}
+
+/// Statement `index` of the `assign` group, over the `asg` twins: a
+/// condition, or none, and assignments, or none for a delete. No
+/// assignment reads a column another assigns, so that MySQL, which
+/// assigns from left to right, sees what ours sees.
+fn draw_statement(t: &Table, index: u32) -> Drawn {
+  let mut d = CondDraw::new(t, &IC_IT_ASG, 5000 + index as u64);
+  // A delete always has a condition, so that the twins keep rows.
+  let deletes = d.draw.one_in(12);
+  let mut top: Option<Cond> = None;
+  let mut sql = "TRUE".to_string();
+  if deletes || !d.draw.one_in(5) {
+    let (c, s) = d.cond(0);
+    top = Some(c);
+    sql = s;
+  }
+  let mut sets: Vec<String> = Vec::new();
+  if !deletes {
+    let target = d.pick(&["v", "w"]);
+    let other = if target == "v" { "w" } else { "v" };
+    let (value, expr) = match d.draw.below(5) {
+      0 => {
+        let k = d.draw.range(-50, 50);
+        let (c, kv) = (d.column(target), d.b.integer(k));
+        (d.b.add(c, kv), format!("{} + {}", target, k))
+      }
+      1 => {
+        let k = d.draw.range(-50, 50);
+        let (c, kv) = (d.column(other), d.b.integer(k));
+        (d.b.subtract(c, kv), format!("{} - {}", other, k))
+      }
+      2 => {
+        let input = d.draw.below(IC_IT_INPUTS as u32 - 1);
+        let (c, i) = (d.column(target), d.b.input(input));
+        let sql = format!("{} + {}", target, d.inputs[input as usize]);
+        (d.b.add(c, i), sql)
+      }
+      3 => {
+        let column = draw_column(target, Kind::Int, true);
+        d.constant(&column)
+      }
+      _ => {
+        let (c, o) = (d.column(target), d.column(other));
+        (d.b.add(c, o), format!("{} + {}", target, other))
+      }
+    };
+    let target_id = d.id(target);
+    if d.draw.one_in(3) {
+      let (c, s) = d.cond(1);
+      d.b.assign_if(target_id, value, c);
+      sets.push(format!("{} = IF({}, {}, {})", target, s, expr, target));
+    } else {
+      d.b.assign(target_id, value);
+      sets.push(format!("{} = {}", target, expr));
+    }
+    if d.draw.one_in(3) {
+      let (k, literal) = d.constant(&draw_column("name", Kind::Name, true));
+      let name_id = d.id("name");
+      d.b.assign(name_id, k);
+      sets.push(format!("name = {}", literal));
+    }
+    if d.draw.one_in(4) {
+      let input = IC_IT_INPUTS as u32 - 1;
+      let (c, i) = (d.column("cnt"), d.b.input(input));
+      let sum = d.b.add(c, i);
+      let cnt_id = d.id("cnt");
+      d.b.assign(cnt_id, sum);
+      let value = d.inputs[input as usize];
+      sets.push(format!("cnt = cnt + {}", value));
+    }
+  }
+  let program = match d.b.finish(top) {
+    Ok(program) => program,
+    Err(e) => panic!(
+      "statement {}: {} ({}): {} SET {}",
+      index,
+      e.message(),
+      e.code,
+      sql,
+      sets.join(", ")
+    ),
+  };
+  Drawn {
+    program,
+    inputs: d.inputs,
+    sql,
+    sets: sets.join(", "),
+  }
+}
+
+/// A table's rows as MySQL prints them, in id order.
+fn rows_of(table: &str) -> String {
+  let sql = format!("SELECT * FROM {}.{} ORDER BY id", IC_IT_DB, table);
+  mysql(&sql).expect("a MySQL client")
+}
+
+#[test]
+fn assign_updates_and_deletes_as_mysql_does() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if fill_asg().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let t = bind(&mut conn, "asg_api");
+  let id_column = t.def.field_id("id").expect("id");
+  // An update writes only what its program assigns: its record holds
+  // the key, which an update leaves out.
+  let key_rec = Record::default_for(&t.def, Some(&[id_column])).expect("key");
+  let mut queries: Vec<QueryId> = Vec::new();
+  while queries.len() < IC_IT_OPS_PER_TRANS {
+    let qid = conn
+      .create_query(&t.def, &key_rec, &key_rec)
+      .expect("a query");
+    queries.push(qid);
+  }
+  let executor = executor_with(&cluster, 64, 256);
+  let mut submitter = executor.submitter();
+  let te = bind_through(&submitter, "asg_api");
+  let te_key = Record::default_for(&te.def, Some(&[id_column])).expect("key");
+  let plain = OpShape::new(&te.def, &te_key, &te_key).expect("a shape");
+  let mut ids: Vec<i64> = Vec::new();
+  let mut id: i64 = 1;
+  while id <= IC_IT_ASG_ROWS {
+    ids.push(id);
+    id += 1;
+  }
+  let db = IC_IT_DB;
+  let mut index_no: u32 = 0;
+  while index_no < IC_IT_ASSIGN_STATEMENTS {
+    let drawn = draw_statement(&t, index_no);
+    let deletes = drawn.sets.is_empty();
+    let statement = if deletes {
+      format!("DELETE FROM {}.asg_sql WHERE {}", db, drawn.sql)
+    } else {
+      format!(
+        "UPDATE {}.asg_sql SET {} WHERE {}",
+        db, drawn.sets, drawn.sql
+      )
+    };
+    mysql(&statement).expect("MySQL runs it");
+    let kind = if deletes {
+      WriteKind::Delete
+    } else {
+      WriteKind::Update
+    };
+    // A row the condition refuses, or one gone, fails alone.
+    let mut odd: Vec<String> = Vec::new();
+    if index_no % 2 == 0 {
+      let write = WriteKeyArgs {
+        kind,
+        abort_option: AbortOption::IgnoreError,
+        ..WriteKeyArgs::default()
+      };
+      for chunk in ids.chunks(IC_IT_OPS_PER_TRANS) {
+        let tid = conn
+          .start_transaction(TransactionHint::Any, Some(&t.def))
+          .expect("a transaction");
+        let mut slot: usize = 0;
+        while slot < chunk.len() {
+          let id = &chunk[slot];
+          let qid = queries[slot];
+          let query = conn.query_mut(qid).expect("the query");
+          query
+            .set_program(Some(&drawn.program))
+            .expect("the program");
+          let mut input: u32 = 0;
+          while input < IC_IT_INPUTS as u32 {
+            let value = drawn.inputs[input as usize];
+            query.set_input(input, value).expect("an input");
+            input += 1;
+          }
+          let key = query.key_row_mut();
+          text_row::put_value(&key_rec, 0, &id.to_string(), key).expect("id");
+          conn.write_key(qid, tid, &write).expect("define the write");
+          slot += 1;
+        }
+        conn.commit_transaction(tid).expect("commit");
+        let state = finish(&mut conn, tid);
+        if state != CommitState::Committed {
+          odd.push(format!("{:?}", conn.transaction(tid)));
+        }
+        conn.close_transaction(tid).expect("close");
+        slot = 0;
+        while slot < chunk.len() {
+          let query = conn.query(queries[slot]).expect("the query");
+          if let Some(e) = query.error() {
+            if e.code != key_op::IC_NDB_ERROR_NO_SUCH_ROW as i32 {
+              odd.push(format!(
+                "id {}: {} ({})",
+                chunk[slot],
+                e.code,
+                e.message()
+              ));
+            }
+          }
+          slot += 1;
+        }
+      }
+    } else {
+      let shape = plain.with_program(&drawn.program).expect("a shape");
+      for chunk in ids.chunks(IC_IT_OPS_PER_TRANS) {
+        let mut request = Request::new();
+        for id in chunk {
+          let mut op = KeyOp::write(&shape, kind);
+          op.set_abort_option(AbortOption::IgnoreError);
+          let mut input: u32 = 0;
+          while input < IC_IT_INPUTS as u32 {
+            let value = drawn.inputs[input as usize];
+            op.set_input(input, value).expect("an input");
+            input += 1;
+          }
+          let key = op.key_row_mut();
+          text_row::put_value(&te_key, 0, &id.to_string(), key).expect("id");
+          request.push(op);
+        }
+        if let Err(e) = submitter.execute(&mut request) {
+          odd.push(format!("request: {} ({})", e.code, e.message()));
+        }
+        let mut place: usize = 0;
+        while place < chunk.len() {
+          let id = &chunk[place];
+          if let Some(e) = request.ops()[place].error() {
+            if e.code != key_op::IC_NDB_ERROR_NO_SUCH_ROW as i32 {
+              odd.push(format!("id {}: {} ({})", id, e.code, e.message()));
+            }
+          }
+          place += 1;
+        }
+      }
+    }
+    let ours = rows_of("asg_api");
+    let theirs = rows_of("asg_sql");
+    if !odd.is_empty() || ours != theirs {
+      let mut differ: Vec<String> = Vec::new();
+      for (mine, sql) in ours.lines().zip(theirs.lines()) {
+        if mine != sql {
+          differ.push(format!("ours {} / MySQL's {}", mine, sql));
+        }
+      }
+      differ.truncate(10);
+      panic!(
+        "statement {} ({}): {}\ninputs {:?}\n{}\n{}\n{} rows ours, {} MySQL's",
+        index_no,
+        if index_no % 2 == 0 {
+          "connection"
+        } else {
+          "executor"
+        },
+        statement,
+        &drawn.inputs[..IC_IT_INPUTS],
+        odd.join("\n"),
+        differ.join("\n"),
+        ours.lines().count(),
+        theirs.lines().count()
+      );
+    }
+    index_no += 1;
+  }
+}
+
+#[test]
+fn assign_the_counter_reads_its_new_value_after() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if fill_asg().is_none() {
+    return;
+  }
+  let db = IC_IT_DB;
+  let start = count_of(&format!("SELECT cnt FROM {}.asg_api WHERE id = 1", db));
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let t = bind(&mut conn, "asg_api");
+  let id_column = t.def.field_id("id").expect("id");
+  let cnt = t.def.field_id("cnt").expect("cnt");
+  let key_rec = Record::default_for(&t.def, Some(&[id_column])).expect("key");
+  let after_rec = Record::default_for(&t.def, Some(&[cnt])).expect("cnt");
+  // cnt = cnt + input 0, as the AUTO_INCREMENT counter takes values.
+  let mut b = ProgramBuilder::new(&t.def);
+  let c = b.column(cnt);
+  let n = b.input(0);
+  let sum = b.add(c, n);
+  b.assign(cnt, sum);
+  let program = b.finish(None).expect("the program");
+  assert_eq!(program.inputs(), 1);
+
+  // On the connection.
+  let qid = conn
+    .create_query(&t.def, &key_rec, &key_rec)
+    .expect("a query");
+  let query = conn.query_mut(qid).expect("the query");
+  query.set_program(Some(&program)).expect("the program");
+  query
+    .set_reads_after(Some(&after_rec))
+    .expect("reads after");
+  text_row::put_value(&key_rec, 0, "1", query.key_row_mut()).expect("id");
+  let update = WriteKeyArgs {
+    kind: WriteKind::Update,
+    ..WriteKeyArgs::default()
+  };
+  let mut expected = start;
+  let mut step: i64 = 1;
+  while step <= 20 {
+    conn
+      .query_mut(qid)
+      .expect("the query")
+      .set_input(0, step * 3)
+      .expect("the input");
+    let tid = conn
+      .start_transaction(TransactionHint::Any, Some(&t.def))
+      .expect("a transaction");
+    conn
+      .write_key(qid, tid, &update)
+      .expect("define the update");
+    conn.commit_transaction(tid).expect("commit");
+    assert_eq!(finish(&mut conn, tid), CommitState::Committed);
+    conn.close_transaction(tid).expect("close");
+    expected += step * 3;
+    let query = conn.query(qid).expect("the query");
+    assert!(query.error().is_none(), "{:?}", query.error());
+    let seen = text_row::value_text(&after_rec, 0, query.after_row());
+    assert_eq!(seen, expected.to_string(), "step {}", step);
+    step += 1;
+  }
+
+  // Through an executor, read back into the operation's own row.
+  let executor = executor_with(&cluster, 64, 256);
+  let mut submitter = executor.submitter();
+  let te = bind_through(&submitter, "asg_api");
+  let te_key = Record::default_for(&te.def, Some(&[id_column])).expect("key");
+  let te_after = Record::default_for(&te.def, Some(&[cnt])).expect("cnt");
+  let shape = OpShape::new(&te.def, &te_key, &te_key)
+    .expect("a shape")
+    .with_program(&program)
+    .expect("with the program")
+    .reading_after(&te_after)
+    .expect("reading after");
+  let mut request = Request::new();
+  let mut op = KeyOp::write(&shape, WriteKind::Update);
+  text_row::put_value(&te_key, 0, "1", op.key_row_mut()).expect("id");
+  request.push(op);
+  step = 1;
+  while step <= 20 {
+    request.ops_mut()[0].set_input(0, step).expect("the input");
+    submitter.execute(&mut request).expect("run the request");
+    let op = &request.ops()[0];
+    assert!(op.error().is_none(), "{:?}", op.error());
+    expected += step;
+    let seen = text_row::value_text(&te_after, 0, op.after_row());
+    assert_eq!(seen, expected.to_string(), "executor step {}", step);
+    step += 1;
+  }
+  let now = count_of(&format!("SELECT cnt FROM {}.asg_api WHERE id = 1", db));
+  assert_eq!(now, expected, "what MySQL reads");
+}
+
+#[test]
+fn assign_a_missed_condition_aborts_only_where_asked() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if fill_asg().is_none() {
+    return;
+  }
+  let db = IC_IT_DB;
+  mysql(&format!(
+    "UPDATE {db}.asg_api SET v = 1, w = 0 WHERE id = 1;
+     UPDATE {db}.asg_api SET v = 2, w = 0 WHERE id = 2;",
+    db = db
+  ));
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let t = bind(&mut conn, "asg_api");
+  let id_column = t.def.field_id("id").expect("id");
+  let v = t.def.field_id("v").expect("v");
+  let key_rec = Record::default_for(&t.def, Some(&[id_column])).expect("key");
+  // WHERE v > 100, which no row meets; v = v + 1.
+  let mut b = ProgramBuilder::new(&t.def);
+  let c = b.column(v);
+  let hundred = b.input(0);
+  let top = b.compare(Cmp::Gt, c, hundred);
+  let one = b.integer(1);
+  let sum = b.add(c, one);
+  b.assign(v, sum);
+  let program = b.finish(Some(top)).expect("the program");
+  let plain = conn.create_query(&t.def, &t.rec, &t.rec).expect("a query");
+  let guarded = conn
+    .create_query(&t.def, &key_rec, &key_rec)
+    .expect("a query");
+  {
+    let query = conn.query_mut(guarded).expect("the query");
+    query.set_program(Some(&program)).expect("the program");
+    query.set_input(0, 100).expect("the input");
+    text_row::put_value(&key_rec, 0, "2", query.key_row_mut()).expect("id");
+  }
+
+  // With the writes' default, abort on error: the transaction rolls
+  // back, the plain update with it, and says 6000.
+  for (option, aborts, tried) in [
+    (AbortOption::Default, true, 1i64),
+    (AbortOption::IgnoreError, false, 2i64),
+  ] {
+    let mut row = t.row();
+    t.put(&mut row, "id", "1");
+    t.put(&mut row, "v", "1");
+    t.put(&mut row, "w", &tried.to_string());
+    t.put(&mut row, "cnt", "0");
+    t.put(&mut row, "name", "NULL");
+    let query = conn.query_mut(plain).expect("the query");
+    query.key_row_mut().copy_from_slice(&row);
+    query.attr_row_mut().copy_from_slice(&row);
+    let tid = conn
+      .start_transaction(TransactionHint::Any, Some(&t.def))
+      .expect("a transaction");
+    let write = WriteKeyArgs {
+      kind: WriteKind::Update,
+      ..WriteKeyArgs::default()
+    };
+    conn
+      .write_key(plain, tid, &write)
+      .expect("the plain update");
+    let write = WriteKeyArgs {
+      kind: WriteKind::Update,
+      abort_option: option,
+      ..WriteKeyArgs::default()
+    };
+    conn
+      .write_key(guarded, tid, &write)
+      .expect("the guarded update");
+    conn.commit_transaction(tid).expect("commit");
+    let state = finish(&mut conn, tid);
+    let query_error = conn.query(guarded).expect("the query").error();
+    let trans_error = conn.transaction(tid).expect("the transaction").error();
+    conn.close_transaction(tid).expect("close");
+    let w = count_of(&format!("SELECT w FROM {}.asg_api WHERE id = 1", db));
+    let v2 = count_of(&format!("SELECT v FROM {}.asg_api WHERE id = 2", db));
+    assert_eq!(v2, 2, "the guarded row is left as it was");
+    if aborts {
+      assert_eq!(state, CommitState::RolledBack, "{:?}", trans_error);
+      let codes = [query_error, trans_error];
+      let mut said: bool = false;
+      for code in codes.into_iter().flatten() {
+        if code.code == 6000 {
+          said = true;
+        }
+      }
+      assert!(said, "6000 said: {:?} {:?}", query_error, trans_error);
+      assert_eq!(w, 0, "the plain update rolled back with it");
+    } else {
+      assert_eq!(state, CommitState::Committed, "{:?}", trans_error);
+      assert_eq!(
+        query_error.map(|e| e.code),
+        Some(key_op::IC_NDB_ERROR_NO_SUCH_ROW as i32),
+        "626, as a row not there"
+      );
+      assert_eq!(w, tried, "the plain update committed");
+    }
+  }
+
+  // A read that aborts on error, of a row its filter refuses.
+  let mut b = ProgramBuilder::new(&t.def);
+  let c = b.column(v);
+  let hundred = b.input(0);
+  let top = b.compare(Cmp::Gt, c, hundred);
+  let filter = b.finish(Some(top)).expect("the filter");
+  let reader = conn.create_query(&t.def, &t.rec, &t.rec).expect("a query");
+  let query = conn.query_mut(reader).expect("the query");
+  query.set_program(Some(&filter)).expect("the filter");
+  query.set_input(0, 100).expect("the input");
+  t.put(query.key_row_mut(), "id", "2");
+  let tid = conn
+    .start_transaction(TransactionHint::Any, Some(&t.def))
+    .expect("a transaction");
+  let read = ReadKeyArgs {
+    kind: ReadKind::Locked,
+    abort_option: AbortOption::AbortOnError,
+    ..ReadKeyArgs::default()
+  };
+  conn.read_key(reader, tid, &read).expect("the read");
+  conn.commit_transaction(tid).expect("commit");
+  let state = finish(&mut conn, tid);
+  let query_error = conn.query(reader).expect("the query").error();
+  let trans_error = conn.transaction(tid).expect("the transaction").error();
+  assert_eq!(state, CommitState::RolledBack, "{:?}", trans_error);
+  let mut said: bool = false;
+  for code in [query_error, trans_error].into_iter().flatten() {
+    if code.code == 6000 {
+      said = true;
+    }
+  }
+  assert!(said, "6000 said: {:?} {:?}", query_error, trans_error);
 }
