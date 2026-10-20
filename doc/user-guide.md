@@ -1,13 +1,16 @@
 # iClaustron user guide
 
 iClaustron is a Data API for RonDB: a library an application links to
-read and write rows of a RonDB cluster directly, as an API node, by
-primary key and by unique key, in transactions. It is written in Rust
-and has a C API; this guide covers both. It is for release 0.1, against
-RonDB 26.10; the executors of section 5 came after 0.1, on the way to
-0.2.
+read and write rows of a RonDB cluster directly, as an API node: by
+primary key and by unique key, in transactions, and by scans of tables
+and of ordered indexes, with conditions and updates that run on the
+data nodes. It is written in Rust and has a C API; this guide covers
+both, against RonDB 26.10. Release 0.1 had the key operations; the
+guide also covers what came after it, on the way to 0.2 (executors and
+scans, section 5) and 0.3 (programs, section 6; AUTO_INCREMENT and
+tables without a primary key, section 7).
 
-The examples in `examples/` are the same five programs in Rust and in
+The examples in `examples/` are the same nine programs in Rust and in
 C, and the guide quotes them. The C API's reference is its header,
 `include/iclaustron/ic_apid.h`; the Rust API's is `cargo doc`; the
 design behind both is `doc/rust/04-api-design.md`.
@@ -92,6 +95,8 @@ is what the management server shows for its node.
 | `receive_threads` | 1 | threads reading the data nodes' links; more when many threads send much |
 | `reply_wait_ms` | 0: from the configuration | how long a transaction waits for its replies before it ends with 4012; at least two minutes |
 | `mgm_timeout_ms` | 30 000 | how long a management server has to answer |
+| `auto_increment_prefetch` | 4 096 | AUTO_INCREMENT values a refill reserves for a table (section 7) |
+| `auto_increment_step`, `auto_increment_offset` | 1, 1 | as MySQL's `auto_increment_increment` and `auto_increment_offset` (section 7) |
 
 **One global per cluster.** A program that talks to several clusters
 starts a global for each. Stopping the global (dropping it, or
@@ -172,6 +177,14 @@ record covering every field serves as both.
 column out (a default record does so by itself), and deleting a row of
 such a table is refused (`IC_ERROR_DELETE_WITH_BLOBS`, 7153), since
 its blob's parts would be left behind.
+
+**Tables without a primary key** have a last column of their own,
+`$PK`, BIGINT UNSIGNED, which MySQL adds as the table's key and fills
+from the table's AUTO_INCREMENT counter. iClaustron shows it as the
+ordinary column it is: records hold it, key operations go by it, a
+scan reads it. `table.hidden_key()` names it, and its `IC_FIELD_INFO`
+says `hidden_key`, for tools that list columns and would leave it out.
+An insert takes its value as section 7 says.
 
 ## 4. Queries and transactions
 
@@ -296,7 +309,7 @@ them all at once, and polls for the replies:
 
 A completed query goes to the connection's executed list, taken with
 `get_next_executed_query`, or, if it was defined with a callback, has
-its callback called (section 6). A program can keep many transactions
+its callback called (section 8). A program can keep many transactions
 in flight on one connection, and that is where the throughput is: the
 `pipeline` example keeps 32 single-row transactions in flight.
 
@@ -362,17 +375,20 @@ reaches the cluster.
 
 ### Scans
 
-A scan reads a whole table, or one partition of it, in batches: one
-receiver per fragment scanned at once, each bringing a batch of rows
-at a time. A receiver is asked for its next batch only once the
-program has handed back the last, so the program sets the pace, and a
-locking scan's rows stay locked until their batch is handed back.
+A scan reads a whole table, one partition of it, or ranges of an
+ordered index, in batches: one receiver per fragment scanned at once,
+each bringing a batch of rows at a time. A receiver is asked for its
+next batch only once the program has handed back the last, so the
+program sets the pace, and a locking scan's rows stay locked until
+their batch is handed back.
 
 - Make a scan once over a table and a record (`create_scan`,
   `ic_apid_scan_create`), and start a run of it as often as you like
   (`start_scan`, `ic_apid_conn_start_scan`), with its arguments
   (`ScanArgs`, `ic_scan_args_init`): the lock (committed, shared or
-  exclusive), the batch size, one partition, a deadline.
+  exclusive), the batch size, one partition, a deadline. A program
+  run on the data nodes (section 6) can pass over the rows the
+  application does not want, so that only the others travel.
 - **Row by row**: `next_row` (`ic_apid_conn_next_row`) reads the next
   row into the scan's row, handing each batch back as it goes and
   polling while it waits; it says false at the end, or gives the
@@ -407,6 +423,39 @@ if (ret != 0)
   goto error;
 ```
 
+**Index scans.** A scan of an ordered index reads the rows whose
+indexed columns lie in the ranges given. Make it once with the index, a
+key record holding the index's columns, and the record the rows are
+read into (`create_index_scan`, `ic_apid_index_scan_create`), and add
+each run's ranges before starting it (`add_scan_range`,
+`ic_apid_conn_add_scan_range`). A range is a low and a high row, laid
+out by the key record, and a `ScanRange` (`IC_SCAN_RANGE`, filled by
+`ic_scan_range_init`) that says how many of the index's leading
+columns each bound takes from its row (0 for no bound on that side),
+whether each bound is in the range, and the range's number, 0 to
+4 095. Bounds compare as the index orders its rows, column by column,
+and a NULL in a bound comes before every value. A run given no range
+reads the whole index.
+
+- **In order**: `ordered` in the arguments merges the fragments' rows
+  into the index's order, `descending` from the high end. Character
+  columns compare in their collation's order, as the data nodes
+  describe it. An ordered run is read row by row.
+- **Several ranges**: `scan_range_no` (`ic_apid_scan_range_no`) gives
+  the number of the range the row last read is in. An ordered run
+  gives its rows range by range, so the numbers must rise in the order
+  the ranges were added (`IC_ERROR_BAD_RANGE`, 7163, as for a range
+  that cannot be sent).
+- **One partition**: a run whose every range fixes the table's
+  distribution key reads that partition alone.
+- **Through an executor**: a shape over the index
+  (`ScanShape::new_index`, `ic_scan_shape_create_index`), and the
+  ranges added to the reader (`add_range`, `ic_scan_reader_add_range`;
+  `range_no`, `ic_scan_reader_range_no`).
+
+The `range_scan` example reads ranges of an index in order, from either
+end; `scan_executor` does so from four threads through an executor.
+
 **Updating and deleting rows a scan finds.** Start a locking scan on a
 transaction (`ScanArgs::trans`, `IC_SCAN_ARGS`' `trans`), and act on
 the row last read: `lock_scan_row`, `update_scan_row` or
@@ -424,7 +473,190 @@ ends the scan with 296; a lock waited for too long with 274 or 266;
 the failure of the coordinator's node with 4028. All are temporary:
 start the scan again.
 
-## 6. Callbacks
+## 6. Programs: conditions and updates on the data nodes
+
+A program, in this section and in the API's names (`Program`,
+`IC_PROGRAM`), is not the application but a piece of code it builds,
+which runs in the data node on the row an operation holds there:
+
+- a **scan's filter**, which passes over the rows it does not want, so
+  that only the others travel;
+- a **key operation's condition**, which refuses the operation when the
+  row does not meet it, such as an update that only happens while a
+  column still has the value the application read;
+- an **update's assignments**, worked out from the row, such as adding
+  to a counter without reading it first.
+
+**Building one.** A builder over a table makes values and conditions
+bottom-up, each giving an id, and compiles them into a program:
+
+- values: a column, `column(id)`; a constant, `constant(&rec, row, id)`,
+  the value column `id` has in a row laid out by `rec`; an integer,
+  `integer(n)`; an input, `input(n)`; and `add(a, b)` and
+  `subtract(a, b)`;
+- conditions: `compare(cmp, a, b)` with `Cmp::Eq`, `Ne`, `Lt`, `Le`,
+  `Gt` and `Ge` (`IC_CMP_EQ` and so on), `is_null(a)` and
+  `is_not_null(a)`, joined by `and(x, y)`, `or(x, y)` and `not(x)`;
+- assignments, for an update: `assign(column, value)`, and
+  `assign_if(column, value, cond)` for one that happens only where its
+  own condition holds;
+- then `finish(Some(top))`, or `finish(None)` for a program that only
+  assigns (`ic_program_builder_finish`,
+  `ic_program_builder_finish_no_condition`).
+
+```rust
+// val > input 0 AND name IS NOT NULL, as a scan's filter
+let mut b = ProgramBuilder::new(&table);
+let val = b.column(val_id);
+let limit = b.input(0);
+let above = b.compare(Cmp::Gt, val, limit);
+let name = b.column(name_id);
+let named = b.is_not_null(name);
+let both = b.and(above, named);
+let filter = b.finish(Some(both))?;
+conn.set_scan_program(scan, Some(&filter))?;
+conn.set_scan_input(scan, 0, 100)?;
+```
+
+```c
+IC_PROGRAM_BUILDER *b;
+IC_PROGRAM *filter;
+IC_PROGRAM_COND above, named;
+
+ret = ic_program_builder_create(table, &b);
+above = ic_program_compare(b, IC_CMP_GT, ic_program_column(b, val_id),
+                           ic_program_input(b, 0));
+named = ic_program_is_not_null(b, ic_program_column(b, name_id));
+ret = ic_program_builder_finish(b, ic_program_and(b, above, named),
+                                &filter);
+ic_program_builder_free(b);
+ret = ic_apid_conn_set_scan_program(conn, scan, filter);
+ret = ic_apid_conn_set_scan_input(conn, scan, 0, 100);
+```
+
+In C a value or condition the builder could not make, from a null
+handle or an unknown comparison, is `IC_PROGRAM_NONE`, which the finish
+refuses with `IC_ERROR_BAD_PROGRAM` (7165), so the steps need no check
+each.
+
+**Made once, run many times.** A program is shared by any number of
+operations; only its inputs change from one to the next, up to 16
+integers (`IC_PROGRAM_INPUTS`), compared with an integer column or added
+to one. Each query, operation or scan holds its own 16, 0 until set and
+kept until changed. A constant from a row stays in the program, so a
+value that changes between operations belongs in an input.
+
+**Where a program goes.**
+
+- On a connection a query or a scan keeps it until it is changed:
+  `query.set_program(Some(&p))` and `conn.set_scan_program(scan,
+  Some(&p))` (`ic_apid_query_set_program`,
+  `ic_apid_conn_set_scan_program`), `None` or NULL to take it off; the
+  inputs with `set_input` and `set_scan_input`
+  (`ic_apid_query_set_input`, `ic_apid_conn_set_scan_input`).
+- Through an executor a shape takes it: `shape.with_program(&p)`
+  (`ic_op_shape_with_program`, `ic_scan_shape_with_program`) makes a
+  shape of the same records that runs it. The inputs are set on each
+  operation (`KeyOp::set_input`, `ic_request_set_input`) or on the
+  reader (`ScanReader::set_input`, `ic_scan_reader_set_input`).
+- A program goes on key reads, updates and deletes and on scans, and
+  one that assigns only on an update. A program on an insert or a
+  write, through a unique index, or on a scanned row taken over is
+  refused when the operation is defined (`IC_ERROR_NOT_SUPPORTED`,
+  7127).
+
+**When the condition does not hold**, a scan passes the row over. A key
+operation is refused: with 6000 where it aborts on error, which rolls
+its transaction back, and with 626, as if there were no row, where it
+ignores errors. A comparison with a NULL is unknown, as in SQL, and only
+a condition that is true lets the row through. A conditional update is
+a program with a condition only, the new values in the attribute row
+as for any update.
+
+**Reading after an update.** An update can read columns back after its
+program has run, into a row of their own laid out by a record of their
+own: `query.set_reads_after(Some(&rec))` and `query.after_row()`
+(`ic_apid_query_set_reads_after`, `ic_apid_query_after_row`); through
+an executor, `shape.reading_after(&rec)` (`ic_op_shape_reading_after`)
+and the operation's `after_row` (`ic_request_after_row`). A counter is
+then one round trip: a program that assigns the column plus input 0,
+on an update that reads the column back, the row locked only inside
+the data node.
+
+**What the finish refuses**: a comparison or assignment of values of
+different types (`IC_ERROR_NOT_COMPARABLE`, 7164), since a constant
+must have its column's type, length, precision, scale and collation;
+more than eight values live at once (`IC_ERROR_CONDITION_TOO_COMPLEX`,
+7130); a column the table does not have, or an input beyond 15. A
+program is for the table its builder was made over, and is refused on
+another's operations (`IC_ERROR_BAD_PROGRAM`).
+
+## 7. AUTO_INCREMENT and tables without a primary key
+
+**Values are asked for, not filled in.** An insert writes the row as
+given. For a table's AUTO_INCREMENT column the application asks for
+the next value and puts it in its rows:
+
+```rust
+let id = conn.auto_increment(&table)?;
+// put id in the key row and the attribute row, then insert as usual
+```
+
+```c
+uint64_t id;
+
+ret = ic_apid_conn_auto_increment(conn, table, &id);
+```
+
+- **Unique across the cluster.** The values come from the table's
+  counter in the data nodes, the one MySQL servers take theirs from, so
+  no client hands out a value another has, MySQL servers included. They
+  are not in order across clients, and values not used are gaps, as
+  with MySQL's own.
+- **A range per table for the process.** A refill reserves
+  `auto_increment_prefetch` values at once, 4 096 by default, in one
+  round trip, and the values after it need none. A table may have a
+  size of its own (`table.set_auto_increment_prefetch(n)`,
+  `ic_table_def_set_auto_increment_prefetch`). Every connection and
+  executor of the process takes from the table's one range. The refill
+  goes on a connection the library keeps for the counters, so the call
+  never sends the application's queries and never runs a callback.
+- **Many rows at once**: `auto_increment_block(&table, n)`
+  (`ic_apid_conn_auto_increment_block`) gives the first of `n` values a
+  step apart, reserved together.
+- **A value of the application's own**: after inserting a row with an
+  explicit value, `auto_increment_seen(&table, value)`
+  (`ic_apid_conn_auto_increment_seen`) moves the counter past it, only
+  ever up, so that no client hands it out. MySQL servers do the same
+  after theirs. Another client's reserved range is not told, with MySQL
+  as with iClaustron, so an explicit value inside one may later be
+  handed out again by that client: keep explicit values above the
+  counter.
+- **The counter as it stands**: `auto_increment_peek(&table)`
+  (`ic_apid_conn_auto_increment_peek`), the next value no client has
+  reserved; only advisory, out of date once any
+  client refills.
+- **Step and offset** for the process (`auto_increment_step`,
+  `auto_increment_offset` in the global's options), as MySQL's
+  `auto_increment_increment` and `auto_increment_offset`: for clusters
+  in a replication ring, set as the cluster's MySQL servers are.
+- **Through an executor** the submitter has the same calls
+  (`ic_apid_submitter_auto_increment` and so on), which may be made
+  from a callback on the executor's thread too.
+- **Errors.** A temporary error on the counter is tried again inside
+  the call, for up to 3.6 s, and then returned. A table without such a
+  column is refused (`IC_ERROR_NO_AUTO_INCREMENT`, 7166). The value is
+  not checked against the column's type: an AUTO_INCREMENT column wants
+  64 bits.
+
+**Tables without a primary key.** The hidden key `$PK` (section 3) is
+the table's AUTO_INCREMENT column: an insert takes its value with
+`auto_increment`, always one apart whatever the step, and puts it in
+its key row. A scan returns it with each row, so a row a scan finds
+can be read, updated or deleted by it afterwards, or taken over at
+once (section 5).
+
+## 8. Callbacks
 
 A query defined with a callback has it called when it completes:
 **on the thread that polls, from inside the poll**, with the connection,
@@ -458,7 +690,7 @@ QueryId, usize)`, with `user_ref` its only context; state it shares with
 the rest of the program lives where a plain function can reach it, as
 in the `pipeline` example's statics.
 
-## 7. Errors
+## 9. Errors
 
 ### What an error says
 
@@ -486,17 +718,25 @@ asked for once it has completed.
 
 | Code | What happened | Kind |
 |---|---|---|
-| 626 | no row with that key | user |
+| 626 | no row with that key; or a program's condition did not hold, on an operation that ignores errors | user |
 | 630 | a row with that key is there already | user |
 | 893 | the row would break a unique index; the error data names it | user |
+| 6000 | a program's condition did not hold, on an operation that aborts on error | user |
 | 241, 284 | the table or index changed or went since it was bound | user: bind again |
 | 266 | a lock wait timed out, probably a deadlock | temporary |
+| 274, 296 | a scan waited too long for a lock; a scan's batch was kept too long | temporary |
 | 233, 4006, 899 and others | a node is out of a resource for the moment | temporary |
 | 4010, 4025, 4028, 4029, 4031 | a node failure aborted the transaction | temporary |
 | 4119 | a node failure lost the reply to a committed read | temporary |
 | 4012 | the replies stopped coming; the outcome is unknown | temporary, see below |
 | 7135 | the link to a data node was lost; the node may be up | temporary |
 | 7142 | no data node is started | temporary |
+| 7159 | an executor's list of requests is full (`submit` only) | temporary |
+| 7160 | the executor has stopped | error |
+| 7127 | something the library does not do (yet), such as a program on an insert | error |
+| 7130, 7164, 7165 | a program needs more than eight values at once; compares different types; names what it does not have | error |
+| 7163 | a range of an index scan that cannot be sent | error |
+| 7166 | the table has no AUTO_INCREMENT column | error |
 | 7139 | too many connections in this process | error |
 | 7153, 7155 | a delete on a table with blobs; an indexed column updated through the index | error |
 | 7154 | the index is not online | error |
@@ -522,7 +762,7 @@ values. A read may simply be tried again.
 **A user error does not clear up by itself**: the request has to
 change, or the condition is the answer (626 means there is no row).
 
-## 8. Node failure
+## 10. Node failure
 
 The library keeps the API node in the cluster on its own: it exchanges
 heartbeats with every data node, notices a link that goes quiet,
@@ -550,7 +790,7 @@ In short: retry temporary errors, and treat 4012 as above. A
 transaction that goes to a cluster with no started node fails with
 7142 until one is back.
 
-## 9. Performance
+## 11. Performance
 
 - **Batch.** One send per data node carries every query defined since
   the last; many queries per transaction, and many transactions in
@@ -560,6 +800,12 @@ transaction that goes to a cluster with no started node fails with
 - **Hint.** A transaction started by its key's hint runs its first
   query on the node that holds the row.
 - **Use committed reads** where no lock is needed: they take none.
+- **Work where the rows are.** A scan with a program sends only the
+  rows that pass it; a conditional update checks and writes in one
+  round trip, and an update that adds to a column needs no read first.
+- **AUTO_INCREMENT**: each refill is a round trip, under the table's
+  lock, so a table inserted into fast wants a larger prefetch, and an
+  insert of many rows a block.
 - **Threads.** A connection per thread scales with cores; more receive
   threads help when many threads together read a lot.
 - **Many threads, blocking calls:** an executor gathers their calls
@@ -570,23 +816,28 @@ transaction that goes to a cluster with no started node fails with
 - **Measure release builds.** The library's checks in a debug build
   cost time a release build does not spend.
 
-## 10. What is not done yet
+## 12. What is not done yet
 
-- Scans read whole tables or one partition, with no conditions run on
-  the data nodes yet and no ordered index scans; those come next. Rows
-  a scan has locked are taken over on a connection only, not through
-  an executor.
+- Programs are the basic set: comparisons, IS NULL, AND, OR and NOT,
+  adding and subtracting integers, and assignments with a condition of
+  their own, with at most eight values live at once; none on inserts
+  or writes, through a unique index, or on a row a scan hands over.
+- Inserts do not fill an AUTO_INCREMENT column by themselves: the
+  application asks for the value (section 7).
+- Rows a scan has locked are taken over on a connection only, not
+  through an executor.
 - No blob columns (BLOB, TEXT, JSON, GEOMETRY): records leave them out,
   and deletes on their tables are refused.
 - No schema changes: tables and indexes are made through a MySQL
   server.
-- No TLS between the API node and the cluster.
+- No TLS between the API node and the cluster, and no choosing data
+  nodes by location domain.
 - At most 4 711 connections per process, RonDB's limit for an API
   node.
 - Keys in three collations whose keys cannot be placed from their
   weights, `latin2_czech_cs`, `cp1250_czech_cs` and `tis620_thai_ci`,
   are not hinted: such a transaction goes to the next node in turn,
-  which works and costs a hop.
-- No events, no AUTO_INCREMENT from the API, no tables without a
-  primary key.
+  which works and costs a hop. An ordered run over an index with such a
+  column is refused.
+- No events, no pushdown joins, no aggregation on the data nodes.
 - Linux on x86_64 and aarch64 and macOS on aarch64; no Windows.

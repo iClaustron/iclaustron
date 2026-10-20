@@ -1089,7 +1089,10 @@ gained a "Using it" section with an example `cargo test` compiles; the
 README points to the guide. Found while writing it: 4012 and the other
 unknown outcomes are temporary, as NDB classes them; chapter 04 and the
 header said otherwise, and now say that a write is tried again only
-once it is known not to have committed.
+once it is known not to have committed. Brought up to date with phases
+8 and 9 on 2026-10-20: index scans in section 5, programs (section 6)
+and AUTO_INCREMENT with tables without a primary key (section 7), the
+new options and errors, and what is not done yet.
 
 The header reviewed (2026-10-14): an overview at its top gives the
 rules every function keeps (results and error codes, handles and who
