@@ -472,6 +472,70 @@ const IC_NDB_ERRORS: &[ErrorEntry] = &[
     class: ErrorClass::Application,
     text: "A key column cannot be NULL",
   },
+  // Interpreted programs. The data node's own refusals of a program
+  // are the application's error, as NDB classes them; 6000 is ours,
+  // the code our programs refuse with where a missed condition is to
+  // abort (chapter 05 §9.4).
+  ErrorEntry {
+    code: 6000,
+    class: ErrorClass::AppDefined,
+    text: "The row did not meet the operation's condition",
+  },
+  ErrorEntry {
+    code: 871,
+    class: ErrorClass::Application,
+    text: "The program has an instruction the data node does not know",
+  },
+  ErrorEntry {
+    code: 872,
+    class: ErrorClass::Application,
+    text: "The program ran past its end without accepting or refusing",
+  },
+  ErrorEntry {
+    code: 876,
+    class: ErrorClass::Application,
+    text: "The program's instructions do not fit its size",
+  },
+  ErrorEntry {
+    code: 878,
+    class: ErrorClass::Application,
+    text: "The program compared or computed with a NULL register",
+  },
+  ErrorEntry {
+    code: 879,
+    class: ErrorClass::Application,
+    text: "The program read or wrote a column the table does not have",
+  },
+  ErrorEntry {
+    code: 882,
+    class: ErrorClass::Application,
+    text: "The sizes of the program's parts do not add up",
+  },
+  ErrorEntry {
+    code: 888,
+    class: ErrorClass::Application,
+    text: "The program wrote a column, and the operation is no update",
+  },
+  ErrorEntry {
+    code: 846,
+    class: ErrorClass::Application,
+    text: "The program read an input beyond the sixteenth",
+  },
+  ErrorEntry {
+    code: 937,
+    class: ErrorClass::Application,
+    text: "The program's inputs do not add up, or one is not 8 bytes",
+  },
+  ErrorEntry {
+    code: 938,
+    class: ErrorClass::Application,
+    text: "The program was given more than 16 inputs",
+  },
+  ErrorEntry {
+    code: 939,
+    class: ErrorClass::Application,
+    text: "Among the program's inputs is a column that is no input",
+  },
   ErrorEntry {
     code: 4260,
     class: ErrorClass::AppDefined,
@@ -569,6 +633,10 @@ mod tests {
     assert_eq!(class_of(4009).severity(), ErrorSeverity::Temporary);
     // A scan whose reading node shut down is tried again.
     assert_eq!(class_of(270).severity(), ErrorSeverity::Temporary);
+    // A row that missed its condition, where that is to abort.
+    assert_eq!(class_of(6000), ErrorClass::AppDefined);
+    assert_eq!(class_of(6000).category(), ErrorCategory::User);
+    assert_eq!(class_of(6000).severity(), ErrorSeverity::Error);
     assert_eq!(class_of(4350).category(), ErrorCategory::Internal);
     assert_eq!(class_of(0).severity(), ErrorSeverity::NoError);
   }

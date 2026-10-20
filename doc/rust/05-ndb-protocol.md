@@ -2261,6 +2261,7 @@ basic interpreter of phase 9.1 needs these:
 | 27 | `TEST_COLUMN_COLUMN` | as 23, against another column of the row |
 | 71 | `ADD_IMM` | R3 = R1 + the field |
 | 72 | `SUBTRACT_IMM` | R3 = R1 − the field |
+| 121 | `READ_INPUT` | R1 = the input in the field, one of 16 opaque 8-byte values (§9.5) |
 
 Described, for later:
 
@@ -2281,7 +2282,6 @@ Described, for later:
 | 92–99 | `SHIFT_LEFT_IMM`, `SHIFT_RIGHT_IMM`, `MULTIPLY_IMM`, `DIVIDE_IMM`, `BIT_AND_IMM`, `BIT_OR_IMM`, `BIT_XOR_IMM`, `REMAINDER_IMM` | R3 = R1 with the field (a shift below 64) |
 | 113–116 | `LOAD_8_AT` … `LOAD_64_AT` | R2 = memory at R1 |
 | 117–120 | `STORE_8_AT` … `STORE_64_AT` | memory at R2 = R1 |
-| 121 | `READ_INPUT` | R1 = the input in the field, one of 16 opaque 8-byte values |
 | 123 | `WRITE_OUTPUT` | the output in the field, one of 16, = R1 |
 | 125 | `ZERO_MEMORY` | memory zeroed, R1 and R2 the size and the offset |
 
@@ -2295,7 +2295,23 @@ is R1 minus the field, not the field minus R1, and both immediates are
 unsigned, 0 to 65 535; `ADD` and
 `SUBTRACT` with a NULL operand give NULL; the jumps of 12–17 compare
 by the type words, signed, unsigned or double, and a NULL in either
-register is error 878, so a program tests for NULL first. For later:
+register is error 878, so a program tests for NULL first.
+`READ_COLUMN` gives the register the column's type: a signed integer
+column a signed value, the smaller ones sign-extended, an unsigned
+column an unsigned one, FLOAT and DOUBLE a double; the jumps of 12–17
+and the arithmetic go by the types, so a signed and an unsigned value
+compare as numbers (`src/kernel/blocks/dbtup/DbtupExecQuery.cpp:
+8829-8960, 7280-7395`). That came with bab40b92982 (2026-05-02).
+Before it a column of 32 bits or fewer was read as its word, filled
+out with zeros and taken as signed, so a negative value of such a
+column compared through a register as a large positive one; the
+reference tree's history shows it (`git show bab40b92982^`). Our
+programs read integer columns into registers only where they meet an
+input, an integer or a sum (`ic_apid::program`), and rely on the
+typed reads: every data node is a released, stable 26.10 or later,
+none older (the author, 2026-10-20; chapter 01), and the 26.10 branch
+has the commit (seen in its tree at d3ba310b593, 2026-10-20). For
+later:
 the code reads `ZERO_MEMORY`'s offset from R1 and its size from R2,
 the other way round from the account. Verify:
 `include/kernel/Interpreter.hpp:856-1012, 1363-1381`;
@@ -2391,6 +2407,26 @@ Seen: comparisons 1, 2, 4 and 5 with rules 0 and 2 (§9.6). Verify:
   program, 0, 0, subroutines] (§7.2).
 - Subroutines, for `CALL`, and the parameters of 26 are in the fifth
   part; their layout is not needed by the basic interpreter.
+- **Inputs** (the author, 2026-10-20): a program can be used again and
+  again with only its inputs set anew for each operation. There are
+  16, each an opaque 8-byte value, and they go at the front of the
+  reads before the program: a word with 0xFFFF in bits 16–31 and in
+  bits 0–15 the inputs' length in words, this word with them (1 and 3
+  for each input, so 4 to 49); then for each input a column header
+  naming 0xFFA0 plus its number, of 8 bytes, and its value, low word
+  first. The reads, if any, follow, and the part's size counts both.
+  `READ_INPUT` (121) puts input n, the field, in R1 as a signed
+  integer, never NULL. An input the operation does not set is not
+  cleared: it holds what an earlier operation in the same thread of
+  the data node left there, so ours sends every input its program
+  reads. The data node
+  refuses inputs whose sizes do not add up or one not of 8 bytes
+  (937), more than 16 (938), a header naming no input (939), and
+  `READ_INPUT` of 16 or more (846). As read in the code; not yet seen
+  on the wire. Verify: `src/kernel/blocks/dbtup/DbtupExecQuery.cpp:
+  6094-6121, 8546-8561`; `src/kernel/blocks/dbtup/DbtupRoutines.cpp:
+  1899-1933`; `include/kernel/AttributeHeader.hpp:126-128`;
+  `src/kernel/blocks/dbtup/Dbtup.hpp:180, 232-234, 244`.
 
 ### 9.6 Seen on the wire (`scans2.pcap`, read again 2026-10-19)
 
@@ -2512,6 +2548,10 @@ values is
 later, and LIKE (comparison 6) with phase 10. Regular expressions have
 no instruction and are evaluated in the API after the row comes, a
 documented limitation.
+
+As built (2026-10-20): the encoding is `ic_signals::interp`, a writer
+of programs with labels for the jumps, tested against the programs of
+§9.6 word for word, both captures' scans and the counter's updates.
 
 ### 9.8 Asked of the author
 

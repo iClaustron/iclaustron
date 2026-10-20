@@ -680,6 +680,111 @@ while conn.next_row(scan)? {
   yet released, so no shorter one is taken. `IC_ERROR_BAD_RANGE`
   (7163).
 
+### Conditions and assignments (phase 9.1; agreed with the author 2026-10-20)
+
+A condition is built bottom-up, as a tree, and compiled whole (the
+author, 2026-10-20, choosing among the old builder's subroutine ids
+handed out top-down and its values at memory addresses,
+`legacy-c/include/ic_apid.h:1123-1217`; this tree; and groups opened
+and closed in the order a condition is written, as MySQL compiles its
+conditions). The old builder's model stays, values and conditions
+between them, without subroutine ids for the caller to keep:
+
+- **Values** each return an id: a column, `column(id)`; a constant,
+  `constant(&rec, row, id)`; and computed values, `add(a, b)` and
+  `subtract(a, b)`, the rest of them with phase 10.
+- **Constants from rows** (the author, 2026-10-20, choosing between
+  rows, as the ranges of 8.7 are given, and typed values converted to
+  the compared column's type): `constant(&rec, row, id)` is the value
+  of column `id` in a row laid out by `rec`, a record over the
+  condition's table. It is encoded at once, as a write encodes it, and
+  the row is not kept. Every type a record can carry is a constant,
+  with nothing new to encode, and a value its column cannot hold
+  cannot be in the row. A term comparing a column with a constant
+  needs them of one type, length, precision, scale and collation, as a
+  column compared with a column does (chapter 05 §9.3); others are
+  refused at `finish`. A NULL in the row is a NULL constant, and a
+  term with one is unknown, as SQL has it. The constants a computed
+  value or an assignment adds or subtracts, as in `val + 1`, are plain
+  integers, as the registers hold them.
+- **Terms** each return an id: `compare(op, a, b)` with `=`, `<>`,
+  `<`, `<=`, `>` and `>=`, `is_null(a)` and `is_not_null(a)`.
+- **Joined** by `and(x, y)`, `or(x, y)` and `not(x)`, each returning
+  an id too.
+- **`finish(top)` compiles** the tree under `top`. With all of it in
+  hand the compiler takes a column test (chapter 05 §9.3) wherever a
+  term compares a column with a constant or with a column of the same
+  type, flattens nested ANDs and ORs into one level of jumps with
+  SQL's NULL logic, as MySQL's programs have them (§9.6–9.7), and
+  places registers only where values are computed. More than eight
+  values live at once is `IC_ERROR_CONDITION_TOO_COMPLEX` (7130).
+- **Assignments**: `assign(column, value)`, the value a constant from
+  a row or a column plus or minus an integer, with a condition of its
+  own if wanted (the old `IC_CONDITIONAL_ASSIGNMENT`).
+- **A program is made once and used again** (the author, 2026-10-20):
+  only its inputs change from one operation to the next, up to 16
+  integers of 64 bits (chapter 05 §9.5). In the tree an input is a
+  value, `input(n)` with n from 0 to 15, compared with an integer
+  column through registers, or added to one. The program knows the
+  inputs it reads, and each operation sends them all, since an input
+  left unset holds an earlier operation's. A constant from a row stays
+  in the program; a value that changes between operations is an input.
+- **A program goes beside the records, its inputs beside the rows**
+  (the author, 2026-10-20, choosing between a program given with each
+  operation, by reference, and one kept in what is made once). A
+  program is shared (`Arc<Program>`) and made for one table.
+  - On an executor a shape takes it: `shape.with_program(&program)`
+    makes a shape of the same records that runs it, for `OpShape` and
+    `ScanShape` alike, and the executor encodes the program once for
+    the shape. A plain update and a conditional one are two shapes.
+  - On a connection a query and a scan keep it until it is changed:
+    `query.set_program(Some(&program))` and
+    `conn.set_scan_program(scan, Some(&program))`; `None` takes it
+    off.
+  - The inputs: `set_input(n, value)` on a `KeyOp`, an `ApidQuery` and
+    a `ScanReader`, and `conn.set_scan_input(scan, n, value)`. Each
+    holds its 16, 0 until set and kept until changed, and sends those
+    its program reads with every operation or run, so none is left
+    to an earlier operation's.
+  - A program goes on key reads, updates and deletes and on scans,
+    the basic set's operations (chapter 06 §9.1); one with assignments
+    only on an update. Others are refused when the operation is
+    defined.
+- **Reads after an update** (the author, 2026-10-20, choosing between
+  a record of the columns read after the program and the program's
+  outputs, chapter 05 §9.5): a record of their own, beside the
+  program. On an executor `shape.reading_after(&after_rec)` makes a
+  shape that reads them, and on a connection
+  `query.set_reads_after(Some(&after_rec))` keeps it until changed.
+  The values come back as a read's do, after the program and its
+  assignments, into a row of their own laid out by that record,
+  `after_row()` on a `KeyOp` and an `ApidQuery`: any column of any
+  type, as the AUTO_INCREMENT counter's new value comes (chapter 05
+  §9.6). Only an update reads after. The outputs may come beside it
+  with phase 10.
+
+- **As built (2026-10-20)**, `ic_apid::program`:
+  `ProgramBuilder::new(&table)`; values `column(id)`,
+  `constant(&rec, row, id)`, `integer(i64)`, `input(n)`, `add`,
+  `subtract`; conditions `compare(Cmp, a, b)`, `is_null`,
+  `is_not_null`, `and`, `or`, `not`; `assign(column, value)` and
+  `assign_if(column, value, cond)`; `finish(Some(top))`, or
+  `finish(None)` for a program that only assigns, giving an
+  `Arc<Program>`. A missed condition refuses with 6000 where the
+  operation aborts on error and 626 where it ignores errors; a scan's
+  always 626, which passes the row over. An update's attribute row is
+  written after the program, after the program's own constants, so a
+  conditional update is a program with only a condition and the
+  values in the row. An update may read after with no program, which
+  then only accepts. Refused when the operation is defined
+  (`IC_ERROR_NOT_SUPPORTED`): a program on an insert or a write, one
+  that assigns on a read or a delete, reads after on anything but an
+  update, and a program through a unique index or on a takeover of a
+  scanned row, for later. A unique `OpShape` refuses `with_program`
+  and `reading_after`.
+
+C follows the Rust API by the ABI's rules below, as the scans' did.
+
 ### Errors
 
 `IcError` is a code: 7000 and up iClaustron's own, small positive codes

@@ -57,6 +57,9 @@ aggregation pushdown.
   config writer). The only configuration source is the management server.
 - Windows. Linux and macOS are the targets.
 - RonDB versions before 26.10; no version gating, no compatibility paths.
+  Every data node is a released, stable 26.10 or later (the author,
+  2026-10-20), so what the library relies on is what such a release
+  does, not what an older one did.
 
 ## Principles
 

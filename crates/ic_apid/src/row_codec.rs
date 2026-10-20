@@ -152,6 +152,12 @@ pub fn read_attr_info(rec: &Record) -> Vec<u32> {
 /// As [`read_attr_info`], into a buffer the caller keeps, cleared first.
 pub fn read_attr_info_into(rec: &Record, out: &mut Vec<u32>) {
   out.clear();
+  read_attr_info_append(rec, out);
+}
+
+/// As [`read_attr_info`], appended to `out`: a part of an interpreted
+/// operation's column section.
+pub(crate) fn read_attr_info_append(rec: &Record, out: &mut Vec<u32>) {
   let table = rec.table();
   let count = rec.num_fields();
   if count == table.num_fields() {
@@ -169,16 +175,17 @@ pub fn read_attr_info_into(rec: &Record, out: &mut Vec<u32>) {
     position += 1;
   }
   let mask_words = (max_id / 32 + 1) as usize;
+  let base = out.len();
   out.push(column_header::column_header(
     IC_COL_READ_MASKED,
     4 * mask_words as u32,
   ));
-  out.resize(1 + mask_words, 0);
+  out.resize(base + 1 + mask_words, 0);
   position = 0;
   while position < count {
     if let Some(field) = rec.field(position) {
       let id = field.field_id() as usize;
-      out[1 + id / 32] |= 1 << (id % 32);
+      out[base + 1 + id / 32] |= 1 << (id % 32);
     }
     position += 1;
   }
@@ -211,6 +218,17 @@ pub fn write_attr_info_into(
   out: &mut Vec<u32>,
 ) -> Result<(), IcError> {
   out.clear();
+  write_attr_info_append(rec, row, skip_keys, out)
+}
+
+/// As [`write_attr_info`], appended to `out`: the updates after an
+/// interpreted operation's program.
+pub(crate) fn write_attr_info_append(
+  rec: &Record,
+  row: &[u8],
+  skip_keys: bool,
+  out: &mut Vec<u32>,
+) -> Result<(), IcError> {
   if row.len() < rec.row_size() as usize {
     return Err(IcError::new(err::IC_ERROR_RECORD_LAYOUT));
   }
@@ -450,10 +468,9 @@ fn copy_bits(
   Ok(())
 }
 
-/// Bytes, padded to whole words, as words in native order.
 /// Append `bytes` to `out` packed into words as they lie in memory, the
 /// last word padded with zeros.
-fn push_padded(out: &mut Vec<u32>, bytes: &[u8]) {
+pub(crate) fn push_padded(out: &mut Vec<u32>, bytes: &[u8]) {
   let mut i: usize = 0;
   while i < bytes.len() {
     let mut word = [0u8; 4];

@@ -81,6 +81,9 @@ use crate::index_scan::IndexScan;
 use crate::index_scan::RangeSet;
 use crate::index_scan::ScanRange;
 use crate::node_connect::SignalView;
+use crate::program;
+use crate::program::Program;
+use crate::program::IC_PROGRAM_INPUTS;
 use crate::query::AbortOption;
 use crate::query::QueryCallback;
 use crate::query::QueryId;
@@ -440,6 +443,9 @@ pub struct Scan {
   reads_range_no: bool,
   /// The range number of the row last read.
   range_no: u32,
+  /// The program that filters the rows, if any, and its inputs.
+  program: Option<Arc<Program>>,
+  inputs: [i64; IC_PROGRAM_INPUTS as usize],
 }
 
 impl std::fmt::Debug for Scan {
@@ -499,6 +505,8 @@ impl Scan {
       descending: false,
       reads_range_no: false,
       range_no: 0,
+      program: None,
+      inputs: [0; IC_PROGRAM_INPUTS as usize],
     })
   }
 
@@ -881,6 +889,73 @@ impl ApidConnection {
     }
   }
 
+  /// Filter the scan's runs from the next on by `program`, or by none
+  /// (chapter 04, "Conditions and assignments"): a row it refuses is
+  /// passed over at the data node. It must be for the scanned table
+  /// (`IC_ERROR_BAD_PROGRAM`) and assign nothing
+  /// (`IC_ERROR_NOT_SUPPORTED`). Refused while a run is on
+  /// (`IC_ERROR_SCAN_ACTIVE`).
+  pub fn set_scan_program(
+    &mut self,
+    id: ScanId,
+    program: Option<&Arc<Program>>,
+  ) -> Result<(), IcError> {
+    let scan = self.idle_scan(id)?;
+    match program {
+      Some(program) => {
+        program::check_program(program, &scan.table, false)?;
+        scan.program = Some(Arc::clone(program));
+      }
+      None => scan.program = None,
+    }
+    Ok(())
+  }
+
+  /// Set input `input`, 0 to 15, of the scan's program to `value`, for
+  /// its runs from the next on; each holds what it was last set to, 0 at
+  /// first (`IC_ERROR_BAD_PROGRAM` beyond 15). Refused while a run is on
+  /// (`IC_ERROR_SCAN_ACTIVE`).
+  pub fn set_scan_input(
+    &mut self,
+    id: ScanId,
+    input: u32,
+    value: i64,
+  ) -> Result<(), IcError> {
+    let scan = self.idle_scan(id)?;
+    match scan.inputs.get_mut(input as usize) {
+      Some(slot) => {
+        *slot = value;
+        Ok(())
+      }
+      None => Err(IcError::new(err::IC_ERROR_BAD_PROGRAM)),
+    }
+  }
+
+  /// Every input of the scan's program at once, as an executor's run
+  /// gives them, the scan being idle.
+  pub(crate) fn set_scan_inputs(
+    &mut self,
+    id: ScanId,
+    inputs: &[i64; IC_PROGRAM_INPUTS as usize],
+  ) {
+    if let Some(scan) = self.scans.get_mut(id.0) {
+      scan.inputs = *inputs;
+    }
+  }
+
+  /// A scan with no run on.
+  fn idle_scan(&mut self, id: ScanId) -> Result<&mut Scan, IcError> {
+    match self.scans.get_mut(id.0) {
+      Some(scan) => {
+        if scan.is_running() {
+          return Err(IcError::new(err::IC_ERROR_SCAN_ACTIVE));
+        }
+        Ok(scan)
+      }
+      None => Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
+    }
+  }
+
   /// The number of the range the scan's row last read is in; 0 if the
   /// id names no scan.
   pub fn scan_range_no(&self, id: ScanId) -> u32 {
@@ -1148,7 +1223,15 @@ impl ApidConnection {
         let encoded = request.encode();
         words.clear();
         words.extend_from_slice(&encoded[..request.len()]);
-        scans::column_section_into(read, &[], &[], &mut columns);
+        match &scan.program {
+          Some(program) => program::scan_section_into(
+            program,
+            &scan.inputs,
+            read,
+            &mut columns,
+          ),
+          None => scans::column_section_into(read, &[], &[], &mut columns),
+        }
         ids.clear();
         let mut place: usize = 0;
         while place < scan.used as usize {

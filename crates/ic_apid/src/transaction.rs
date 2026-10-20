@@ -60,6 +60,14 @@
 //! the coordinator aborts what an API node it lost had open.
 //! Verify: chapter 05 §17.14.
 //!
+//! **A query that runs a program** goes interpreted, flag bit 15, its
+//! column section in five parts (chapter 05 §9.5): on a read, an update
+//! or a delete by primary key, a program that assigns only on an update,
+//! and reads after the program only on an update. Its refusal says 6000
+//! where the operation aborts on error and 626 where it ignores errors,
+//! so that a missed condition aborts the transaction only where the
+//! abort option says (§9.4).
+//!
 //! What is not here yet: placing a unique query by the index's own hash
 //! map, so it goes to a node holding the index.
 
@@ -67,6 +75,7 @@ use ic_port::debug::IC_NDB_MESSAGE_LEVEL;
 use ic_port::err;
 use ic_port::IcError;
 use ic_signals::header::SignalHeader;
+use ic_signals::interp;
 use ic_signals::key_ops;
 use ic_signals::key_ops::KeyOpConf;
 use ic_signals::key_ops::KeyOpFlags;
@@ -90,6 +99,7 @@ use crate::dict_cache::IndexDef;
 use crate::dict_cache::TableDef;
 use crate::hash;
 use crate::node_connect::SignalView;
+use crate::program;
 use crate::query::AbortOption;
 use crate::query::ApidQuery;
 use crate::query::BatchHint;
@@ -615,6 +625,7 @@ impl ApidConnection {
     binding: usize,
     takeover: Option<&TakeoverKey>,
   ) -> Result<(), IcError> {
+    let mut flags = flags;
     let (id, coord) = match self.transactions.get(trans_id.0) {
       Some(trans) if trans.is_open() => (trans.trans_id, trans.coord),
       _ => return Err(IcError::new(err::IC_ERROR_TRANSACTION_ACTIVE)),
@@ -638,6 +649,27 @@ impl ApidConnection {
     // A takeover names the scanned row of the base table.
     if takeover.is_some() && query.index().is_some() {
       return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
+    }
+    // A program, or reads after one, makes the operation interpreted:
+    // a read, an update or a delete by primary key, assigning and
+    // reading after only on an update.
+    let reads_after = query.after_record().is_some();
+    if query.program().is_some() || reads_after {
+      let operation = flags.operation;
+      let update = operation == key_ops::IC_OP_UPDATE;
+      let runs = operation == key_ops::IC_OP_READ
+        || operation == key_ops::IC_OP_READ_EXCLUSIVE
+        || operation == key_ops::IC_OP_DELETE
+        || update;
+      let writes = matches!(query.program(), Some(p) if p.writes());
+      if !runs
+        || query.index().is_some()
+        || takeover.is_some()
+        || ((writes || reads_after) && !update)
+      {
+        return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
+      }
+      flags.interpreted = true;
     }
     // A unique query names the index's own table and goes as a
     // UNIQUE_OP_REQ; the coordinator looks the row up through the index.
@@ -734,6 +766,7 @@ impl ApidConnection {
           flags,
           staged,
           is_read,
+          reads_after,
           sent_at: 0,
           confirmed: None,
           row: Vec::new(),
@@ -1337,7 +1370,7 @@ impl ApidConnection {
     let mut error = None;
     for qid in &sent {
       if let Some(query) = self.queries.get(qid.0) {
-        if query.execution.is_read {
+        if query.execution.is_read || query.execution.reads_after {
           error = Some(lost_read);
         }
       }
@@ -1357,7 +1390,7 @@ impl ApidConnection {
         None => continue,
       };
       query.set_result_len(0);
-      if query.execution.is_read {
+      if query.execution.is_read || query.execution.reads_after {
         query.fail(lost_read);
       } else {
         query.set_state(QueryState::Completed);
@@ -1434,7 +1467,7 @@ impl ApidConnection {
           }
           None => false,
         };
-        (done, exec.is_read)
+        (done, exec.is_read || exec.reads_after)
       }
       None => return,
     };
@@ -1801,6 +1834,9 @@ fn build_attr_section(
   is_read: bool,
   attr_info: &mut Vec<u32>,
 ) -> Result<(), IcError> {
+  if flags.interpreted {
+    return build_interpreted_section(query, flags, is_read, attr_info);
+  }
   attr_info.clear();
   if is_read {
     row_codec::read_attr_info_into(query.attr_record(), attr_info);
@@ -1813,6 +1849,57 @@ fn build_attr_section(
       attr_info,
     )?;
   }
+  Ok(())
+}
+
+/// An interpreted operation's column section (chapter 05 §9.5): the
+/// inputs its program reads and, for a read, what to read, before the
+/// program; the program, refusing with 6000 where the operation aborts
+/// on error and with 626 where it ignores errors (§9.4); for an update
+/// the program's constants and then the attribute row's values, written
+/// after it; and for an update with reads after, those.
+fn build_interpreted_section(
+  query: &ApidQuery,
+  flags: &KeyOpFlags,
+  is_read: bool,
+  attr_info: &mut Vec<u32>,
+) -> Result<(), IcError> {
+  let mut refusal = interp::IC_REFUSE_NO_ROW;
+  if flags.abort_option == key_ops::IC_ABORT_ON_ERROR {
+    refusal = interp::IC_REFUSE_CONDITION;
+  }
+  let program = query.program();
+  let mut section = program::Section::new(attr_info);
+  if let Some(program) = program {
+    program.inputs_into(query.inputs(), section.out());
+  }
+  if is_read {
+    row_codec::read_attr_info_append(query.attr_record(), section.out());
+  }
+  section.end_part();
+  match program {
+    Some(program) => program.code_into(refusal, section.out()),
+    // Reads after an update with no program: one that accepts.
+    None => section.out().push(interp::IC_INSN_ACCEPT),
+  }
+  section.end_part();
+  if flags.operation == key_ops::IC_OP_UPDATE {
+    if let Some(program) = program {
+      section.out().extend_from_slice(program.updates());
+    }
+    row_codec::write_attr_info_append(
+      query.attr_record(),
+      query.attr_row(),
+      true,
+      section.out(),
+    )?;
+  }
+  section.end_part();
+  if let Some(after) = query.after_record() {
+    row_codec::read_attr_info_append(after, section.out());
+  }
+  section.end_part();
+  section.end_part();
   Ok(())
 }
 
@@ -1843,6 +1930,92 @@ mod tests {
     let long_attr = vec![2u32; key_ops::IC_MAX_COLUMN_DATA_WORDS];
     let e = sections_fit(&key, &long_attr).expect_err("column data");
     assert_eq!(e.code, err::IC_ERROR_RECORD_SIZE_TOO_BIG);
+  }
+
+  #[test]
+  fn an_interpreted_update_sends_its_five_parts() {
+    use crate::program::Cmp;
+    use crate::program::ProgramBuilder;
+    // interp_t: 0 id, 1 val INT NULL, 2 name VARCHAR(32), 4 big BIGINT
+    // UNSIGNED. WHERE val > input 1, big = big + input 0; the row sets
+    // name, and big is read back.
+    let t = crate::program::test_table();
+    let key_rec = Record::default_for(&t, Some(&[0])).expect("key");
+    let attr_rec = Record::default_for(&t, Some(&[2])).expect("attr");
+    let after_rec = Record::default_for(&t, Some(&[4])).expect("after");
+    let mut b = ProgramBuilder::new(&t);
+    let val = b.column(1);
+    let low = b.input(1);
+    let top = b.compare(Cmp::Gt, val, low);
+    let big = b.column(4);
+    let n = b.input(0);
+    let sum = b.add(big, n);
+    b.assign(4, sum);
+    let p = b.finish(Some(top)).expect("finish");
+    let mut query = ApidQuery::new(&t, &key_rec, &attr_rec).expect("query");
+    query.set_program(Some(&p)).expect("program");
+    query.set_input(0, 512).expect("input");
+    query.set_input(1, -3).expect("input");
+    query.set_reads_after(Some(&after_rec)).expect("after");
+    let at = attr_rec.field(0).expect("name").offset() as usize;
+    query.attr_row_mut()[at..at + 3].copy_from_slice(b"\x02r3");
+    let flags = KeyOpFlags {
+      operation: key_ops::IC_OP_UPDATE,
+      abort_option: key_ops::IC_ABORT_ON_ERROR,
+      interpreted: true,
+      ..KeyOpFlags::default()
+    };
+    let mut out = vec![99];
+    build_attr_section(&query, &flags, false, &mut out).expect("section");
+    let mut code: Vec<u32> = Vec::new();
+    p.code_into(interp::IC_REFUSE_CONDITION, &mut code);
+    let mut want = vec![7, code.len() as u32, 2, 2, 0];
+    // Inputs 0 and 1 before the reads, of which an update has none.
+    want.extend_from_slice(&[0xffff_0007, 0xffa0_0008, 512, 0]);
+    want.extend_from_slice(&[0xffa1_0008, 0xffff_fffd, 0xffff_ffff]);
+    want.extend_from_slice(&code);
+    // name, written after the program; big, read after that.
+    want.extend_from_slice(&[0x0002_0003, 0x0033_7202]);
+    want.extend_from_slice(&[0xfff3_0004, 1 << 4]);
+    assert_eq!(out, want);
+    // A query takes any program of its table, one that assigns too;
+    // whether its operation may run it is for the define to say.
+    let mut other = ApidQuery::new(&t, &key_rec, &attr_rec).expect("query");
+    let mut b = ProgramBuilder::new(&t);
+    let k = b.integer(1);
+    b.assign(1, k);
+    let writes = b.finish(None).expect("finish");
+    assert!(other.set_program(Some(&writes)).is_ok());
+    assert!(other.set_program(None).is_ok());
+    let e = other.set_input(16, 1).expect_err("input");
+    assert_eq!(e.code, err::IC_ERROR_BAD_PROGRAM);
+  }
+
+  #[test]
+  fn a_filtered_read_reads_after_its_program_passes() {
+    use crate::program::ProgramBuilder;
+    let t = crate::program::test_table();
+    let key_rec = Record::default_for(&t, Some(&[0])).expect("key");
+    let attr_rec = Record::default_for(&t, None).expect("attr");
+    let mut b = ProgramBuilder::new(&t);
+    let val = b.column(1);
+    let top = b.is_not_null(val);
+    let p = b.finish(Some(top)).expect("finish");
+    let mut query = ApidQuery::new(&t, &key_rec, &attr_rec).expect("query");
+    query.set_program(Some(&p)).expect("program");
+    let flags = KeyOpFlags {
+      operation: key_ops::IC_OP_READ,
+      abort_option: key_ops::IC_IGNORE_ERROR,
+      interpreted: true,
+      ..KeyOpFlags::default()
+    };
+    let mut out: Vec<u32> = Vec::new();
+    build_attr_section(&query, &flags, true, &mut out).expect("section");
+    // Every column read, the program refusing with 626, nothing after.
+    let mut want = vec![1, p.words().len() as u32, 0, 0, 0, 0xfff0_0007];
+    want.extend_from_slice(p.words());
+    assert_eq!(out, want);
+    assert_eq!(p.words(), [0x0003_0018, 0x0001_0000, 0x12, 0x0272_0013]);
   }
 
   #[test]

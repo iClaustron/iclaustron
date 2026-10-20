@@ -95,6 +95,7 @@ const IC_KEY_OP_START_SHIFT: u32 = 11;
 const IC_KEY_OP_ABORT_SHIFT: u32 = 12;
 const IC_KEY_OP_ABORT_MASK: u32 = 3;
 const IC_KEY_OP_SCAN_TAKEOVER_SHIFT: u32 = 14;
+const IC_KEY_OP_INTERPRETED_SHIFT: u32 = 15;
 const IC_KEY_OP_COMMITTED_BASE_SHIFT: u32 = 20;
 const IC_KEY_OP_NO_WAIT_SHIFT: u32 = 21;
 const IC_KEY_OP_BATCH_SAFE_SHIFT: u32 = 22;
@@ -139,6 +140,10 @@ pub struct KeyOpFlags {
   /// The request takes over a row a scan has locked, and carries the
   /// scan information. Verify: chapter 05 §7.2.
   pub scan_takeover: bool,
+  /// The column section carries a program, and begins with the five
+  /// sizes of its parts (`interp::column_parts_into`). Verify: chapter
+  /// 05 §9.5.
+  pub interpreted: bool,
 }
 
 impl KeyOpFlags {
@@ -160,6 +165,7 @@ impl KeyOpFlags {
     info |= (self.batch_unsafe as u32) << IC_KEY_OP_BATCH_UNSAFE_SHIFT;
     info |= (self.dist_key as u32) << IC_KEY_OP_DIST_KEY_SHIFT;
     info |= (self.scan_takeover as u32) << IC_KEY_OP_SCAN_TAKEOVER_SHIFT;
+    info |= (self.interpreted as u32) << IC_KEY_OP_INTERPRETED_SHIFT;
     info
   }
 }
@@ -799,6 +805,23 @@ mod tests {
       ..KeyOpFlags::default()
     };
     assert_eq!(flags.flags_word(), (1 << 21) | (1 << 22));
+  }
+
+  #[test]
+  fn an_interpreted_update_sets_bit_15() {
+    // MySQL's update of the AUTO_INCREMENT counter sent 0x8E32
+    // (chapter 05 §9.6); bit 9, queue on redo, is not ours to send.
+    let flags = KeyOpFlags {
+      operation: IC_OP_UPDATE,
+      no_disk: true,
+      commit: true,
+      execute: true,
+      start: true,
+      abort_option: IC_ABORT_ON_ERROR,
+      interpreted: true,
+      ..KeyOpFlags::default()
+    };
+    assert_eq!(flags.flags_word(), 0x8E32 & !(1 << 9));
   }
 
   #[test]

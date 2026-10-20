@@ -18,7 +18,7 @@ use std::fmt;
 /// First iClaustron error code.
 pub const IC_FIRST_ERROR: i32 = 7000;
 /// Last iClaustron error code.
-pub const IC_LAST_ERROR: i32 = 7163;
+pub const IC_LAST_ERROR: i32 = 7165;
 
 /// Line was too long.
 pub const IC_ERROR_LINE_TOO_LONG: i32 = 7000;
@@ -381,6 +381,15 @@ pub const IC_ERROR_NO_SCAN_ROW: i32 = 7162;
 /// 4095, more bound columns than the index has, bounds too long, or in
 /// an ordered scan of several ranges a number not above the last.
 pub const IC_ERROR_BAD_RANGE: i32 = 7163;
+/// A program that compares or assigns values of different types: a
+/// column and a constant, or two columns, compared, or a column and the
+/// constant assigned to it, must have one type, length, precision, scale
+/// and collation.
+pub const IC_ERROR_NOT_COMPARABLE: i32 = 7164;
+/// A program built from a value or a condition its builder did not make,
+/// reading an input beyond the sixteenth, or put on an operation of
+/// another table than its own.
+pub const IC_ERROR_BAD_PROGRAM: i32 = 7165;
 
 /// What kind of thing went wrong (`IC_ERROR_CATEGORY`), in the header's
 /// order.
@@ -873,6 +882,12 @@ pub fn message(code: i32) -> &'static str {
       "No scanned row to take over: none read, or its batch handed back"
     }
     IC_ERROR_BAD_RANGE => "The range is not one this index scan can send",
+    IC_ERROR_NOT_COMPARABLE => {
+      "The program compares or assigns values of different types"
+    }
+    IC_ERROR_BAD_PROGRAM => {
+      "The program names what it does not have, or is for another table"
+    }
     _ => "Unknown error code",
   }
 }

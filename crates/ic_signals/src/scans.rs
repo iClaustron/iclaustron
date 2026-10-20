@@ -217,16 +217,7 @@ pub fn column_section_into(
   subroutines: &[u32],
   out: &mut Vec<u32>,
 ) {
-  out.clear();
-  out.reserve(5 + read.len() + program.len() + subroutines.len());
-  out.push(read.len() as u32);
-  out.push(program.len() as u32);
-  out.push(0);
-  out.push(0);
-  out.push(subroutines.len() as u32);
-  out.extend_from_slice(read);
-  out.extend_from_slice(program);
-  out.extend_from_slice(subroutines);
+  crate::interp::column_parts_into(read, program, &[], &[], subroutines, out);
 }
 
 // ---- Range scan bounds ----

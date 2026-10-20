@@ -37,8 +37,9 @@
 //! index ([`ScanShape::new_index`]), and its ranges are added to the
 //! reader, encoded at once, and left in the feed for the executor to
 //! take as it starts the run, under the lock it checks the run by;
-//! the emptied set it leaves there takes the reader's next ranges. An ordered run is merged by the reader, not by the executor,
-//! whose own scan of it is unordered over every fragment: each batch
+//! the emptied set it leaves there takes the reader's next ranges. An
+//! ordered run is merged by the reader, not by the executor, whose own
+//! scan of it is unordered over every fragment: each batch
 //! comes with its receiver's place and whether it is that receiver's
 //! last, and the reader takes the row that comes first once every
 //! receiver has a batch with a row or has ended, as a connection's
@@ -62,6 +63,9 @@ use crate::index_order::IndexOrder;
 use crate::index_scan::IndexShape;
 use crate::index_scan::RangeSet;
 use crate::index_scan::ScanRange;
+use crate::program;
+use crate::program::Program;
+use crate::program::IC_PROGRAM_INPUTS;
 use crate::record::Record;
 use crate::row_codec;
 use crate::scan;
@@ -81,6 +85,9 @@ pub struct ScanShape {
   rec: Record,
   /// For scans of an ordered index: its ranges and order.
   index: Option<IndexShape>,
+  /// The program that filters its rows (chapter 04, "Conditions and
+  /// assignments").
+  program: Option<Arc<Program>>,
 }
 
 impl std::fmt::Debug for ScanShape {
@@ -102,6 +109,7 @@ impl ScanShape {
       table: Arc::clone(table),
       rec: rec.clone(),
       index: None,
+      program: None,
     }))
   }
 
@@ -124,7 +132,43 @@ impl ScanShape {
       table: Arc::clone(table),
       rec: rec.clone(),
       index: Some(shape),
+      program: None,
     }))
+  }
+
+  /// A shape of the same table, index and record whose scans are
+  /// filtered by `program`: a row it refuses is passed over at the data
+  /// node. It must be for the scanned table (`IC_ERROR_BAD_PROGRAM`) and
+  /// assign nothing (`IC_ERROR_NOT_SUPPORTED`).
+  pub fn with_program(
+    &self,
+    program: &Arc<Program>,
+  ) -> Result<Arc<ScanShape>, IcError> {
+    program::check_program(program, &self.table, false)?;
+    let index = match &self.index {
+      Some(index) => {
+        let read_part = row_codec::read_attr_info(&self.rec);
+        Some(IndexShape::new(
+          index.index(),
+          index.key_record(),
+          &self.rec,
+          &read_part,
+        )?)
+      }
+      None => None,
+    };
+    Ok(Arc::new(ScanShape {
+      id: next_shape_id(),
+      table: Arc::clone(&self.table),
+      rec: self.rec.clone(),
+      index,
+      program: Some(Arc::clone(program)),
+    }))
+  }
+
+  /// The program that filters its rows.
+  pub fn program(&self) -> Option<&Arc<Program>> {
+    self.program.as_ref()
   }
 
   /// The table scanned.
@@ -215,6 +259,9 @@ pub(crate) struct FeedState {
   /// executor leaves for the reader's next. Kept here, not in the run's
   /// work, so that the work stays small as it goes through the inbox.
   pub(crate) ranges: RangeSet,
+  /// The run's inputs for the shape's program, kept here for the same
+  /// reason.
+  pub(crate) inputs: [i64; IC_PROGRAM_INPUTS as usize],
 }
 
 /// What a reader and the executor running its scan share.
@@ -346,6 +393,8 @@ pub struct ScanReader {
   single_no: u32,
   /// The range number of the row last read.
   range_no: u32,
+  /// The inputs of the shape's program, for the next run.
+  inputs: [i64; IC_PROGRAM_INPUTS as usize],
   /// The run is merged in the index's order, from the high end when
   /// `descending`.
   ordered: bool,
@@ -429,6 +478,7 @@ impl ScanReader {
       reads_range_no: false,
       single_no: 0,
       range_no: 0,
+      inputs: [0; IC_PROGRAM_INPUTS as usize],
       ordered: false,
       descending: false,
       receivers: 0,
@@ -456,6 +506,19 @@ impl ScanReader {
   /// The number of the range the row last read is in.
   pub fn range_no(&self) -> u32 {
     self.range_no
+  }
+
+  /// Set input `input`, 0 to 15, of the shape's program to `value`, for
+  /// the runs from the next on; each holds what it was last set to, 0 at
+  /// first (`IC_ERROR_BAD_PROGRAM` beyond 15).
+  pub fn set_input(&mut self, input: u32, value: i64) -> Result<(), IcError> {
+    match self.inputs.get_mut(input as usize) {
+      Some(slot) => {
+        *slot = value;
+        Ok(())
+      }
+      None => Err(IcError::new(err::IC_ERROR_BAD_PROGRAM)),
+    }
   }
 
   /// The shape it reads.
@@ -854,6 +917,7 @@ impl ScanReader {
       run: self.run,
       spare,
       ranges,
+      inputs: self.inputs,
       ..FeedState::default()
     };
     drop(state);

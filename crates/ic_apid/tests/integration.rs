@@ -6914,7 +6914,7 @@ fn exit_a_scan_of_a_million_rows_counts_what_mysql_counts() {
           }
           if let Err(e) = mine.execute(&mut request) {
             panic!(
-              "batch {}: {} ({}); a table full wants more DataMemory",
+              "batch {}: {} ({}); a full table wants more data memory",
               batch,
               e.message(),
               e.code

@@ -91,6 +91,9 @@ use crate::apid_global::ApidGlobal;
 use crate::dict_cache::IndexDef;
 use crate::dict_cache::TableDef;
 use crate::index_scan::RangeSet;
+use crate::program;
+use crate::program::Program;
+use crate::program::IC_PROGRAM_INPUTS;
 use crate::query;
 use crate::query::AbortOption;
 use crate::query::BatchHint;
@@ -151,6 +154,10 @@ pub struct OpShape {
   index: Option<Arc<IndexDef>>,
   key_rec: Record,
   attr_rec: Record,
+  /// The program its operations run, and the columns an update reads
+  /// after it (chapter 04, "Conditions and assignments").
+  program: Option<Arc<Program>>,
+  after_rec: Option<Record>,
 }
 
 impl std::fmt::Debug for OpShape {
@@ -180,6 +187,8 @@ impl OpShape {
       index: None,
       key_rec: key_rec.clone(),
       attr_rec: attr_rec.clone(),
+      program: None,
+      after_rec: None,
     }))
   }
 
@@ -197,7 +206,71 @@ impl OpShape {
       index: Some(Arc::clone(index)),
       key_rec: key_rec.clone(),
       attr_rec: attr_rec.clone(),
+      program: None,
+      after_rec: None,
     }))
+  }
+
+  /// A shape of the same records whose operations run `program`, which
+  /// must be for its table (`IC_ERROR_BAD_PROGRAM`). Which operations
+  /// may run it is checked as each is defined: reads, updates and
+  /// deletes, and only updates one that assigns. A program goes by
+  /// primary key only: a unique shape refuses it
+  /// (`IC_ERROR_NOT_SUPPORTED`).
+  pub fn with_program(
+    &self,
+    program: &Arc<Program>,
+  ) -> Result<Arc<OpShape>, IcError> {
+    if self.index.is_some() {
+      return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
+    }
+    program::check_program(program, &self.table, true)?;
+    let mut shape = self.copy();
+    shape.program = Some(Arc::clone(program));
+    Ok(Arc::new(shape))
+  }
+
+  /// A shape of the same records whose updates read the columns of
+  /// `after_rec` after their program, into each operation's
+  /// [`KeyOp::after_row`]. The record must be over the shape's table
+  /// (`IC_ERROR_KEY_RECORD`); a unique shape refuses it
+  /// (`IC_ERROR_NOT_SUPPORTED`).
+  pub fn reading_after(
+    &self,
+    after_rec: &Record,
+  ) -> Result<Arc<OpShape>, IcError> {
+    if self.index.is_some() {
+      return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
+    }
+    if !query::over_table(after_rec, &self.table) {
+      return Err(IcError::new(err::IC_ERROR_KEY_RECORD));
+    }
+    let mut shape = self.copy();
+    shape.after_rec = Some(after_rec.clone());
+    Ok(Arc::new(shape))
+  }
+
+  /// The program its operations run.
+  pub fn program(&self) -> Option<&Arc<Program>> {
+    self.program.as_ref()
+  }
+
+  /// The record of the columns its updates read after their program.
+  pub fn after_record(&self) -> Option<&Record> {
+    self.after_rec.as_ref()
+  }
+
+  /// The same, as a shape of its own.
+  fn copy(&self) -> OpShape {
+    OpShape {
+      id: next_shape_id(),
+      table: Arc::clone(&self.table),
+      index: self.index.clone(),
+      key_rec: self.key_rec.clone(),
+      attr_rec: self.attr_rec.clone(),
+      program: self.program.clone(),
+      after_rec: self.after_rec.clone(),
+    }
   }
 
   /// The table the operations are over.
@@ -241,6 +314,9 @@ pub struct KeyOp {
   abort_option: AbortOption,
   key_row: Vec<u8>,
   attr_row: Vec<u8>,
+  /// Its program's inputs, and what an update read after the program.
+  inputs: [i64; IC_PROGRAM_INPUTS as usize],
+  after_row: Vec<u8>,
   error: Option<IcError>,
   error_data: u32,
   result_len: u32,
@@ -267,6 +343,11 @@ impl KeyOp {
       abort_option: AbortOption::Default,
       key_row: vec![0; shape.key_rec.row_size() as usize],
       attr_row: vec![0; shape.attr_rec.row_size() as usize],
+      inputs: [0; IC_PROGRAM_INPUTS as usize],
+      after_row: match &shape.after_rec {
+        Some(rec) => vec![0; rec.row_size() as usize],
+        None => Vec::new(),
+      },
       error: None,
       error_data: 0,
       result_len: 0,
@@ -325,8 +406,33 @@ impl KeyOp {
     &mut self.attr_row
   }
 
+  /// Set input `input`, 0 to 15, of the shape's program to `value`;
+  /// each holds what it was last set to, 0 at first
+  /// (`IC_ERROR_BAD_PROGRAM` beyond 15).
+  pub fn set_input(&mut self, input: u32, value: i64) -> Result<(), IcError> {
+    match self.inputs.get_mut(input as usize) {
+      Some(slot) => {
+        *slot = value;
+        Ok(())
+      }
+      None => Err(IcError::new(err::IC_ERROR_BAD_PROGRAM)),
+    }
+  }
+
+  /// The inputs its program is given.
+  pub fn inputs(&self) -> &[i64; IC_PROGRAM_INPUTS as usize] {
+    &self.inputs
+  }
+
+  /// What an update read after its program, laid out by the shape's
+  /// [`after_record`](OpShape::after_record); empty without one.
+  pub fn after_row(&self) -> &[u8] {
+    &self.after_row
+  }
+
   /// Why it failed, if it did: 626 for a row that is not there, 630 for
-  /// one that is, or the transaction's error when that failed it.
+  /// one that is, 6000 for a row its program refused where that aborts,
+  /// or the transaction's error when that failed it.
   pub fn error(&self) -> Option<IcError> {
     self.error
   }
@@ -1488,6 +1594,7 @@ impl Runner {
           if !is_read {
             query.attr_row_mut().copy_from_slice(&op.attr_row);
           }
+          query.set_inputs(&op.inputs);
         }
         same
       }
@@ -1535,18 +1642,30 @@ impl Runner {
     if let Some(qid) = self.pools[pool].idle.pop() {
       return Ok(qid);
     }
-    match &shape.index {
+    let qid = match &shape.index {
       Some(index) => {
         self
           .conn
-          .create_unique_query(index, &shape.key_rec, &shape.attr_rec)
+          .create_unique_query(index, &shape.key_rec, &shape.attr_rec)?
       }
       None => {
         self
           .conn
-          .create_query(&shape.table, &shape.key_rec, &shape.attr_rec)
+          .create_query(&shape.table, &shape.key_rec, &shape.attr_rec)?
       }
+    };
+    // A query of the shape runs its program for as long as it is kept.
+    let set = match self.conn.query_mut(qid) {
+      Some(query) => query
+        .set_program(shape.program.as_ref())
+        .and_then(|()| query.set_reads_after(shape.after_rec.as_ref())),
+      None => Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
+    };
+    if let Err(e) = set {
+      let _ = self.conn.free_query(qid);
+      return Err(e);
     }
+    Ok(qid)
   }
 
   /// The shape's place in the pools, made if it has none.
@@ -1640,14 +1759,14 @@ impl Runner {
   fn admit_scan(&mut self, mut work: ScanWork) {
     // The run's ranges are taken under the lock that says it is still
     // the reader's, and an emptied set is left for the reader's next.
-    let (gone, closing) = {
+    let (gone, closing, inputs) = {
       let mut state = work.feed.state.lock();
       let gone = state.run != work.run || state.done;
       if !gone {
         self.scan_ranges.clear();
         std::mem::swap(&mut state.ranges, &mut self.scan_ranges);
       }
-      (gone, state.closing)
+      (gone, state.closing, state.inputs)
     };
     if gone {
       work.forget();
@@ -1689,6 +1808,7 @@ impl Runner {
       args.ordered = false;
       args.parallelism = 0;
     }
+    self.conn.set_scan_inputs(scan, &inputs);
     let mut started = Ok(());
     if work.shape.index_shape().is_some() {
       started = self.conn.set_scan_ranges(scan, &self.scan_ranges);
@@ -1759,14 +1879,20 @@ impl Runner {
     if let Some(scan) = self.scan_pools[pool].idle.pop() {
       return Ok(scan);
     }
-    match shape.index_shape() {
+    let scan = match shape.index_shape() {
       Some(index) => self.conn.create_index_scan(
         index.index(),
         index.key_record(),
         shape.record(),
-      ),
-      None => self.conn.create_scan(shape.table(), shape.record()),
+      )?,
+      None => self.conn.create_scan(shape.table(), shape.record())?,
+    };
+    // A scan of the shape is filtered by its program while it is kept.
+    if let Err(e) = self.conn.set_scan_program(scan, shape.program()) {
+      let _ = self.conn.free_scan(scan);
+      return Err(e);
     }
+    Ok(scan)
   }
 
   /// An idle scan back to its shape's pool, or let go of if the shape
@@ -1994,6 +2120,13 @@ impl Runner {
             if let Some(query) = self.conn.query(qid) {
               if query.attr_row().len() == op.attr_row.len() {
                 op.attr_row.copy_from_slice(query.attr_row());
+              }
+            }
+          }
+          if !op.after_row.is_empty() && error.is_none() {
+            if let Some(query) = self.conn.query(qid) {
+              if query.after_row().len() == op.after_row.len() {
+                op.after_row.copy_from_slice(query.after_row());
               }
             }
           }

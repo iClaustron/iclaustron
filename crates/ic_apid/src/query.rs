@@ -20,6 +20,11 @@
 //! completed, and is idle again once the application has taken it from
 //! the connection's list of executed queries. The redesign of the C's
 //! field-by-field binding into records is chapter 04's.
+//!
+//! **A query may run a program** (chapter 04, "Conditions and
+//! assignments"): kept beside its records until changed, with its
+//! inputs beside its rows, and for an update a record of the columns
+//! read after the program, into a row of their own.
 
 use std::sync::Arc;
 
@@ -31,6 +36,9 @@ use ic_util::ptr_array::PtrId;
 use crate::apid_conn::ApidConnection;
 use crate::dict_cache::IndexDef;
 use crate::dict_cache::TableDef;
+use crate::program;
+use crate::program::Program;
+use crate::program::IC_PROGRAM_INPUTS;
 use crate::record::Record;
 
 /// A query's id in its connection, which is also what a data node names
@@ -205,6 +213,9 @@ pub(crate) struct Execution {
   pub staged: crate::apid_conn::Staged,
   /// True for a read, whose row is to be put into the attribute row.
   pub is_read: bool,
+  /// True for an update that reads columns after its program, whose
+  /// row is to be put into the row for them.
+  pub reads_after: bool,
   /// When a read was sent, for detecting a replaced reading-node link.
   pub sent_at: ic_port::time::IcTimer,
   /// What the coordinator said the operation would bring, once it has.
@@ -224,7 +235,7 @@ pub(crate) struct Execution {
 }
 
 /// True if the record is over this version of the table.
-fn over_table(rec: &Record, table: &TableDef) -> bool {
+pub(crate) fn over_table(rec: &Record, table: &TableDef) -> bool {
   rec.table().table_id() == table.table_id()
     && rec.table().table_version() == table.table_version()
 }
@@ -285,6 +296,14 @@ pub struct ApidQuery {
   binding: usize,
   /// Bytes of row data the last read brought.
   result_len: u32,
+  /// The program each execution runs, if any.
+  program: Option<Arc<Program>>,
+  /// The inputs it is given.
+  inputs: [i64; IC_PROGRAM_INPUTS as usize],
+  /// For an update, the columns read after its program, and the row
+  /// they come into.
+  after_rec: Option<Record>,
+  after_row: Vec<u8>,
   pub(crate) execution: Execution,
 }
 
@@ -328,6 +347,10 @@ impl ApidQuery {
       callback: None,
       binding: 0,
       result_len: 0,
+      program: None,
+      inputs: [0; IC_PROGRAM_INPUTS as usize],
+      after_rec: None,
+      after_row: Vec::new(),
       execution: Execution::default(),
     })
   }
@@ -357,6 +380,10 @@ impl ApidQuery {
       callback: None,
       binding: 0,
       result_len: 0,
+      program: None,
+      inputs: [0; IC_PROGRAM_INPUTS as usize],
+      after_rec: None,
+      after_row: Vec::new(),
       execution: Execution::default(),
     })
   }
@@ -452,6 +479,101 @@ impl ApidQuery {
     self.execution.trans
   }
 
+  /// Run `program` with every execution defined from now on, or none
+  /// (chapter 04, "Conditions and assignments"). It must be for the
+  /// query's table (`IC_ERROR_BAD_PROGRAM`). Which operations take it
+  /// is checked when one is defined. Refused while the query is defined
+  /// or sent (`IC_ERROR_TRANSACTION_ACTIVE`).
+  pub fn set_program(
+    &mut self,
+    program: Option<&Arc<Program>>,
+  ) -> Result<(), IcError> {
+    self.check_idle()?;
+    match program {
+      Some(program) => {
+        program::check_program(program, &self.table, true)?;
+        self.program = Some(Arc::clone(program));
+      }
+      None => self.program = None,
+    }
+    Ok(())
+  }
+
+  /// The program each execution runs.
+  pub fn program(&self) -> Option<&Arc<Program>> {
+    self.program.as_ref()
+  }
+
+  /// Set input `input`, 0 to 15, to `value`, for the executions defined
+  /// from now on; each holds what it was last set to, 0 at first
+  /// (`IC_ERROR_BAD_PROGRAM` beyond 15).
+  pub fn set_input(&mut self, input: u32, value: i64) -> Result<(), IcError> {
+    match self.inputs.get_mut(input as usize) {
+      Some(slot) => {
+        *slot = value;
+        Ok(())
+      }
+      None => Err(IcError::new(err::IC_ERROR_BAD_PROGRAM)),
+    }
+  }
+
+  /// The inputs the program is given.
+  pub fn inputs(&self) -> &[i64; IC_PROGRAM_INPUTS as usize] {
+    &self.inputs
+  }
+
+  /// Every input at once, as an executor's operation gives them.
+  pub(crate) fn set_inputs(
+    &mut self,
+    inputs: &[i64; IC_PROGRAM_INPUTS as usize],
+  ) {
+    self.inputs = *inputs;
+  }
+
+  /// For an update, read the columns of `rec` after its program, into
+  /// [`after_row`](Self::after_row), or none. The record must be over
+  /// the query's table (`IC_ERROR_KEY_RECORD`); only an update takes
+  /// it, which is checked when it is defined. Refused while the query is
+  /// defined or sent (`IC_ERROR_TRANSACTION_ACTIVE`).
+  pub fn set_reads_after(
+    &mut self,
+    rec: Option<&Record>,
+  ) -> Result<(), IcError> {
+    self.check_idle()?;
+    match rec {
+      Some(rec) => {
+        if !over_table(rec, &self.table) {
+          return Err(IcError::new(err::IC_ERROR_KEY_RECORD));
+        }
+        self.after_row = vec![0; rec.row_size() as usize];
+        self.after_rec = Some(rec.clone());
+      }
+      None => {
+        self.after_rec = None;
+        self.after_row = Vec::new();
+      }
+    }
+    Ok(())
+  }
+
+  /// The record of the columns an update reads after its program.
+  pub fn after_record(&self) -> Option<&Record> {
+    self.after_rec.as_ref()
+  }
+
+  /// What an update read after its program, laid out by
+  /// [`after_record`](Self::after_record); empty without one.
+  pub fn after_row(&self) -> &[u8] {
+    &self.after_row
+  }
+
+  fn check_idle(&self) -> Result<(), IcError> {
+    if self.state == QueryState::Defined || self.state == QueryState::Sent {
+      return Err(IcError::new(err::IC_ERROR_TRANSACTION_ACTIVE));
+    }
+    Ok(())
+  }
+
   pub(crate) fn set_state(&mut self, state: QueryState) {
     self.state = state;
   }
@@ -492,14 +614,12 @@ impl ApidQuery {
     self.result_len = len;
   }
 
-  /// Put a read's packed row into the attribute row.
   /// Unpack a whole row straight from the signal it came in into the
-  /// attribute row. False if it would not unpack, for the caller to
-  /// keep it and let the completion report why.
+  /// attribute row, or for an update the row of what it read after its
+  /// program. False if it would not unpack, for the caller to keep it
+  /// and let the completion report why.
   pub(crate) fn unpack_direct(&mut self, words: &[u32]) -> bool {
-    let unpacked =
-      crate::row_codec::unpack_row(&self.attr_rec, words, &mut self.attr_row);
-    if unpacked.is_err() {
+    if self.unpack(words).is_err() {
       return false;
     }
     self.result_len = 4 * words.len() as u32;
@@ -511,10 +631,26 @@ impl ApidQuery {
     if self.execution.unpacked {
       return Ok(());
     }
-    let words = &self.execution.row;
-    crate::row_codec::unpack_row(&self.attr_rec, words, &mut self.attr_row)?;
-    self.result_len = 4 * words.len() as u32;
+    let words = std::mem::take(&mut self.execution.row);
+    let unpacked = self.unpack(&words);
+    if unpacked.is_ok() {
+      self.result_len = 4 * words.len() as u32;
+    }
+    // The buffer is kept for its allocation.
+    self.execution.row = words;
     self.execution.row.clear();
+    unpacked
+  }
+
+  /// A packed row into the row it is for.
+  fn unpack(&mut self, words: &[u32]) -> Result<(), IcError> {
+    if self.execution.reads_after {
+      if let Some(rec) = &self.after_rec {
+        crate::row_codec::unpack_row(rec, words, &mut self.after_row)?;
+        return Ok(());
+      }
+    }
+    crate::row_codec::unpack_row(&self.attr_rec, words, &mut self.attr_row)?;
     Ok(())
   }
 }

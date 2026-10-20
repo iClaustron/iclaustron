@@ -90,6 +90,8 @@
 //! - [`index_order`]: rows in an ordered index's order, for the merge
 //!   of an ordered range scan.
 //! - [`index_scan`]: the ranges of a scan of an ordered index.
+//! - [`program`]: conditions and assignments the data node runs on a
+//!   row, built as a tree and compiled to its interpreter's words.
 //! - [`text_row`]: values as text, in and out of a row, for the tools.
 //! - [`fragments`]: putting a fragmented signal back together.
 //! - [`handshake`]: becoming a transporter connection to a data node.
@@ -118,6 +120,7 @@ pub mod index_scan;
 pub mod key_op;
 pub mod node_connect;
 pub mod node_state;
+pub mod program;
 pub mod query;
 pub mod rec_thread;
 pub mod record;

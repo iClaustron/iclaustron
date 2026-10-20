@@ -1654,6 +1654,45 @@ gives a temporary error, and the scan started again completes.
   `IC_ERROR_CONDITION_TOO_COMPLEX` beyond them, as decided.
 - Later (phase 10): LIKE, regular expressions, the memory regions for
   spilling, and the rest of the builder in `ic_apid.h`.
+- **9.1a, the encoding, built 2026-10-20** (`ic_signals::interp`):
+  the basic instructions as `IC_INSN_*`; a `ProgramWriter` that hands
+  out labels and puts the jumps' distances in when the program is
+  finished, keeping what cannot be encoded (a ninth register, a column
+  id or value beyond the field) as its error until then; the column
+  tests with their comparison and NULL rule; the refusal codes 626 and
+  6000; the five-part column section, which a scan's section is now
+  built by too; the interpreted flag, bit 15 of a key operation. Its
+  tests are MySQL's programs from both captures, word for word: the
+  scans' conditions of every kind seen and the counter's two programs.
+  The error table knows 6000, and the data node's refusals of a
+  program the basic interpreter could meet (871, 872, 876, 878, 879,
+  882, 888).
+- **9.1b, the builder**: conditions and assignments built bottom-up
+  as a tree and compiled whole at `finish`, constants taken from rows
+  as ranges are, and a program used again with only its inputs set
+  for each operation, kept beside the records, on a shape, a query or
+  a scan, with its inputs beside the rows, and an update's reads
+  after it by a record of their own, into a row of their own (author,
+  2026-10-20; chapter 04, "Conditions and assignments"; chapter 05
+  §9.5). The builder and its compiler built 2026-10-20
+  (`ic_apid::program`): NOTs taken down to the terms, ANDs and ORs
+  flattened into one level of jumps each, column tests where a column
+  meets a constant or a column of its type, registers for inputs,
+  integers and sums, the refusal's code set as the program goes out,
+  and the inputs it reads. Its tests are MySQL's programs where ours
+  come out the same, its NOT one jump shorter, and 600 trees of every
+  kind run on a model of the interpreter against SQL's logic over 144
+  rows each. `READ_INPUT` and the inputs' encoding are in
+  `ic_signals::interp`; the error table knows 846 and 937–939, and
+  ours 7164 (`IC_ERROR_NOT_COMPARABLE`) and 7165
+  (`IC_ERROR_BAD_PROGRAM`). Then, the same day, programs on a
+  connection's queries and scans and on an executor's shapes, as
+  chapter 04 has them: an operation with a program goes interpreted,
+  its column section in five parts, the inputs in front of the reads,
+  its refusal's code by its abort option; an update's reads after come
+  into a row of their own; a reader's inputs go to the executor in the
+  feed, as its ranges do. Tested by the sections an interpreted update
+  and a filtered read send. Next: C, then the exit's groups.
 - Exit: integration groups `where` and `assign` match MySQL on
   generated data, on key operations and on scans.
 

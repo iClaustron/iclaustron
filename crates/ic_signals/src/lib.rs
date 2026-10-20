@@ -31,6 +31,9 @@
 //! - [`key_ops`]: key operations, their replies, and the commit
 //!   acknowledgement.
 //! - [`column_header`]: the word in front of each column's value.
+//! - [`scans`]: scans, their batches, and the keys of locked rows.
+//! - [`interp`]: interpreted programs, the conditions and updates a
+//!   data node runs on a row, and the column section that carries them.
 //! - [`bundle`]: several small signals sent to an API node as one.
 
 pub mod blocks;
@@ -39,6 +42,7 @@ pub mod collation_desc;
 pub mod column_header;
 pub mod coord_alloc;
 pub mod header;
+pub mod interp;
 pub mod key_ops;
 pub mod list_objects;
 pub mod membership;
