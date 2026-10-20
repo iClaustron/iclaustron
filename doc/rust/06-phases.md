@@ -19,7 +19,7 @@ release is at the end of Phase 7.
 | 7 | C API, documentation, examples in Rust and C, release 0.1 | 3–4 | 30 |
 | 8 | 0.2: the executor, scans (asynchronous, synchronous, through the executor), character sets from the data nodes | 8–9 | 39 |
 | 9 | 0.3: basic interpreter, AUTO_INCREMENT, tables without a primary key | 4–5 | 44 |
-| 10 | Later: TLS, location domains, BLOBs, UTF-8, the C++ header, events, DDL, pushdown joins, … | open | |
+| 10 | Later: TLS, location domains, BLOBs, neighbour-weighted collations, the C++ header, events, DDL, pushdown joins, … | open | |
 
 **Replanned 2026-10-08** by the author. 0.1 is now the key operations
 made complete and the C API with its documentation and examples; the
@@ -1865,8 +1865,11 @@ From reading (chapter 05 §16.5):
 
 TLS to the data nodes and the management server; choosing nodes by
 location domain; BLOB, TEXT and JSON through the parts table, and with
-them deletes on such tables; UTF-8 (utf8mb4) collations for hashing and
-merging; the C++ header and bindings for other languages; events; DDL
+them deletes on such tables; the three collations that weigh a
+character by its neighbours (latin2_czech_cs, cp1250_czech_cs,
+tis620_thai_ci), whose keys are placed in turn and whose ordered runs
+are refused (utf8mb4's are hashed and merged since phase 8, §8.6); the
+C++ header and bindings for other languages; events; DDL
 (a client creating a table with an AUTO_INCREMENT column writes its
 counter row); the full interpreter; pushdown joins; aggregation
 pushdown; ring buffer tables; TTL options; rate-limit and user-id flags;
