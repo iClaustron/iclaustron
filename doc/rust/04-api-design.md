@@ -886,6 +886,9 @@ node), no events.
 | `IC_SCAN_ID` | `ScanId` | `ic_apid_scan_create`, `ic_apid_index_scan_create` | `ic_apid_scan_free` |
 | `IC_SCAN_SHAPE*` | `Arc<ScanShape>` | `ic_scan_shape_create`, `ic_scan_shape_create_index` | `ic_scan_shape_free` |
 | `IC_SCAN_READER*` | `ScanReader` | `ic_scan_reader_create` | `ic_scan_reader_free` |
+| `IC_PROGRAM_BUILDER*` | `ProgramBuilder` | `ic_program_builder_create` | `ic_program_builder_free` |
+| `IC_PROGRAM*` | `Arc<Program>` | `ic_program_builder_finish`, `_finish_no_condition` | `ic_program_free` |
+| `IC_PROGRAM_VALUE`, `IC_PROGRAM_COND` | `Value`, `Cond` | the builder's functions | with the builder |
 
 A connection, and an executor, is freed before its global, a query,
 transaction or scan with its connection. A table, index or record
@@ -981,6 +984,42 @@ are across runs, as a query's do.
 
 Scans, on a connection and through an executor: as "Consuming scans"
 above lists them.
+
+Programs (phase 9.1, 2026-10-20; "Conditions and assignments" above):
+`ic_program_builder_create(def, &builder)`;
+`ic_program_builder_free(builder)`; values, each giving its
+`IC_PROGRAM_VALUE`: `ic_program_column(builder, column)`,
+`ic_program_constant(builder, rec, row, len, column)`,
+`ic_program_integer(builder, value)`, `ic_program_input(builder, n)`,
+`ic_program_add(builder, a, b)`, `ic_program_subtract`; conditions,
+each giving its `IC_PROGRAM_COND`: `ic_program_compare(builder, cmp,
+a, b)` with `IC_CMP_EQ` to `IC_CMP_GE`, `ic_program_is_null`,
+`ic_program_is_not_null`, `ic_program_and`, `ic_program_or`,
+`ic_program_not`; `ic_program_assign(builder, column, value)`,
+`ic_program_assign_if(builder, column, value, cond)`;
+`ic_program_builder_finish(builder, top, &program)`,
+`ic_program_builder_finish_no_condition(builder, &program)`;
+`ic_program_free(program)`, `ic_program_writes(program)`,
+`ic_program_inputs(program)`. A value or condition the builder could
+not make, from a null handle or an unknown comparison, is
+`IC_PROGRAM_NONE`, which the finish refuses (`IC_ERROR_BAD_PROGRAM`),
+so that a condition is built without checking each step, and a failed
+step can never stand for "no condition". On a connection:
+`ic_apid_query_set_program(conn, q, program)`, NULL for none;
+`ic_apid_query_set_input(conn, q, n, value)`;
+`ic_apid_query_set_reads_after(conn, q, rec)`, NULL for none;
+`ic_apid_query_after_row(conn, q, &len)`;
+`ic_apid_conn_set_scan_program(conn, scan, program)`;
+`ic_apid_conn_set_scan_input(conn, scan, n, value)`. Through an
+executor: `ic_op_shape_with_program(shape, program, &out)`,
+`ic_op_shape_reading_after(shape, rec, &out)`,
+`ic_scan_shape_with_program(shape, program, &out)`, each a new shape
+the caller frees; `ic_request_set_input(req, op, n, value)`,
+`ic_request_after_row(req, op, &len)`,
+`ic_scan_reader_set_input(reader, n, value)`. `IC_NDB_ERROR_CONDITION`
+(6000), `IC_ERROR_CONDITION_TOO_COMPLEX` (7130),
+`IC_ERROR_NOT_COMPARABLE` (7164), `IC_ERROR_BAD_PROGRAM` (7165),
+`IC_PROGRAM_INPUTS` (16).
 
 Errors and version: `ic_error_category`, `ic_error_severity`,
 `ic_error_is_temporary`, `ic_error_message`, `ic_api_version`.

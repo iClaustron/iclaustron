@@ -1692,7 +1692,12 @@ gives a temporary error, and the scan started again completes.
   its refusal's code by its abort option; an update's reads after come
   into a row of their own; a reader's inputs go to the executor in the
   feed, as its ranges do. Tested by the sections an interpreted update
-  and a filtered read send. Next: C, then the exit's groups.
+  and a filtered read send. C the same day (chapter 04, "Functions",
+  Programs): a builder handle with values and conditions as ids in it,
+  a program handle, and a setter for each place a program goes; the
+  header's new part written from the Rust by a script that gives
+  cbindgen's own output for the scans through an executor word for
+  word. Next: the exit's groups.
 - Exit: integration groups `where` and `assign` match MySQL on
   generated data, on key operations and on scans.
 

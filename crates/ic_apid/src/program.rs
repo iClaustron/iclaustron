@@ -154,10 +154,36 @@ impl Cmp {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Value(u32);
 
+impl Value {
+  /// The id as a word, for a language binding.
+  pub fn as_u32(&self) -> u32 {
+    self.0
+  }
+
+  /// A value from its word, as a binding hands it back; one its builder
+  /// did not make fails the builder's finish.
+  pub fn from_u32(word: u32) -> Value {
+    Value(word)
+  }
+}
+
 /// A condition of a [`ProgramBuilder`], good only in the builder that
 /// made it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Cond(u32);
+
+impl Cond {
+  /// The id as a word, for a language binding.
+  pub fn as_u32(&self) -> u32 {
+    self.0
+  }
+
+  /// A condition from its word, as a binding hands it back; one its
+  /// builder did not make fails the builder's finish.
+  pub fn from_u32(word: u32) -> Cond {
+    Cond(word)
+  }
+}
 
 #[derive(Debug)]
 enum ValueNode {

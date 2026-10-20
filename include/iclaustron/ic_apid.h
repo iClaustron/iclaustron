@@ -34,12 +34,13 @@
  *
  * Handles. IC_APID_GLOBAL, IC_APID_CONNECTION, IC_TABLE_DEF,
  * IC_INDEX_DEF, IC_RECORD, IC_APID_EXECUTOR, IC_APID_SUBMITTER,
- * IC_OP_SHAPE, IC_REQUEST, IC_SCAN_SHAPE and IC_SCAN_READER are made by
- * one function and given back to their _free; the caller owns each
- * until then. A connection, and an executor, is freed before its
- * global; a table, index or record handle may outlive the connection
- * that made it, a query or scan keeps what it needs of its records, and
- * a request or reader what it needs of its shapes. A NULL
+ * IC_OP_SHAPE, IC_REQUEST, IC_SCAN_SHAPE, IC_SCAN_READER,
+ * IC_PROGRAM_BUILDER and IC_PROGRAM are made by one function and given
+ * back to their _free; the caller owns each until then. A connection,
+ * and an executor, is freed before its global; a table, index or record
+ * handle may outlive the connection that made it, a query or scan keeps
+ * what it needs of its records, a request or reader what it needs of
+ * its shapes, and each what it needs of its program. A NULL
  * handle or out pointer gives IC_ERROR_NULL_POINTER; a handle freed, or
  * never made, is undefined behaviour.
  *
@@ -47,7 +48,8 @@
  * (IC_SCAN_ID) are named by an id in their connection, and a scan's
  * batch by an IC_SCAN_BATCH_ID. An id that names nothing any more,
  * freed, closed or handed back, is refused with an error or passed
- * over, never followed.
+ * over, never followed. A program's values (IC_PROGRAM_VALUE) and
+ * conditions (IC_PROGRAM_COND) are ids in their builder.
  *
  * Rows. A query owns its rows: ic_apid_query_key_row() and
  * ic_apid_query_attr_row() give pointers valid until the query is
@@ -110,6 +112,17 @@
  * of it (ic_scan_reader_create()), ic_apid_submitter_scan() to run it,
  * and ic_scan_reader_next_row(), which waits for the executor. A slow
  * reader stalls only its own scan.
+ *
+ * Programs. A program runs in the data node on the row it holds: a
+ * scan's filter, or a key operation's condition and the updates it
+ * works out from the row. A builder over a table
+ * (ic_program_builder_create()) makes values and conditions, joined by
+ * ic_program_and(), _or() and _not(), and ic_program_builder_finish()
+ * compiles them into a program, made once and run by any number of
+ * operations; only its inputs, up to 16 integers, change from one to
+ * the next. A query, a scan, an operation shape or a scan shape takes
+ * it (ic_apid_query_set_program() and the like), and each operation or
+ * run sets its inputs.
  *
  * Panics. A panic inside the library returns IC_ERROR_INTERNAL_PANIC;
  * the connection it went through is unusable from then on, and every
@@ -465,6 +478,13 @@
 #define IC_NDB_ERROR_SCAN_IDLE 296
 
 /*
+ The row did not meet the condition of an operation that aborts on
+ error, which rolls the transaction back (ours, in NDB's range for
+ programs).
+ */
+#define IC_NDB_ERROR_CONDITION 6000
+
+/*
  A text that is not a connectstring.
  */
 #define IC_ERROR_PARSE_CONNECTSTRING 7056
@@ -631,6 +651,64 @@
 #define IC_ERROR_BAD_RANGE 7163
 
 /*
+ A program needs more than eight registers at once, or is too long.
+ */
+#define IC_ERROR_CONDITION_TOO_COMPLEX 7130
+
+/*
+ A program compares or assigns values of different types.
+ */
+#define IC_ERROR_NOT_COMPARABLE 7164
+
+/*
+ A program names a value, condition or input it does not have, or is
+ put on an operation of another table.
+ */
+#define IC_ERROR_BAD_PROGRAM 7165
+
+/*
+ Equal, in a program's comparison of its first value with its second.
+ */
+#define IC_CMP_EQ 0
+
+/*
+ Not equal.
+ */
+#define IC_CMP_NE 1
+
+/*
+ Less.
+ */
+#define IC_CMP_LT 2
+
+/*
+ Less or equal.
+ */
+#define IC_CMP_LE 3
+
+/*
+ Greater.
+ */
+#define IC_CMP_GT 4
+
+/*
+ Greater or equal.
+ */
+#define IC_CMP_GE 5
+
+/*
+ The inputs an operation gives its program, numbered from 0.
+ */
+#define IC_PROGRAM_INPUTS 16
+
+/*
+ A value or condition a builder could not make, from a null builder or
+ record or an unknown comparison; using it fails the finish with
+ `IC_ERROR_BAD_PROGRAM`.
+ */
+#define IC_PROGRAM_NONE 4294967295
+
+/*
  One thread's connection to the cluster (`IC_APID_CONNECTION`).
  Opaque.
  */
@@ -662,6 +740,18 @@ typedef struct IC_INDEX_DEF IC_INDEX_DEF;
  the records of its rows (`IC_OP_SHAPE`). Opaque.
  */
 typedef struct IC_OP_SHAPE IC_OP_SHAPE;
+
+/*
+ A compiled program, run by any number of operations, each with its
+ own inputs (`IC_PROGRAM`). Opaque.
+ */
+typedef struct IC_PROGRAM IC_PROGRAM;
+
+/*
+ A program being built over a table, its values and conditions
+ named by ids in it (`IC_PROGRAM_BUILDER`). Opaque.
+ */
+typedef struct IC_PROGRAM_BUILDER IC_PROGRAM_BUILDER;
 
 /*
  How a row is laid out (`IC_RECORD`). Opaque.
@@ -1083,6 +1173,16 @@ typedef struct {
    */
   uint64_t scans;
 } IC_EXECUTOR_STATS;
+
+/*
+ A value's id in its program builder (`IC_PROGRAM_VALUE`).
+ */
+typedef uint32_t IC_PROGRAM_VALUE;
+
+/*
+ A condition's id in its program builder (`IC_PROGRAM_COND`).
+ */
+typedef uint32_t IC_PROGRAM_COND;
 
 /*
  What is called when a query completes (`IC_APID_CALLBACK`): on the
@@ -3081,6 +3181,468 @@ bool ic_scan_reader_is_done(const IC_SCAN_READER *reader);
  `reader` is a reader handle not yet freed, used by this thread alone.
  */
 int32_t ic_scan_reader_close(IC_SCAN_READER *reader);
+
+/*
+ A builder of a program over a table (chapter 04, "Conditions and
+ assignments"): its values and conditions made bottom-up, each by a
+ function that gives its id in the builder, then compiled whole by
+ `ic_program_builder_finish`. What cannot be made, a column the table
+ lacks or an input beyond 15, is kept as the builder's error, which
+ the finish gives; a value or condition from a null builder or record,
+ or with an unknown comparison, is `IC_PROGRAM_NONE`, and using one
+ fails the finish with `IC_ERROR_BAD_PROGRAM`.
+
+ The builder is the caller's, freed with `ic_program_builder_free`;
+ one thread uses it at a time.
+
+ # Safety
+
+ `def` is a table handle not yet freed; `builder` points to writable
+ storage for a pointer.
+ */
+int32_t ic_program_builder_create(const IC_TABLE_DEF *def,
+                                  IC_PROGRAM_BUILDER **builder);
+
+/*
+ Free a builder handle. The programs it finished stay.
+
+ # Safety
+
+ A non-null `builder` is a builder handle not yet freed, freed here.
+ */
+void ic_program_builder_free(IC_PROGRAM_BUILDER *builder);
+
+/*
+ The row's value of column `column`.
+
+ # Safety
+
+ A non-null `builder` is a builder handle not yet freed, used by this
+ thread alone.
+ */
+IC_PROGRAM_VALUE ic_program_column(IC_PROGRAM_BUILDER *builder,
+                                   uint32_t column);
+
+/*
+ The value of column `column` in `row`, a row of `len` bytes laid out
+ by `rec`, a record over the builder's table: copied now, of that
+ column's type, NULL if the row has NULL there. A column compared with
+ it must be of one type, length, precision, scale and collation with
+ it.
+
+ # Safety
+
+ As `ic_program_column`; a non-null `rec` is a record handle not yet
+ freed; a non-null `row` points to `len` readable bytes.
+ */
+IC_PROGRAM_VALUE ic_program_constant(IC_PROGRAM_BUILDER *builder,
+                                     const IC_RECORD *rec,
+                                     const uint8_t *row,
+                                     size_t len,
+                                     uint32_t column);
+
+/*
+ An integer, as a sum adds it or a register holds it.
+
+ # Safety
+
+ As `ic_program_column`.
+ */
+IC_PROGRAM_VALUE ic_program_integer(IC_PROGRAM_BUILDER *builder, int64_t value);
+
+/*
+ Input `input`, 0 to 15, a signed integer each operation sets.
+
+ # Safety
+
+ As `ic_program_column`.
+ */
+IC_PROGRAM_VALUE ic_program_input(IC_PROGRAM_BUILDER *builder, uint32_t input);
+
+/*
+ `a + b`, NULL if either is.
+
+ # Safety
+
+ As `ic_program_column`.
+ */
+IC_PROGRAM_VALUE ic_program_add(IC_PROGRAM_BUILDER *builder,
+                                IC_PROGRAM_VALUE a,
+                                IC_PROGRAM_VALUE b);
+
+/*
+ `a − b`, NULL if either is.
+
+ # Safety
+
+ As `ic_program_column`.
+ */
+IC_PROGRAM_VALUE ic_program_subtract(IC_PROGRAM_BUILDER *builder,
+                                     IC_PROGRAM_VALUE a,
+                                     IC_PROGRAM_VALUE b);
+
+/*
+ `a` compared with `b` as `cmp`, one of the `IC_CMP_*` values, says;
+ unknown if either is NULL. `IC_PROGRAM_NONE` for another `cmp`.
+
+ # Safety
+
+ As `ic_program_column`.
+ */
+IC_PROGRAM_COND ic_program_compare(IC_PROGRAM_BUILDER *builder,
+                                   uint32_t cmp,
+                                   IC_PROGRAM_VALUE a,
+                                   IC_PROGRAM_VALUE b);
+
+/*
+ True if `a` is NULL.
+
+ # Safety
+
+ As `ic_program_column`.
+ */
+IC_PROGRAM_COND ic_program_is_null(IC_PROGRAM_BUILDER *builder,
+                                   IC_PROGRAM_VALUE a);
+
+/*
+ True if `a` is not NULL.
+
+ # Safety
+
+ As `ic_program_column`.
+ */
+IC_PROGRAM_COND ic_program_is_not_null(IC_PROGRAM_BUILDER *builder,
+                                       IC_PROGRAM_VALUE a);
+
+/*
+ `x AND y`.
+
+ # Safety
+
+ As `ic_program_column`.
+ */
+IC_PROGRAM_COND ic_program_and(IC_PROGRAM_BUILDER *builder,
+                               IC_PROGRAM_COND x,
+                               IC_PROGRAM_COND y);
+
+/*
+ `x OR y`.
+
+ # Safety
+
+ As `ic_program_column`.
+ */
+IC_PROGRAM_COND ic_program_or(IC_PROGRAM_BUILDER *builder,
+                              IC_PROGRAM_COND x,
+                              IC_PROGRAM_COND y);
+
+/*
+ `NOT x`.
+
+ # Safety
+
+ As `ic_program_column`.
+ */
+IC_PROGRAM_COND ic_program_not(IC_PROGRAM_BUILDER *builder, IC_PROGRAM_COND x);
+
+/*
+ Column `column` = `value`, once the program's condition has passed:
+ a constant of any type, or for an integer column of 32 or 64 bits a
+ value worked out in registers. A column is assigned once; a program
+ that assigns runs only on an update. What is wrong comes back from
+ the finish.
+
+ # Safety
+
+ As `ic_program_column`.
+ */
+int32_t ic_program_assign(IC_PROGRAM_BUILDER *builder,
+                          uint32_t column,
+                          IC_PROGRAM_VALUE value);
+
+/*
+ As `ic_program_assign`, only when `cond` is true.
+
+ # Safety
+
+ As `ic_program_column`.
+ */
+int32_t ic_program_assign_if(IC_PROGRAM_BUILDER *builder,
+                             uint32_t column,
+                             IC_PROGRAM_VALUE value,
+                             IC_PROGRAM_COND cond);
+
+/*
+ Compile the condition `top` with the builder's assignments into a
+ program, which any number of operations may run, each with its own
+ inputs. The builder stays, and may finish another.
+
+ Errors: the first error met in building; `IC_ERROR_NOT_COMPARABLE`
+ for a comparison or assignment of values of different types;
+ `IC_ERROR_BAD_PROGRAM` for a value or condition the builder did not
+ make, `IC_PROGRAM_NONE` among them; `IC_ERROR_NOT_SUPPORTED` for a
+ string or other non-integer worked out in registers;
+ `IC_ERROR_CONDITION_TOO_COMPLEX` for more than eight registers at
+ once, or a program too long; `IC_ERROR_FIELD_ALREADY_DEFINED` for a
+ column assigned twice. The program is the caller's, freed with
+ `ic_program_free`; any thread may use it.
+
+ # Safety
+
+ A non-null `builder` is a builder handle not yet freed, used by this
+ thread alone; `program` points to writable storage for a pointer.
+ */
+int32_t ic_program_builder_finish(IC_PROGRAM_BUILDER *builder,
+                                  IC_PROGRAM_COND top,
+                                  IC_PROGRAM **program);
+
+/*
+ As `ic_program_builder_finish`, for a program with no condition,
+ which only assigns.
+
+ # Safety
+
+ As `ic_program_builder_finish`.
+ */
+int32_t ic_program_builder_finish_no_condition(IC_PROGRAM_BUILDER *builder,
+                                               IC_PROGRAM **program);
+
+/*
+ Free a program handle. The queries, scans and shapes that run it
+ keep it.
+
+ # Safety
+
+ A non-null `program` is a program handle not yet freed, freed here.
+ */
+void ic_program_free(IC_PROGRAM *program);
+
+/*
+ True if the program assigns columns, which only an update may run;
+ false for a null program.
+
+ # Safety
+
+ A non-null `program` is a program handle not yet freed.
+ */
+bool ic_program_writes(const IC_PROGRAM *program);
+
+/*
+ The inputs the program reads, a bit each, input 0 the lowest; 0 for a
+ null program.
+
+ # Safety
+
+ A non-null `program` is a program handle not yet freed.
+ */
+uint32_t ic_program_inputs(const IC_PROGRAM *program);
+
+/*
+ Run `program` with every execution of the query defined from now on,
+ or none for a NULL `program`: on a read, an update or a delete by
+ primary key, and a program that assigns only on an update, which is
+ checked as each is defined (`IC_ERROR_NOT_SUPPORTED`). A row the
+ program refuses fails the query with `IC_NDB_ERROR_CONDITION` where it
+ aborts on error, rolling the transaction back, and with
+ `IC_NDB_ERROR_NO_SUCH_ROW` where it ignores errors.
+
+ Errors: `IC_ERROR_BAD_PROGRAM` for a program of another table;
+ `IC_ERROR_TRANSACTION_ACTIVE` while the query is defined or sent;
+ `IC_ERROR_NO_SUCH_FIELD` for an id that names no query.
+
+ # Safety
+
+ `conn` is a connection handle not yet freed; a non-null `program` is
+ a program handle not yet freed.
+ */
+int32_t ic_apid_query_set_program(IC_APID_CONNECTION *conn,
+                                  IC_QUERY_ID query,
+                                  const IC_PROGRAM *program);
+
+/*
+ Set input `input`, 0 to 15, of the query's program to `value`, for
+ the executions defined from now on; each holds what it was last set
+ to, 0 at first.
+
+ Errors: `IC_ERROR_BAD_PROGRAM` beyond 15; `IC_ERROR_NO_SUCH_FIELD`
+ for an id that names no query.
+
+ # Safety
+
+ `conn` is a connection handle not yet freed.
+ */
+int32_t ic_apid_query_set_input(IC_APID_CONNECTION *conn,
+                                IC_QUERY_ID query,
+                                uint32_t input,
+                                int64_t value);
+
+/*
+ For an update, read the columns of `rec` after its program, into the
+ row `ic_apid_query_after_row` gives, or none for a NULL `rec`. Only
+ an update takes it, which is checked as it is defined.
+
+ Errors: `IC_ERROR_KEY_RECORD` for a record over another table;
+ `IC_ERROR_TRANSACTION_ACTIVE` while the query is defined or sent;
+ `IC_ERROR_NO_SUCH_FIELD` for an id that names no query.
+
+ # Safety
+
+ `conn` is a connection handle not yet freed; a non-null `rec` is a
+ record handle not yet freed.
+ */
+int32_t ic_apid_query_set_reads_after(IC_APID_CONNECTION *conn,
+                                      IC_QUERY_ID query,
+                                      const IC_RECORD *rec);
+
+/*
+ What the query's update read after its program, and its length, once
+ the query has completed: laid out by the record given to
+ `ic_apid_query_set_reads_after`. Valid until the query is freed or
+ given another such record; NULL without one, or for an id that names
+ no query.
+
+ # Safety
+
+ As `ic_apid_query_key_row`.
+ */
+const uint8_t *ic_apid_query_after_row(IC_APID_CONNECTION *conn,
+                                       IC_QUERY_ID query,
+                                       size_t *len);
+
+/*
+ Filter the scan's runs from the next on by `program`, or by none for
+ a NULL `program`: a row it refuses is passed over at the data node.
+
+ Errors: `IC_ERROR_BAD_PROGRAM` for a program of another table;
+ `IC_ERROR_NOT_SUPPORTED` for one that assigns; `IC_ERROR_SCAN_ACTIVE`
+ while a run is on; `IC_ERROR_NO_SUCH_FIELD` for an id that names no
+ scan.
+
+ # Safety
+
+ `conn` is a connection handle not yet freed; a non-null `program` is
+ a program handle not yet freed.
+ */
+int32_t ic_apid_conn_set_scan_program(IC_APID_CONNECTION *conn,
+                                      IC_SCAN_ID scan,
+                                      const IC_PROGRAM *program);
+
+/*
+ Set input `input`, 0 to 15, of the scan's program to `value`, for its
+ runs from the next on; each holds what it was last set to, 0 at first.
+
+ Errors: `IC_ERROR_BAD_PROGRAM` beyond 15; `IC_ERROR_SCAN_ACTIVE`
+ while a run is on; `IC_ERROR_NO_SUCH_FIELD` for an id that names no
+ scan.
+
+ # Safety
+
+ `conn` is a connection handle not yet freed.
+ */
+int32_t ic_apid_conn_set_scan_input(IC_APID_CONNECTION *conn,
+                                    IC_SCAN_ID scan,
+                                    uint32_t input,
+                                    int64_t value);
+
+/*
+ A shape of the same records as `shape` whose operations run
+ `program`, as `ic_apid_query_set_program` has a query run it. A plain
+ operation and one with a program are of two shapes.
+
+ Errors: `IC_ERROR_BAD_PROGRAM` for a program of another table;
+ `IC_ERROR_NOT_SUPPORTED` for a shape through a unique index. The new
+ shape is the caller's, freed with `ic_op_shape_free`, as is `shape`.
+
+ # Safety
+
+ `shape` and `program` are handles not yet freed; `out` points to
+ writable storage for a pointer.
+ */
+int32_t ic_op_shape_with_program(const IC_OP_SHAPE *shape,
+                                 const IC_PROGRAM *program,
+                                 IC_OP_SHAPE **out);
+
+/*
+ A shape of the same records as `shape` whose updates read the
+ columns of `rec` after their program, into each operation's row
+ `ic_request_after_row` gives.
+
+ Errors: `IC_ERROR_KEY_RECORD` for a record over another table;
+ `IC_ERROR_NOT_SUPPORTED` for a shape through a unique index. The new
+ shape is the caller's, freed with `ic_op_shape_free`.
+
+ # Safety
+
+ `shape` and `rec` are handles not yet freed; `out` points to writable
+ storage for a pointer.
+ */
+int32_t ic_op_shape_reading_after(const IC_OP_SHAPE *shape,
+                                  const IC_RECORD *rec,
+                                  IC_OP_SHAPE **out);
+
+/*
+ A shape of the same table, index and record as `shape` whose scans
+ are filtered by `program`, as `ic_apid_conn_set_scan_program` filters
+ a scan.
+
+ Errors: `IC_ERROR_BAD_PROGRAM` for a program of another table;
+ `IC_ERROR_NOT_SUPPORTED` for one that assigns. The new shape is the
+ caller's, freed with `ic_scan_shape_free`.
+
+ # Safety
+
+ `shape` and `program` are handles not yet freed; `out` points to
+ writable storage for a pointer.
+ */
+int32_t ic_scan_shape_with_program(const IC_SCAN_SHAPE *shape,
+                                   const IC_PROGRAM *program,
+                                   IC_SCAN_SHAPE **out);
+
+/*
+ Set input `input`, 0 to 15, of operation `op`'s program to `value`;
+ each holds what it was last set to, 0 at first.
+
+ Errors: `IC_ERROR_BAD_PROGRAM` beyond 15; `IC_ERROR_NO_SUCH_FIELD`
+ for an `op` the request does not have.
+
+ # Safety
+
+ `request` is a request handle not yet freed, used by this thread
+ alone, and not running.
+ */
+int32_t ic_request_set_input(IC_REQUEST *request,
+                             uint32_t op,
+                             uint32_t input,
+                             int64_t value);
+
+/*
+ What operation `op`'s update read after its program in the last run,
+ and its length, laid out by its shape's record for that
+ (`ic_op_shape_reading_after`). Valid as `ic_request_key_row`'s; NULL
+ without such a record, or for an `op` the request does not have.
+
+ # Safety
+
+ As `ic_request_key_row`.
+ */
+const uint8_t *ic_request_after_row(const IC_REQUEST *request,
+                                    uint32_t op,
+                                    size_t *len);
+
+/*
+ Set input `input`, 0 to 15, of the reader's shape's program to
+ `value`, for its runs from the next on; each holds what it was last
+ set to, 0 at first.
+
+ Errors: `IC_ERROR_BAD_PROGRAM` beyond 15.
+
+ # Safety
+
+ `reader` is a reader handle not yet freed, used by this thread alone.
+ */
+int32_t ic_scan_reader_set_input(IC_SCAN_READER *reader,
+                                 uint32_t input,
+                                 int64_t value);
 
 #ifdef __cplusplus
 }  // extern "C"

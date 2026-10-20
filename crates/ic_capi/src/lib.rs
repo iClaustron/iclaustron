@@ -46,6 +46,11 @@ use ic_apid::executor::Request;
 use ic_apid::executor::Submitter;
 use ic_apid::index_scan::ScanRange;
 use ic_apid::key_op;
+use ic_apid::program::Cmp;
+use ic_apid::program::Cond;
+use ic_apid::program::Program;
+use ic_apid::program::ProgramBuilder;
+use ic_apid::program::Value;
 use ic_apid::query::AbortOption;
 use ic_apid::query::BatchHint;
 use ic_apid::query::QueryId;
@@ -231,6 +236,10 @@ pub const IC_NDB_ERROR_SCAN_LOCK_TIMEOUT: i32 = 274;
 /// A scan was left too long without asking for more, as when a batch is
 /// not handed back; temporary (an NDB error).
 pub const IC_NDB_ERROR_SCAN_IDLE: i32 = 296;
+/// The row did not meet the condition of an operation that aborts on
+/// error, which rolls the transaction back (ours, in NDB's range for
+/// programs).
+pub const IC_NDB_ERROR_CONDITION: i32 = 6000;
 
 /// A text that is not a connectstring.
 pub const IC_ERROR_PARSE_CONNECTSTRING: i32 = 7056;
@@ -305,6 +314,32 @@ pub const IC_ERROR_NO_SCAN_ROW: i32 = 7162;
 /// more columns than the index has, bounds too long, or in an ordered
 /// run of several ranges a number not above the one before.
 pub const IC_ERROR_BAD_RANGE: i32 = 7163;
+/// A program needs more than eight registers at once, or is too long.
+pub const IC_ERROR_CONDITION_TOO_COMPLEX: i32 = 7130;
+/// A program compares or assigns values of different types.
+pub const IC_ERROR_NOT_COMPARABLE: i32 = 7164;
+/// A program names a value, condition or input it does not have, or is
+/// put on an operation of another table.
+pub const IC_ERROR_BAD_PROGRAM: i32 = 7165;
+
+/// Equal, in a program's comparison of its first value with its second.
+pub const IC_CMP_EQ: u32 = 0;
+/// Not equal.
+pub const IC_CMP_NE: u32 = 1;
+/// Less.
+pub const IC_CMP_LT: u32 = 2;
+/// Less or equal.
+pub const IC_CMP_LE: u32 = 3;
+/// Greater.
+pub const IC_CMP_GT: u32 = 4;
+/// Greater or equal.
+pub const IC_CMP_GE: u32 = 5;
+/// The inputs an operation gives its program, numbered from 0.
+pub const IC_PROGRAM_INPUTS: u32 = 16;
+/// A value or condition a builder could not make, from a null builder or
+/// record or an unknown comparison; using it fails the finish with
+/// `IC_ERROR_BAD_PROGRAM`.
+pub const IC_PROGRAM_NONE: u32 = 0xFFFF_FFFF;
 
 // ---- Types ----
 
@@ -368,6 +403,24 @@ pub struct IcScanShape {
 pub struct IcScanReader {
   _private: [u8; 0],
 }
+
+/// A program being built over a table, its values and conditions
+/// named by ids in it (`IC_PROGRAM_BUILDER`). Opaque.
+pub struct IcProgramBuilder {
+  _private: [u8; 0],
+}
+
+/// A compiled program, run by any number of operations, each with its
+/// own inputs (`IC_PROGRAM`). Opaque.
+pub struct IcProgram {
+  _private: [u8; 0],
+}
+
+/// A value's id in its program builder (`IC_PROGRAM_VALUE`).
+pub type IcProgramValue = u32;
+
+/// A condition's id in its program builder (`IC_PROGRAM_COND`).
+pub type IcProgramCond = u32;
 
 /// A query's id in its connection (`IC_QUERY_ID`).
 pub type IcQueryId = u32;
@@ -5349,6 +5402,860 @@ pub unsafe extern "C" fn ic_scan_reader_close(
   })
 }
 
+// ---- Programs ----
+
+/// The builder behind a handle.
+///
+/// # Safety
+///
+/// A non-null `builder` is a builder handle not yet freed, used by one
+/// thread at a time.
+unsafe fn builder_of<'a>(
+  builder: *mut IcProgramBuilder,
+) -> Option<&'a mut ProgramBuilder> {
+  // SAFETY: the caller's promise.
+  unsafe { (builder as *mut ProgramBuilder).as_mut() }
+}
+
+/// The program behind a handle.
+///
+/// # Safety
+///
+/// A non-null `program` is a program handle not yet freed.
+unsafe fn program_of<'a>(
+  program: *const IcProgram,
+) -> Option<&'a Arc<Program>> {
+  // SAFETY: the caller's promise.
+  unsafe { (program as *const Arc<Program>).as_ref() }
+}
+
+fn cmp_from_c(value: u32) -> Option<Cmp> {
+  match value {
+    IC_CMP_EQ => Some(Cmp::Eq),
+    IC_CMP_NE => Some(Cmp::Ne),
+    IC_CMP_LT => Some(Cmp::Lt),
+    IC_CMP_LE => Some(Cmp::Le),
+    IC_CMP_GT => Some(Cmp::Gt),
+    IC_CMP_GE => Some(Cmp::Ge),
+    _ => None,
+  }
+}
+
+/// Run `f` on the builder a handle names, giving the id it makes, or
+/// `IC_PROGRAM_NONE` for a null builder or a panic.
+///
+/// # Safety
+///
+/// As [`builder_of`].
+unsafe fn on_builder<F: FnOnce(&mut ProgramBuilder) -> u32>(
+  builder: *mut IcProgramBuilder,
+  f: F,
+) -> u32 {
+  // SAFETY: the caller's promise.
+  let found = match unsafe { builder_of(builder) } {
+    Some(found) => found,
+    None => return IC_PROGRAM_NONE,
+  };
+  catch_unwind(AssertUnwindSafe(|| f(found))).unwrap_or(IC_PROGRAM_NONE)
+}
+
+/// A builder of a program over a table (chapter 04, "Conditions and
+/// assignments"): its values and conditions made bottom-up, each by a
+/// function that gives its id in the builder, then compiled whole by
+/// `ic_program_builder_finish`. What cannot be made, a column the table
+/// lacks or an input beyond 15, is kept as the builder's error, which
+/// the finish gives; a value or condition from a null builder or record,
+/// or with an unknown comparison, is `IC_PROGRAM_NONE`, and using one
+/// fails the finish with `IC_ERROR_BAD_PROGRAM`.
+///
+/// The builder is the caller's, freed with `ic_program_builder_free`;
+/// one thread uses it at a time.
+///
+/// # Safety
+///
+/// `def` is a table handle not yet freed; `builder` points to writable
+/// storage for a pointer.
+#[no_mangle]
+pub unsafe extern "C" fn ic_program_builder_create(
+  def: *const IcTableDef,
+  builder: *mut *mut IcProgramBuilder,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let table = match unsafe { table_of(def) } {
+    Some(table) => table,
+    None => return err::IC_ERROR_NULL_POINTER,
+  };
+  if builder.is_null() {
+    return err::IC_ERROR_NULL_POINTER;
+  }
+  guarded(|| {
+    let made = ProgramBuilder::new(&table.def);
+    let handle = Box::into_raw(Box::new(made)) as *mut IcProgramBuilder;
+    // SAFETY: checked non-null above; the caller's promise.
+    unsafe { builder.write(handle) };
+    0
+  })
+}
+
+/// Free a builder handle. The programs it finished stay.
+///
+/// # Safety
+///
+/// A non-null `builder` is a builder handle not yet freed, freed here.
+#[no_mangle]
+pub unsafe extern "C" fn ic_program_builder_free(
+  builder: *mut IcProgramBuilder,
+) {
+  if builder.is_null() {
+    return;
+  }
+  // SAFETY: the caller's promise; the handle is the box made for it.
+  let owned = unsafe { Box::from_raw(builder as *mut ProgramBuilder) };
+  let _ = guarded(move || {
+    drop(owned);
+    0
+  });
+}
+
+/// The row's value of column `column`.
+///
+/// # Safety
+///
+/// A non-null `builder` is a builder handle not yet freed, used by this
+/// thread alone.
+#[no_mangle]
+pub unsafe extern "C" fn ic_program_column(
+  builder: *mut IcProgramBuilder,
+  column: u32,
+) -> IcProgramValue {
+  // SAFETY: the caller's promise.
+  unsafe { on_builder(builder, |b| b.column(column).as_u32()) }
+}
+
+/// The value of column `column` in `row`, a row of `len` bytes laid out
+/// by `rec`, a record over the builder's table: copied now, of that
+/// column's type, NULL if the row has NULL there. A column compared with
+/// it must be of one type, length, precision, scale and collation with
+/// it.
+///
+/// # Safety
+///
+/// As `ic_program_column`; a non-null `rec` is a record handle not yet
+/// freed; a non-null `row` points to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn ic_program_constant(
+  builder: *mut IcProgramBuilder,
+  rec: *const IcRecord,
+  row: *const u8,
+  len: usize,
+  column: u32,
+) -> IcProgramValue {
+  // SAFETY: the caller's promise.
+  let rec = match unsafe { record_of(rec) } {
+    Some(rec) => rec,
+    None => return IC_PROGRAM_NONE,
+  };
+  // SAFETY: the caller's promise.
+  let bytes = unsafe { row_arg(row, len) };
+  // SAFETY: the caller's promise.
+  unsafe { on_builder(builder, |b| b.constant(rec, bytes, column).as_u32()) }
+}
+
+/// An integer, as a sum adds it or a register holds it.
+///
+/// # Safety
+///
+/// As `ic_program_column`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_program_integer(
+  builder: *mut IcProgramBuilder,
+  value: i64,
+) -> IcProgramValue {
+  // SAFETY: the caller's promise.
+  unsafe { on_builder(builder, |b| b.integer(value).as_u32()) }
+}
+
+/// Input `input`, 0 to 15, a signed integer each operation sets.
+///
+/// # Safety
+///
+/// As `ic_program_column`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_program_input(
+  builder: *mut IcProgramBuilder,
+  input: u32,
+) -> IcProgramValue {
+  // SAFETY: the caller's promise.
+  unsafe { on_builder(builder, |b| b.input(input).as_u32()) }
+}
+
+/// `a + b`, NULL if either is.
+///
+/// # Safety
+///
+/// As `ic_program_column`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_program_add(
+  builder: *mut IcProgramBuilder,
+  a: IcProgramValue,
+  b: IcProgramValue,
+) -> IcProgramValue {
+  let (a, b) = (Value::from_u32(a), Value::from_u32(b));
+  // SAFETY: the caller's promise.
+  unsafe { on_builder(builder, |pb| pb.add(a, b).as_u32()) }
+}
+
+/// `a − b`, NULL if either is.
+///
+/// # Safety
+///
+/// As `ic_program_column`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_program_subtract(
+  builder: *mut IcProgramBuilder,
+  a: IcProgramValue,
+  b: IcProgramValue,
+) -> IcProgramValue {
+  let (a, b) = (Value::from_u32(a), Value::from_u32(b));
+  // SAFETY: the caller's promise.
+  unsafe { on_builder(builder, |pb| pb.subtract(a, b).as_u32()) }
+}
+
+/// `a` compared with `b` as `cmp`, one of the `IC_CMP_*` values, says;
+/// unknown if either is NULL. `IC_PROGRAM_NONE` for another `cmp`.
+///
+/// # Safety
+///
+/// As `ic_program_column`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_program_compare(
+  builder: *mut IcProgramBuilder,
+  cmp: u32,
+  a: IcProgramValue,
+  b: IcProgramValue,
+) -> IcProgramCond {
+  let cmp = match cmp_from_c(cmp) {
+    Some(cmp) => cmp,
+    None => return IC_PROGRAM_NONE,
+  };
+  let (a, b) = (Value::from_u32(a), Value::from_u32(b));
+  // SAFETY: the caller's promise.
+  unsafe { on_builder(builder, |pb| pb.compare(cmp, a, b).as_u32()) }
+}
+
+/// True if `a` is NULL.
+///
+/// # Safety
+///
+/// As `ic_program_column`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_program_is_null(
+  builder: *mut IcProgramBuilder,
+  a: IcProgramValue,
+) -> IcProgramCond {
+  let a = Value::from_u32(a);
+  // SAFETY: the caller's promise.
+  unsafe { on_builder(builder, |pb| pb.is_null(a).as_u32()) }
+}
+
+/// True if `a` is not NULL.
+///
+/// # Safety
+///
+/// As `ic_program_column`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_program_is_not_null(
+  builder: *mut IcProgramBuilder,
+  a: IcProgramValue,
+) -> IcProgramCond {
+  let a = Value::from_u32(a);
+  // SAFETY: the caller's promise.
+  unsafe { on_builder(builder, |pb| pb.is_not_null(a).as_u32()) }
+}
+
+/// `x AND y`.
+///
+/// # Safety
+///
+/// As `ic_program_column`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_program_and(
+  builder: *mut IcProgramBuilder,
+  x: IcProgramCond,
+  y: IcProgramCond,
+) -> IcProgramCond {
+  let (x, y) = (Cond::from_u32(x), Cond::from_u32(y));
+  // SAFETY: the caller's promise.
+  unsafe { on_builder(builder, |pb| pb.and(x, y).as_u32()) }
+}
+
+/// `x OR y`.
+///
+/// # Safety
+///
+/// As `ic_program_column`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_program_or(
+  builder: *mut IcProgramBuilder,
+  x: IcProgramCond,
+  y: IcProgramCond,
+) -> IcProgramCond {
+  let (x, y) = (Cond::from_u32(x), Cond::from_u32(y));
+  // SAFETY: the caller's promise.
+  unsafe { on_builder(builder, |pb| pb.or(x, y).as_u32()) }
+}
+
+/// `NOT x`.
+///
+/// # Safety
+///
+/// As `ic_program_column`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_program_not(
+  builder: *mut IcProgramBuilder,
+  x: IcProgramCond,
+) -> IcProgramCond {
+  let x = Cond::from_u32(x);
+  // SAFETY: the caller's promise.
+  unsafe { on_builder(builder, |pb| pb.not(x).as_u32()) }
+}
+
+/// Column `column` = `value`, once the program's condition has passed:
+/// a constant of any type, or for an integer column of 32 or 64 bits a
+/// value worked out in registers. A column is assigned once; a program
+/// that assigns runs only on an update. What is wrong comes back from
+/// the finish.
+///
+/// # Safety
+///
+/// As `ic_program_column`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_program_assign(
+  builder: *mut IcProgramBuilder,
+  column: u32,
+  value: IcProgramValue,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let b = match unsafe { builder_of(builder) } {
+    Some(b) => b,
+    None => return err::IC_ERROR_NULL_POINTER,
+  };
+  guarded(|| {
+    b.assign(column, Value::from_u32(value));
+    0
+  })
+}
+
+/// As `ic_program_assign`, only when `cond` is true.
+///
+/// # Safety
+///
+/// As `ic_program_column`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_program_assign_if(
+  builder: *mut IcProgramBuilder,
+  column: u32,
+  value: IcProgramValue,
+  cond: IcProgramCond,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let b = match unsafe { builder_of(builder) } {
+    Some(b) => b,
+    None => return err::IC_ERROR_NULL_POINTER,
+  };
+  guarded(|| {
+    b.assign_if(column, Value::from_u32(value), Cond::from_u32(cond));
+    0
+  })
+}
+
+/// The program's handle, made from a compiled program.
+fn program_out(made: Arc<Program>, program: *mut *mut IcProgram) -> i32 {
+  let handle = Box::into_raw(Box::new(made)) as *mut IcProgram;
+  // SAFETY: checked non-null by the caller; the C caller's promise.
+  unsafe { program.write(handle) };
+  0
+}
+
+/// Compile the condition `top` with the builder's assignments into a
+/// program, which any number of operations may run, each with its own
+/// inputs. The builder stays, and may finish another.
+///
+/// Errors: the first error met in building; `IC_ERROR_NOT_COMPARABLE`
+/// for a comparison or assignment of values of different types;
+/// `IC_ERROR_BAD_PROGRAM` for a value or condition the builder did not
+/// make, `IC_PROGRAM_NONE` among them; `IC_ERROR_NOT_SUPPORTED` for a
+/// string or other non-integer worked out in registers;
+/// `IC_ERROR_CONDITION_TOO_COMPLEX` for more than eight registers at
+/// once, or a program too long; `IC_ERROR_FIELD_ALREADY_DEFINED` for a
+/// column assigned twice. The program is the caller's, freed with
+/// `ic_program_free`; any thread may use it.
+///
+/// # Safety
+///
+/// A non-null `builder` is a builder handle not yet freed, used by this
+/// thread alone; `program` points to writable storage for a pointer.
+#[no_mangle]
+pub unsafe extern "C" fn ic_program_builder_finish(
+  builder: *mut IcProgramBuilder,
+  top: IcProgramCond,
+  program: *mut *mut IcProgram,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let b = match unsafe { builder_of(builder) } {
+    Some(b) => b,
+    None => return err::IC_ERROR_NULL_POINTER,
+  };
+  if program.is_null() {
+    return err::IC_ERROR_NULL_POINTER;
+  }
+  guarded(|| match b.finish(Some(Cond::from_u32(top))) {
+    Ok(made) => program_out(made, program),
+    Err(e) => e.code,
+  })
+}
+
+/// As `ic_program_builder_finish`, for a program with no condition,
+/// which only assigns.
+///
+/// # Safety
+///
+/// As `ic_program_builder_finish`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_program_builder_finish_no_condition(
+  builder: *mut IcProgramBuilder,
+  program: *mut *mut IcProgram,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let b = match unsafe { builder_of(builder) } {
+    Some(b) => b,
+    None => return err::IC_ERROR_NULL_POINTER,
+  };
+  if program.is_null() {
+    return err::IC_ERROR_NULL_POINTER;
+  }
+  guarded(|| match b.finish(None) {
+    Ok(made) => program_out(made, program),
+    Err(e) => e.code,
+  })
+}
+
+/// Free a program handle. The queries, scans and shapes that run it
+/// keep it.
+///
+/// # Safety
+///
+/// A non-null `program` is a program handle not yet freed, freed here.
+#[no_mangle]
+pub unsafe extern "C" fn ic_program_free(program: *mut IcProgram) {
+  if program.is_null() {
+    return;
+  }
+  // SAFETY: the caller's promise; the handle is the box made for it.
+  let owned = unsafe { Box::from_raw(program as *mut Arc<Program>) };
+  let _ = guarded(move || {
+    drop(owned);
+    0
+  });
+}
+
+/// True if the program assigns columns, which only an update may run;
+/// false for a null program.
+///
+/// # Safety
+///
+/// A non-null `program` is a program handle not yet freed.
+#[no_mangle]
+pub unsafe extern "C" fn ic_program_writes(program: *const IcProgram) -> bool {
+  // SAFETY: the caller's promise.
+  match unsafe { program_of(program) } {
+    Some(p) => p.writes(),
+    None => false,
+  }
+}
+
+/// The inputs the program reads, a bit each, input 0 the lowest; 0 for a
+/// null program.
+///
+/// # Safety
+///
+/// A non-null `program` is a program handle not yet freed.
+#[no_mangle]
+pub unsafe extern "C" fn ic_program_inputs(program: *const IcProgram) -> u32 {
+  // SAFETY: the caller's promise.
+  match unsafe { program_of(program) } {
+    Some(p) => p.inputs(),
+    None => 0,
+  }
+}
+
+/// Run `program` with every execution of the query defined from now on,
+/// or none for a NULL `program`: on a read, an update or a delete by
+/// primary key, and a program that assigns only on an update, which is
+/// checked as each is defined (`IC_ERROR_NOT_SUPPORTED`). A row the
+/// program refuses fails the query with `IC_NDB_ERROR_CONDITION` where it
+/// aborts on error, rolling the transaction back, and with
+/// `IC_NDB_ERROR_NO_SUCH_ROW` where it ignores errors.
+///
+/// Errors: `IC_ERROR_BAD_PROGRAM` for a program of another table;
+/// `IC_ERROR_TRANSACTION_ACTIVE` while the query is defined or sent;
+/// `IC_ERROR_NO_SUCH_FIELD` for an id that names no query.
+///
+/// # Safety
+///
+/// `conn` is a connection handle not yet freed; a non-null `program` is
+/// a program handle not yet freed.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_query_set_program(
+  conn: *mut IcApidConnection,
+  query: IcQueryId,
+  program: *const IcProgram,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let program = unsafe { program_of(program) };
+  // SAFETY: the caller's promise.
+  unsafe {
+    conn_code(conn, |c| match c.query_mut(QueryId::from_u32(query)) {
+      Some(q) => q.set_program(program),
+      None => Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
+    })
+  }
+}
+
+/// Set input `input`, 0 to 15, of the query's program to `value`, for
+/// the executions defined from now on; each holds what it was last set
+/// to, 0 at first.
+///
+/// Errors: `IC_ERROR_BAD_PROGRAM` beyond 15; `IC_ERROR_NO_SUCH_FIELD`
+/// for an id that names no query.
+///
+/// # Safety
+///
+/// `conn` is a connection handle not yet freed.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_query_set_input(
+  conn: *mut IcApidConnection,
+  query: IcQueryId,
+  input: u32,
+  value: i64,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  unsafe {
+    conn_code(conn, |c| match c.query_mut(QueryId::from_u32(query)) {
+      Some(q) => q.set_input(input, value),
+      None => Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
+    })
+  }
+}
+
+/// For an update, read the columns of `rec` after its program, into the
+/// row `ic_apid_query_after_row` gives, or none for a NULL `rec`. Only
+/// an update takes it, which is checked as it is defined.
+///
+/// Errors: `IC_ERROR_KEY_RECORD` for a record over another table;
+/// `IC_ERROR_TRANSACTION_ACTIVE` while the query is defined or sent;
+/// `IC_ERROR_NO_SUCH_FIELD` for an id that names no query.
+///
+/// # Safety
+///
+/// `conn` is a connection handle not yet freed; a non-null `rec` is a
+/// record handle not yet freed.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_query_set_reads_after(
+  conn: *mut IcApidConnection,
+  query: IcQueryId,
+  rec: *const IcRecord,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let rec = unsafe { record_of(rec) };
+  // SAFETY: the caller's promise.
+  unsafe {
+    conn_code(conn, |c| match c.query_mut(QueryId::from_u32(query)) {
+      Some(q) => q.set_reads_after(rec),
+      None => Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
+    })
+  }
+}
+
+/// What the query's update read after its program, and its length, once
+/// the query has completed: laid out by the record given to
+/// `ic_apid_query_set_reads_after`. Valid until the query is freed or
+/// given another such record; NULL without one, or for an id that names
+/// no query.
+///
+/// # Safety
+///
+/// As `ic_apid_query_key_row`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_query_after_row(
+  conn: *mut IcApidConnection,
+  query: IcQueryId,
+  len: *mut usize,
+) -> *const u8 {
+  // SAFETY: the caller's promise.
+  let found = unsafe {
+    on_conn(conn, |c| match c.query(QueryId::from_u32(query)) {
+      Some(q) if !q.after_row().is_empty() => {
+        (q.after_row().as_ptr(), q.after_row().len())
+      }
+      _ => (std::ptr::null(), 0),
+    })
+  };
+  let (row, row_len) = found.unwrap_or((std::ptr::null(), 0));
+  if !len.is_null() {
+    // SAFETY: the caller's promise.
+    unsafe { len.write(row_len) };
+  }
+  row
+}
+
+/// Filter the scan's runs from the next on by `program`, or by none for
+/// a NULL `program`: a row it refuses is passed over at the data node.
+///
+/// Errors: `IC_ERROR_BAD_PROGRAM` for a program of another table;
+/// `IC_ERROR_NOT_SUPPORTED` for one that assigns; `IC_ERROR_SCAN_ACTIVE`
+/// while a run is on; `IC_ERROR_NO_SUCH_FIELD` for an id that names no
+/// scan.
+///
+/// # Safety
+///
+/// `conn` is a connection handle not yet freed; a non-null `program` is
+/// a program handle not yet freed.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_conn_set_scan_program(
+  conn: *mut IcApidConnection,
+  scan: IcScanId,
+  program: *const IcProgram,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let program = unsafe { program_of(program) };
+  // SAFETY: the caller's promise.
+  unsafe {
+    conn_code(conn, |c| {
+      c.set_scan_program(ScanId::from_u32(scan), program)
+    })
+  }
+}
+
+/// Set input `input`, 0 to 15, of the scan's program to `value`, for its
+/// runs from the next on; each holds what it was last set to, 0 at first.
+///
+/// Errors: `IC_ERROR_BAD_PROGRAM` beyond 15; `IC_ERROR_SCAN_ACTIVE`
+/// while a run is on; `IC_ERROR_NO_SUCH_FIELD` for an id that names no
+/// scan.
+///
+/// # Safety
+///
+/// `conn` is a connection handle not yet freed.
+#[no_mangle]
+pub unsafe extern "C" fn ic_apid_conn_set_scan_input(
+  conn: *mut IcApidConnection,
+  scan: IcScanId,
+  input: u32,
+  value: i64,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  unsafe {
+    conn_code(conn, |c| {
+      c.set_scan_input(ScanId::from_u32(scan), input, value)
+    })
+  }
+}
+
+/// A shape of the same records as `shape` whose operations run
+/// `program`, as `ic_apid_query_set_program` has a query run it. A plain
+/// operation and one with a program are of two shapes.
+///
+/// Errors: `IC_ERROR_BAD_PROGRAM` for a program of another table;
+/// `IC_ERROR_NOT_SUPPORTED` for a shape through a unique index. The new
+/// shape is the caller's, freed with `ic_op_shape_free`, as is `shape`.
+///
+/// # Safety
+///
+/// `shape` and `program` are handles not yet freed; `out` points to
+/// writable storage for a pointer.
+#[no_mangle]
+pub unsafe extern "C" fn ic_op_shape_with_program(
+  shape: *const IcOpShape,
+  program: *const IcProgram,
+  out: *mut *mut IcOpShape,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let handles = unsafe { (shape_of(shape), program_of(program)) };
+  let (shape, program) = match handles {
+    (Some(shape), Some(program)) => (shape, program),
+    _ => return err::IC_ERROR_NULL_POINTER,
+  };
+  if out.is_null() {
+    return err::IC_ERROR_NULL_POINTER;
+  }
+  guarded(|| match shape.with_program(program) {
+    Ok(made) => {
+      let handle = Box::into_raw(Box::new(made)) as *mut IcOpShape;
+      // SAFETY: checked non-null above; the caller's promise.
+      unsafe { out.write(handle) };
+      0
+    }
+    Err(e) => e.code,
+  })
+}
+
+/// A shape of the same records as `shape` whose updates read the
+/// columns of `rec` after their program, into each operation's row
+/// `ic_request_after_row` gives.
+///
+/// Errors: `IC_ERROR_KEY_RECORD` for a record over another table;
+/// `IC_ERROR_NOT_SUPPORTED` for a shape through a unique index. The new
+/// shape is the caller's, freed with `ic_op_shape_free`.
+///
+/// # Safety
+///
+/// `shape` and `rec` are handles not yet freed; `out` points to writable
+/// storage for a pointer.
+#[no_mangle]
+pub unsafe extern "C" fn ic_op_shape_reading_after(
+  shape: *const IcOpShape,
+  rec: *const IcRecord,
+  out: *mut *mut IcOpShape,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let (shape, rec) = match unsafe { (shape_of(shape), record_of(rec)) } {
+    (Some(shape), Some(rec)) => (shape, rec),
+    _ => return err::IC_ERROR_NULL_POINTER,
+  };
+  if out.is_null() {
+    return err::IC_ERROR_NULL_POINTER;
+  }
+  guarded(|| match shape.reading_after(rec) {
+    Ok(made) => {
+      let handle = Box::into_raw(Box::new(made)) as *mut IcOpShape;
+      // SAFETY: checked non-null above; the caller's promise.
+      unsafe { out.write(handle) };
+      0
+    }
+    Err(e) => e.code,
+  })
+}
+
+/// A shape of the same table, index and record as `shape` whose scans
+/// are filtered by `program`, as `ic_apid_conn_set_scan_program` filters
+/// a scan.
+///
+/// Errors: `IC_ERROR_BAD_PROGRAM` for a program of another table;
+/// `IC_ERROR_NOT_SUPPORTED` for one that assigns. The new shape is the
+/// caller's, freed with `ic_scan_shape_free`.
+///
+/// # Safety
+///
+/// `shape` and `program` are handles not yet freed; `out` points to
+/// writable storage for a pointer.
+#[no_mangle]
+pub unsafe extern "C" fn ic_scan_shape_with_program(
+  shape: *const IcScanShape,
+  program: *const IcProgram,
+  out: *mut *mut IcScanShape,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let handles = unsafe { (scan_shape_of(shape), program_of(program)) };
+  let (shape, program) = match handles {
+    (Some(shape), Some(program)) => (shape, program),
+    _ => return err::IC_ERROR_NULL_POINTER,
+  };
+  if out.is_null() {
+    return err::IC_ERROR_NULL_POINTER;
+  }
+  guarded(|| match shape.with_program(program) {
+    Ok(made) => {
+      let handle = Box::into_raw(Box::new(made)) as *mut IcScanShape;
+      // SAFETY: checked non-null above; the caller's promise.
+      unsafe { out.write(handle) };
+      0
+    }
+    Err(e) => e.code,
+  })
+}
+
+/// Set input `input`, 0 to 15, of operation `op`'s program to `value`;
+/// each holds what it was last set to, 0 at first.
+///
+/// Errors: `IC_ERROR_BAD_PROGRAM` beyond 15; `IC_ERROR_NO_SUCH_FIELD`
+/// for an `op` the request does not have.
+///
+/// # Safety
+///
+/// `request` is a request handle not yet freed, used by this thread
+/// alone, and not running.
+#[no_mangle]
+pub unsafe extern "C" fn ic_request_set_input(
+  request: *mut IcRequest,
+  op: u32,
+  input: u32,
+  value: i64,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let r = match unsafe { request_of(request) } {
+    Some(r) => r,
+    None => return err::IC_ERROR_NULL_POINTER,
+  };
+  match r.ops_mut().get_mut(op as usize) {
+    Some(found) => code_of(found.set_input(input, value)),
+    None => err::IC_ERROR_NO_SUCH_FIELD,
+  }
+}
+
+/// What operation `op`'s update read after its program in the last run,
+/// and its length, laid out by its shape's record for that
+/// (`ic_op_shape_reading_after`). Valid as `ic_request_key_row`'s; NULL
+/// without such a record, or for an `op` the request does not have.
+///
+/// # Safety
+///
+/// As `ic_request_key_row`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_request_after_row(
+  request: *const IcRequest,
+  op: u32,
+  len: *mut usize,
+) -> *const u8 {
+  let mut row: *const u8 = std::ptr::null();
+  let mut row_len: usize = 0;
+  // SAFETY: the caller's promise.
+  if let Some(found) = unsafe { op_ref(request, op) } {
+    if !found.after_row().is_empty() {
+      row = found.after_row().as_ptr();
+      row_len = found.after_row().len();
+    }
+  }
+  if !len.is_null() {
+    // SAFETY: the caller's promise.
+    unsafe { len.write(row_len) };
+  }
+  row
+}
+
+/// Set input `input`, 0 to 15, of the reader's shape's program to
+/// `value`, for its runs from the next on; each holds what it was last
+/// set to, 0 at first.
+///
+/// Errors: `IC_ERROR_BAD_PROGRAM` beyond 15.
+///
+/// # Safety
+///
+/// `reader` is a reader handle not yet freed, used by this thread alone.
+#[no_mangle]
+pub unsafe extern "C" fn ic_scan_reader_set_input(
+  reader: *mut IcScanReader,
+  input: u32,
+  value: i64,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let r = match unsafe { reader_of(reader) } {
+    Some(r) => r,
+    None => return err::IC_ERROR_NULL_POINTER,
+  };
+  code_of(r.set_input(input, value))
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -5421,6 +6328,21 @@ mod tests {
     assert_eq!(IC_ERROR_SCAN_ACTIVE, err::IC_ERROR_SCAN_ACTIVE);
     assert_eq!(IC_ERROR_NO_SCAN_ROW, err::IC_ERROR_NO_SCAN_ROW);
     assert_eq!(IC_ERROR_BAD_RANGE, err::IC_ERROR_BAD_RANGE);
+    assert_eq!(
+      IC_ERROR_CONDITION_TOO_COMPLEX,
+      err::IC_ERROR_CONDITION_TOO_COMPLEX
+    );
+    assert_eq!(IC_ERROR_NOT_COMPARABLE, err::IC_ERROR_NOT_COMPARABLE);
+    assert_eq!(IC_ERROR_BAD_PROGRAM, err::IC_ERROR_BAD_PROGRAM);
+    assert_eq!(
+      IC_NDB_ERROR_CONDITION as u16,
+      ic_signals::interp::IC_REFUSE_CONDITION
+    );
+    assert!(IcError::new(IC_NDB_ERROR_CONDITION).is_ndb_error());
+    assert!(!IcError::new(IC_NDB_ERROR_CONDITION).is_temporary());
+    assert_eq!(IC_PROGRAM_INPUTS, ic_apid::program::IC_PROGRAM_INPUTS);
+    assert_eq!(cmp_from_c(IC_CMP_LE), Some(Cmp::Le));
+    assert_eq!(cmp_from_c(6), None);
     let scan_errors: [(i32, i32); 4] = [
       (
         IC_NDB_ERROR_SCAN_NODE_FAILURE,

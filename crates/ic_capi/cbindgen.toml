@@ -35,12 +35,13 @@ after_includes = """
  *
  * Handles. IC_APID_GLOBAL, IC_APID_CONNECTION, IC_TABLE_DEF,
  * IC_INDEX_DEF, IC_RECORD, IC_APID_EXECUTOR, IC_APID_SUBMITTER,
- * IC_OP_SHAPE, IC_REQUEST, IC_SCAN_SHAPE and IC_SCAN_READER are made by
- * one function and given back to their _free; the caller owns each
- * until then. A connection, and an executor, is freed before its
- * global; a table, index or record handle may outlive the connection
- * that made it, a query or scan keeps what it needs of its records, and
- * a request or reader what it needs of its shapes. A NULL
+ * IC_OP_SHAPE, IC_REQUEST, IC_SCAN_SHAPE, IC_SCAN_READER,
+ * IC_PROGRAM_BUILDER and IC_PROGRAM are made by one function and given
+ * back to their _free; the caller owns each until then. A connection,
+ * and an executor, is freed before its global; a table, index or record
+ * handle may outlive the connection that made it, a query or scan keeps
+ * what it needs of its records, a request or reader what it needs of
+ * its shapes, and each what it needs of its program. A NULL
  * handle or out pointer gives IC_ERROR_NULL_POINTER; a handle freed, or
  * never made, is undefined behaviour.
  *
@@ -48,7 +49,8 @@ after_includes = """
  * (IC_SCAN_ID) are named by an id in their connection, and a scan's
  * batch by an IC_SCAN_BATCH_ID. An id that names nothing any more,
  * freed, closed or handed back, is refused with an error or passed
- * over, never followed.
+ * over, never followed. A program's values (IC_PROGRAM_VALUE) and
+ * conditions (IC_PROGRAM_COND) are ids in their builder.
  *
  * Rows. A query owns its rows: ic_apid_query_key_row() and
  * ic_apid_query_attr_row() give pointers valid until the query is
@@ -112,6 +114,17 @@ after_includes = """
  * and ic_scan_reader_next_row(), which waits for the executor. A slow
  * reader stalls only its own scan.
  *
+ * Programs. A program runs in the data node on the row it holds: a
+ * scan's filter, or a key operation's condition and the updates it
+ * works out from the row. A builder over a table
+ * (ic_program_builder_create()) makes values and conditions, joined by
+ * ic_program_and(), _or() and _not(), and ic_program_builder_finish()
+ * compiles them into a program, made once and run by any number of
+ * operations; only its inputs, up to 16 integers, change from one to
+ * the next. A query, a scan, an operation shape or a scan shape takes
+ * it (ic_apid_query_set_program() and the like), and each operation or
+ * run sets its inputs.
+ *
  * Panics. A panic inside the library returns IC_ERROR_INTERNAL_PANIC;
  * the connection it went through is unusable from then on, and every
  * call on it but its _free returns the same.
@@ -157,6 +170,10 @@ include = ["IcApidCallback", "IcScanCallback"]
 "IcScanShape" = "IC_SCAN_SHAPE"
 "IcScanReader" = "IC_SCAN_READER"
 "IcTakeoverArgs" = "IC_TAKEOVER_ARGS"
+"IcProgramBuilder" = "IC_PROGRAM_BUILDER"
+"IcProgram" = "IC_PROGRAM"
+"IcProgramValue" = "IC_PROGRAM_VALUE"
+"IcProgramCond" = "IC_PROGRAM_COND"
 
 [enum]
 prefix_with_name = false
