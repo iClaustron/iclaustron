@@ -52,6 +52,14 @@ path = "scan_update.rs"
 name = "scan_executor"
 path = "scan_executor.rs"
 
+[[example]]
+name = "conditional_update"
+path = "conditional_update.rs"
+
+[[example]]
+name = "auto_increment"
+path = "auto_increment.rs"
+
 [dependencies]
 ic_apid.workspace = true
 ic_port.workspace = true

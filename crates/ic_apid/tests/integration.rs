@@ -3648,7 +3648,7 @@ const IC_IT_LOGFILE_GROUP: &str = "ic_it_lg";
 // much, the whole row 72 000 bytes. A MySQL server makes no row over
 // 65 535 bytes, BLOB and TEXT apart; only the inline parts of blob
 // columns would take a row past that, and those are neither read nor
-// written before phase 10. So each part is filled, both variable parts
+// written yet. So each part is filled, both variable parts
 // at once, and the whole row is left to the encoder's unit tests.
 
 /// Bytes of the BINARY column that, after 63 BINARY(255), the key, the

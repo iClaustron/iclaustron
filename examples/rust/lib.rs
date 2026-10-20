@@ -7,9 +7,9 @@
 //! the scan examples read.
 //!
 //! A value in a row is kept as the data nodes keep it, so these helpers
-//! show the format: an integer in four little-endian bytes, a VARCHAR as
-//! its length byte and then its bytes, and a null bit per nullable
-//! field.
+//! show the format: an integer in four or eight little-endian bytes, a
+//! VARCHAR as its length byte and then its bytes, and a null bit per
+//! nullable field.
 
 use std::sync::Arc;
 
@@ -77,6 +77,17 @@ pub fn exit_on(result: Result<(), IcError>) {
     eprintln!("error {}: {}", e.code, e.message());
     std::process::exit(1);
   }
+}
+
+/// A check of a result the example knows to expect: on a mismatch, say
+/// what was wrong and fail, so that [`exit_on`] exits with 1. A run
+/// whose checks all held ends with "all checks passed".
+pub fn check(holds: bool, what: &str) -> Result<(), IcError> {
+  if holds {
+    return Ok(());
+  }
+  eprintln!("check failed: {}", what);
+  Err(IcError::new(err::IC_ERROR_INCONSISTENT_DATA))
 }
 
 /// The values of a row of `ic_ex.t1`; `None` for NULL.
@@ -225,6 +236,23 @@ pub fn put_u32(
   Ok(())
 }
 
+/// Put an unsigned integer into a field of eight bytes, such as an
+/// AUTO_INCREMENT key.
+pub fn put_u64(
+  rec: &Record,
+  row: &mut [u8],
+  field_id: u32,
+  value: u64,
+) -> Result<(), IcError> {
+  let (at, size, position) = place(rec, field_id)?;
+  if size != 8 || at + 8 > row.len() {
+    return Err(IcError::new(err::IC_ERROR_RECORD_LAYOUT));
+  }
+  row[at..at + 8].copy_from_slice(&value.to_le_bytes());
+  not_null(rec, row, position);
+  Ok(())
+}
+
 /// Put a signed integer, or NULL, into a field of four bytes.
 pub fn put_i32(
   rec: &Record,
@@ -281,6 +309,17 @@ pub fn get_u32(rec: &Record, row: &[u8], field_id: u32) -> Option<u32> {
   let mut bytes = [0u8; 4];
   bytes.copy_from_slice(&row[at..at + 4]);
   Some(u32::from_le_bytes(bytes))
+}
+
+/// An unsigned integer from a field of eight bytes; `None` if NULL.
+pub fn get_u64(rec: &Record, row: &[u8], field_id: u32) -> Option<u64> {
+  let (at, size, position) = place(rec, field_id).ok()?;
+  if size != 8 || at + 8 > row.len() || rec.is_null(row, position) {
+    return None;
+  }
+  let mut bytes = [0u8; 8];
+  bytes.copy_from_slice(&row[at..at + 8]);
+  Some(u64::from_le_bytes(bytes))
 }
 
 /// A signed integer from a field of four bytes; `None` if NULL.

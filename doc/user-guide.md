@@ -10,7 +10,7 @@ guide also covers what came after it, on the way to 0.2 (executors and
 scans, section 5) and 0.3 (programs, section 6; AUTO_INCREMENT and
 tables without a primary key, section 7).
 
-The examples in `examples/` are the same nine programs in Rust and in
+The examples in `examples/` are the same eleven programs in Rust and in
 C, and the guide quotes them. The C API's reference is its header,
 `include/iclaustron/ic_apid.h`; the Rust API's is `cargo doc`; the
 design behind both is `doc/rust/04-api-design.md`.
@@ -591,6 +591,10 @@ more than eight values live at once (`IC_ERROR_CONDITION_TOO_COMPLEX`,
 program is for the table its builder was made over, and is refused on
 another's operations (`IC_ERROR_BAD_PROGRAM`).
 
+The `conditional_update` example runs an optimistic update, once
+committed and once refused with 6000, a counter read back after its
+update, and a scan with a filter.
+
 ## 7. AUTO_INCREMENT and tables without a primary key
 
 **Values are asked for, not filled in.** An insert writes the row as
@@ -655,6 +659,10 @@ the table's AUTO_INCREMENT column: an insert takes its value with
 its key row. A scan returns it with each row, so a row a scan finds
 can be read, updated or deleted by it afterwards, or taken over at
 once (section 5).
+
+The `auto_increment` example takes values one at a time and as a
+block, inserts an id of its own, and inserts, scans and deletes rows of
+a table without a primary key.
 
 ## 8. Callbacks
 

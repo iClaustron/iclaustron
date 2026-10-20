@@ -12,7 +12,8 @@
 #   cc -o describe describe.c $(pkg-config --cflags --libs iclaustron)
 
 PROGRAMS = describe key_ops pipeline unique retry \
-  scan range_scan scan_update scan_executor
+  scan range_scan scan_update scan_executor \
+  conditional_update auto_increment
 
 CFLAGS ?= -O2
 CFLAGS += -std=c11 -D_POSIX_C_SOURCE=200809L -Wall -Wextra

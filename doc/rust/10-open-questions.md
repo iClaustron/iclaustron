@@ -20,7 +20,7 @@
 | Interpreter | the full RonDB 26.10 interpreter may be targeted; revised 2026-10-08: a basic interpreter in 0.3, after scans, the rest later |
 | Option parsing | our own table-driven parser |
 | Repository | this repository, branch `RUST-iclaustron`; **all** existing C code moves unchanged to `legacy-c/` and stays there for now as reference; the Rust workspace takes the root; root `LICENSE` becomes MIT |
-| BLOBs | skipped for the moment; tables with BLOB columns can be bound, the BLOB columns themselves cannot be read or written (`IC_ERROR_NOT_SUPPORTED`); 2026-10-08: deletes on such tables are refused too, since the parts would be left behind; BLOBs are phase 10 |
+| BLOBs | skipped for the moment; tables with BLOB columns can be bound, the BLOB columns themselves cannot be read or written (`IC_ERROR_NOT_SUPPORTED`); 2026-10-08: deletes on such tables are refused too, since the parts would be left behind; BLOBs are phase 10; later, after the first version, since 2026-10-20 |
 | Receive threads | count fixed at connect (`GlobalOptions.receive_threads`) |
 | Error texts | progressive: codes and classification first, texts added over time, fallback `"NDB error <code>"` |
 | Interpreter spill | decision deferred; 0.1 compiles register-only programs and returns `IC_ERROR_CONDITION_TOO_COMPLEX` when more than 8 values are live |
@@ -38,7 +38,7 @@
 | Scans | synchronous and asynchronous, and fitting the executor model; the executor is built first in phase 8 |
 | TLS (was Q8) | not in phases 6–9 |
 | Location domains | not in phases 6–9 |
-| C++ header, other language bindings | moved from phase 7 to phase 10 |
+| C++ header, other language bindings | moved from phase 7 to phase 10; later, after the first version, since 2026-10-20 |
 | AUTO_INCREMENT | phase 9, with tables without a primary key, after the interpreter and scans it uses |
 
 ## Decided (2026-10-09)
@@ -78,6 +78,6 @@ you object.
 |---|---|---|
 | Q2 | Does a 26.10 data node accept the legacy `ndbd`/`ndbd passwd` socket auth, or only the `ndbd TLS ...` line? | Test on day one of Phase 3; implement the TLS-capable line first. |
 | Q5 | Which version does the API announce in `get nodeid` and `HEARTBEAT_REQ`: RonDB 26.10.0 exactly, or the running management server's version? | **Recommendation:** announce 26.10.0 (`0x1A0A00`) and our own MySQL version field as the same; confirm the compatibility check on a live node. |
-| Q6 | Which non-C/C++ languages get a smoke-test binding (phase 10 since 2026-10-08, was phase 7)? | Suggest Python (`ctypes`) and Java (Panama) as the two that matter to RonDB users; Go and Node if cheap. |
+| Q6 | Which non-C/C++ languages get a smoke-test binding (later since 2026-10-20; phase 10 from 2026-10-08, phase 7 before)? | Suggest Python (`ctypes`) and Java (Panama) as the two that matter to RonDB users; Go and Node if cheap. |
 | Q11 | The names of signals and blocks. | The first draft is in chapter 06 §6.1; the author reviews it before the rename. |
 | Q12 | Writes through a unique index. | **Recommendation:** refuse an update through an index whose attribute record holds an indexed column, and keep refusing a write through an index (chapter 06 §6.5, item 8). |

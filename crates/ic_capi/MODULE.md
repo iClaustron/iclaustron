@@ -68,4 +68,4 @@ conditions or scans in 0.1.
 ## Open items
 
 - Examples in C and Rust, and the user guide (phase 7).
-- The C++ header and other languages' bindings (phase 10).
+- The C++ header and other languages' bindings (later, chapter 06).

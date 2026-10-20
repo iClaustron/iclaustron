@@ -146,9 +146,9 @@ pub enum ColumnCmp {
   Gt = 4,
   /// The value is greater than or equal to the column.
   Ge = 5,
-  /// The column matches the pattern (phase 10).
+  /// The column matches the pattern (later).
   Like = 6,
-  /// The column does not match the pattern (phase 10).
+  /// The column does not match the pattern (later).
   NotLike = 7,
 }
 

@@ -19,7 +19,9 @@ release is at the end of Phase 7.
 | 7 | C API, documentation, examples in Rust and C, release 0.1 | 3–4 | 30 |
 | 8 | 0.2: the executor, scans (asynchronous, synchronous, through the executor), character sets from the data nodes | 8–9 | 39 |
 | 9 | 0.3: basic interpreter, AUTO_INCREMENT, tables without a primary key | 4–5 | 44 |
-| 10 | Later: TLS, location domains, BLOBs, neighbour-weighted collations, the C++ header, events, DDL, pushdown joins, … | open | |
+| 10 | Scans completed: four receivers per fragment for committed reads, a fanout table's scans pruned, closing a scan at once | 2 | 46 |
+| 11 | Hardening, and what early applications need | open | |
+| Later | After the first version: TLS, location domains, BLOBs, neighbour-weighted collations, the C++ header, events, DDL, pushdown joins, … | open | |
 
 **Replanned 2026-10-08** by the author. 0.1 is now the key operations
 made complete and the C API with its documentation and examples; the
@@ -29,6 +31,12 @@ phases. Later the same day the author moved latin1 from phase 6 to phase
 8, before the ordered range scans that first need it. Phases 0–5, sized at 20 weeks, were built between 2026-09-18 and
 2026-09-25; the sizes of phases 6–9 keep the original unit so that the
 phases compare with each other, not as a calendar.
+
+**Replanned 2026-10-20** by the author, once phase 9 was done: phase 10
+is the three scan items left from phase 8, and then the work stops to
+harden the code and to see whether early applications need anything
+more (phase 11). Much of the rest is not needed in a first version and
+is later, after it. Phase 10's size is an estimate of ours.
 
 ## Phase 0 — Bootstrap and header rewrite (1–2 weeks)
 
@@ -623,7 +631,7 @@ send. The scripts are kept outside the tree (`target/rename/`).
   of a parts table that the client keeps, not the data node. A delete
   by our client would remove the row and leave its parts behind for
   good.
-- Until BLOBs are built (phase 10), a delete by primary or unique key
+- Until BLOBs are built (later), a delete by primary or unique key
   on a table with any blob column is refused before it is sent
   (`IC_ERROR_NOT_SUPPORTED`, with a text of its own saying why). Reads,
   inserts, updates and writes that leave the blob columns out stay
@@ -872,7 +880,7 @@ As built (2026-10-13; the `big_rows` group passes), item by item:
    variable part, about 48 KB; `big_disk` both variable parts, 65 486
    bytes, next to the 65 535 a MySQL server allows. A row past that,
    up to 72 000 bytes, needs the inline parts of blob columns, which
-   iClaustron neither reads nor writes before phase 10; the encoder's
+   iClaustron neither reads nor writes yet; the encoder's
    unit tests cover the largest row. Tests: each table by primary and
    unique key, shrunk and grown back by an update; a byte more in any
    part refused by the data nodes; rows MySQL wrote read whole; trains
@@ -1026,8 +1034,9 @@ names` is clean, and the dissector decodes every signal phase 6 sends.
   38 and bit 12 of the node id in bit 39, as the reference does
   (chapter 05 §17.12); ours keeps 12 bits of each, so two threads would
   make the same ids (found 2026-10-08).
-- Moved to phase 10: the C++ header and the smoke bindings in other
-  languages (Q6), which were in this phase before.
+- Moved to phase 10, and later since 2026-10-20: the C++ header and the
+  smoke bindings in other languages (Q6), which were in this phase
+  before.
 - Exit: the 0.1 success criteria of chapter 01, as revised 2026-10-08.
 
 As built, the header and `ic_capi` (2026-10-14; `cargo xtask check`
@@ -1655,7 +1664,7 @@ gives a temporary error, and the scan started again completes.
   error, with 626 when it ignores errors.
 - Registers allocated over the eight there are, and
   `IC_ERROR_CONDITION_TOO_COMPLEX` beyond them, as decided.
-- Later (phase 10): LIKE, regular expressions, the memory regions for
+- Later: LIKE, regular expressions, the memory regions for
   spilling, and the rest of the builder in `ic_apid.h`.
 - **9.1a, the encoding, built 2026-10-20** (`ic_signals::interp`):
   the basic instructions as `IC_INSN_*`; a `ProgramWriter` that hands
@@ -1860,22 +1869,73 @@ From reading (chapter 05 §16.5):
   switching between the two sides 34 times in id order, and after
   MySQL's explicit value 1 488 320, `ic_trans`'s keys starting at
   1 488 321. With 9.1, phase 9 is done.
+- Examples, written 2026-10-20 in Rust and C: `conditional_update`, an
+  optimistic update committed and then refused with 6000, a counter
+  read back after its update, and a filtered scan; `auto_increment`,
+  values one at a time and as a block, an id of the application's own,
+  and a table without a primary key inserted into, scanned and deleted
+  from by its hidden key (`setup.sql` makes `ic_ex.t2` and `ic_ex.t3`
+  for it).
 
-## Phase 10 — Later
+## Phase 10 — Scans completed (2 weeks)
 
-TLS to the data nodes and the management server; choosing nodes by
-location domain; BLOB, TEXT and JSON through the parts table, and with
-them deletes on such tables; the three collations that weigh a
-character by its neighbours (latin2_czech_cs, cp1250_czech_cs,
-tis620_thai_ci), whose keys are placed in turn and whose ordered runs
-are refused (utf8mb4's are hashed and merged since phase 8, §8.6); the
-C++ header and bindings for other languages; events; DDL
-(a client creating a table with an AUTO_INCREMENT column writes its
-counter row); the full interpreter; pushdown joins; aggregation
-pushdown; ring buffer tables; TTL options; rate-limit and user-id flags;
-the deferred unique check; scans with four receivers per fragment for
-committed reads, which suit an executor; a fanout table's scans pruned
-to its partitions; closing a scan at once, with batches on their way.
+The three scan items left from phase 8 (the author, 2026-10-20). How
+each is designed, and the exit, are agreed with the author before it is
+built, as in the phases before.
+
+- **Four receivers per fragment for committed reads**, the continuous
+  scan (`SCAN_REQ` flag bit 2, chapter 05 §7.2): a committed-read scan
+  goes on in the data node after it has reported rows to the API, which
+  raises the scan rate and suits an executor's readers, whose
+  `read_ahead` of 8.4 is our stand-in for it. Committed reads only
+  (2202 otherwise), the receivers a multiple of four (2201). How a
+  fragment's four receivers are used is the question left for this
+  phase (chapter 05 §7.3, question 3).
+- **A fanout table's scans pruned to its partitions**: on a table with
+  a partition hash fanout a scan by distribution key covers every
+  partition today, which is correct (8.3); pruned, it names the base
+  hash and the fanout's number of partitions (word 5's bit 31 and word
+  11, chapter 05 §7.2). It needs the fanout hash (chapter 05 §6.3,
+  step 3), refused so far, whose table properties (166 to 168) are
+  parsed already. A wrong request is refused with 2203, which also means a
+  read rate overload (chapter 05 §7.3, for the author).
+- **Closing a scan at once**, with batches on their way: stop sent
+  without first waiting for every batch asked for, as the coordinator
+  allows; phase 8 waits, as the reference does (chapter 05 §7.2,
+  §7.3 question 9).
+
+## Phase 11 — Hardening, and what early applications need (open)
+
+After phase 10 the work stops (the author, 2026-10-20): to harden the
+code, and to find out, with early applications, whether anything more
+is needed for a first version. What it holds is gathered as it is
+found. Known now, to weigh there:
+
+- scans whose coordinator stays up but never answers wait for the run's
+  own `timeout_ms` or the coordinator's timers (8.4);
+- error 2203's two meanings, the fanout scan refusal and read rate
+  overload, which we class as an overload, temporary (chapter 05 §7.3,
+  for the author);
+- a Rust stream over the scan reader (8.4);
+- chapter 10's open questions, most of them settled in fact (Q2, Q5,
+  Q11, Q12);
+- the RonDB tree's path written into `doc/dev-cluster.md` and
+  `examples/README.md`, where the clusters run from several trees.
+
+## Later — after the first version
+
+Not needed in a first version (the author, 2026-10-20): TLS to the data
+nodes and the management server; choosing nodes by location domain;
+BLOB, TEXT and JSON through the parts table, and with them deletes on
+such tables; the three collations that weigh a character by its
+neighbours (latin2_czech_cs, cp1250_czech_cs, tis620_thai_ci), whose
+keys are placed in turn and whose ordered runs are refused (utf8mb4's
+are hashed and merged since phase 8, §8.6); the C++ header and bindings
+for other languages; events; DDL (a client creating a table with an
+AUTO_INCREMENT column writes its counter row); the full interpreter;
+pushdown joins; aggregation pushdown; ring buffer tables; TTL options;
+rate-limit and user-id flags; the deferred unique check. Any of them
+may move into phase 11 if an early application needs it.
 
 ## Working method per module (all phases)
 
@@ -1909,4 +1969,4 @@ to its partitions; closing a scan at once, with batches on their way.
 | Interpreter encoding is large | phase 9 starts by writing chapter 05 §9; basic first; register-only programs, spill strategy decided later |
 | Performance below target with dedicated receive threads | benchmark at Phase 5 and 7; tune receive thread count, batching, page sizes; the model itself is fixed |
 | Clean-room slips | review checklist item; `MODULE.md` cites, never quotes; RonDB is cited only in chapter 05, by file:line |
-| Scope creep into RonDB-only features | Phase 10 by decision |
+| Scope creep into RonDB-only features | Later, by decision (replanned 2026-10-20) |

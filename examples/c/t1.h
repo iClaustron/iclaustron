@@ -53,6 +53,17 @@ static inline void ex_fail(const char *what, int32_t code)
   exit(1);
 }
 
+/* A check of a result the example knows to expect: on a mismatch, say
+ * what was wrong and stop with 1. A run whose checks all held ends with
+ * "all checks passed". */
+static inline void ex_check(int holds, const char *what)
+{
+  if (!holds) {
+    fprintf(stderr, "check failed: %s\n", what);
+    exit(1);
+  }
+}
+
 /* Call, and stop if the call fails. */
 #define EX_CHECK(call)                \
   do {                                \

@@ -1324,7 +1324,7 @@ NTS = `src/ndbapi/NdbTransactionScan.cpp`, IF = `src/ndbapi/Ndbif.cpp`.
   beside them). Bits 0–7 are RonDB's extensions, all 0 from us in phase
   8 (the author, 2026-10-15):
   - 0: ring buffer metadata. 3 and 4: TTL (ignore it; expired rows
-    only). 5: the user id for rate limits, with words 13–14. All phase 10.
+    only). 5: the user id for rate limits, with words 13–14. All later.
   - 1 and 7: join aggregation and aggregation, for pushed-down joins,
     which we do not support.
   - 2: continuous scan. Section 0 holds four receivers for each
@@ -2545,7 +2545,7 @@ our answers with MySQL's. An assignment reads the column into a
 register, sets or adds, and writes it back. More than eight live
 values is
 `IC_ERROR_CONDITION_TOO_COMPLEX` in 0.3, spilling to memory comes
-later, and LIKE (comparison 6) with phase 10. Regular expressions have
+later, and LIKE (comparison 6) too. Regular expressions have
 no instruction and are evaluated in the API after the row comes, a
 documented limitation.
 
@@ -2658,7 +2658,7 @@ costs the fixed part a word. A MySQL server allows a row of at most
 NDB handler does not raise), so the largest row it makes is about
 65 KB: in memory alone about 48 KB. Only the inline parts of blob
 columns can take a row made through MySQL past that; we neither read
-nor write blob columns before phase 10.
+nor write blob columns yet.
 
 **The limits from 2026-10** (the author, 2026-10-12, with the mend
 below): the fixed-size part 16 280 bytes, as before; the variable-size

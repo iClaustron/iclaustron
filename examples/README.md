@@ -1,6 +1,6 @@
 # Examples
 
-The same nine programs in Rust (`rust/`) and in C (`c/`), each against
+The same eleven programs in Rust (`rust/`) and in C (`c/`), each against
 a running cluster, the development cluster of `doc/dev-cluster.md` for
 instance:
 
@@ -15,14 +15,22 @@ instance:
 | `range_scan` | rows by ranges of the ordered index on val, in the index's order, from either end, and several numbered ranges at once |
 | `scan_update` | rows locked by an exclusive scan on a transaction and updated through it, as `UPDATE ... WHERE` does, with one commit |
 | `scan_executor` | four threads with no connection of their own, each reading a range in order through a reader of an executor's scan |
+| `conditional_update` | programs run in the data nodes: an update only while val is what was read, a counter read back after its update, a scan's filter |
+| `auto_increment` | AUTO_INCREMENT values asked for and put in the row: one at a time, a block, an id of the program's own; a table without a primary key, its hidden key, a scan and deletes by it |
+
+`conditional_update` and `auto_increment` check every result they know
+to expect and end with "all checks passed"; a check that fails says
+what was wrong and exits with 1.
 
 Every program takes the connectstring as its first argument
 (`localhost:1186` if none) and works on the table `ic_ex.t1`, which
 `setup.sql` makes, with a unique index on code and an ordered index on
-val. The scan programs first write rows of their own, ids 200 to 299
-with val the id negated, which no other program writes, so that a range
-of val finds them alone; a table made by an earlier `setup.sql`, without
-the index on val, is made again by running it again:
+val; `auto_increment` works on `ic_ex.t2` and `ic_ex.t3`, which it
+makes too. The scan programs first write rows of their own, ids 200 to
+299 with val the id negated, which no other program writes, so that a
+range of val finds them alone, and `conditional_update` ids 300 to
+309. Tables made by an earlier `setup.sql`, without the index on val or
+without t2 and t3, are made again by running it again:
 
 ```sh
 BIN=/Users/mikael/mysql_trees/rondb_2604_main/debug_build/bin
@@ -46,6 +54,8 @@ cargo run -p ic_examples --example scan -- localhost:1186
 cargo run -p ic_examples --example range_scan -- localhost:1186
 cargo run -p ic_examples --example scan_update -- localhost:1186
 cargo run -p ic_examples --example scan_executor -- localhost:1186
+cargo run -p ic_examples --example conditional_update -- localhost:1186
+cargo run -p ic_examples --example auto_increment -- localhost:1186
 ```
 
 ## C
