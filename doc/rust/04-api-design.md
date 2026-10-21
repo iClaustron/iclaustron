@@ -61,13 +61,27 @@ connections (joinable transactions dropped, Q4, applied 2026-10-14).
 `conn.table_bind(db, table)` gives an `Arc<TableDef>`; `index_bind(db,
 index, table)` an `Arc<IndexDef>` (a MySQL server names a unique index
 `name$unique`). The descriptions are cached for every connection of the
-global. A table or index found out of date by a data node (241, 284) is
-let go of, so the next bind fetches it again; `table_unbind` lets go of
-it at once. `TableDef` gives the table's name, id, version, fields by
+global. A table or index found out of date by a data node, any error
+NDB classes as a schema error (241, 283, 284, 709, 710, 723; as MySQL's
+handler does, the author, 2026-10-21), is let go of, so the next bind
+fetches it again; `table_unbind` lets go of
+it at once. The error comes in a refusal or, for a key operation, in the
+report that aborts its transaction, before any query's callback runs;
+the report does not name the operation, so every table, or index gone
+through, of the transaction's operations still waiting is let go of,
+one that was not out of date only fetched again at its next bind.
+`TableDef` gives the table's name, id, version, fields by
 id and by name (`ColumnProps`: type, length, character set, nullable,
 key, storage), whether it has blob columns, and its hash map;
 `IndexDef` its own table (`as_table`), its base table and whether it is
-unique; an index that is not online is refused at bind (7154).
+unique; an index that is not online is refused at bind (7154). A
+bind fetching a description polls the connection while it waits, and
+a callback that poll runs may bind too; but a bind there of a name
+being fetched, by this thread's interrupted bind or by another thread,
+is refused with `IC_ERROR_NOT_SUPPORTED`, since it would wait for the
+fetch it interrupted, or for a thread that may be waiting for this one
+(review, 2026-10-21; refused rather than fetched again inside, the
+author, 2026-10-21). Any other bind there goes on.
 
 ### Records
 
@@ -199,7 +213,20 @@ the poll (chapter 02).
 `key_op::read_committed`, `read_unique_committed` and `write_key` do one
 query as its own transaction, wait for it and give the row back in the
 application's buffer: the synchronous style, with a connection per
-thread.
+thread. Whatever happens, a helper leaves no transaction or record of
+its own behind (review, 2026-10-21): `read_unique_committed`, which
+runs on the transaction API, rolls back a transaction whose read is
+refused before anything goes, as a NULL key is, which ends it at
+once, and waits until the reply timeout has ended one whose
+coordinator does not answer (4012; at least two minutes unless
+`GlobalOptions::reply_wait_ms` says less), so that it can always
+close it, as the AUTO_INCREMENT counter's transactions are waited for.
+So long a wait is as the reference's: the NDB API gives up after 6
+minutes (the author, 2026-10-21).
+`ApidConnection::transactions_open` counts the transactions started
+and not yet closed. `read_committed` and `write_key` give up after
+`IC_KEY_OP_WAIT_MS`, and free the record at the coordinator as the
+reply timeout does.
 
 ### Executors (phase 8.1)
 
@@ -1252,7 +1279,9 @@ the query completes, the trampoline calls the C function with the
 connection's handle, the query and the `user_ref`. Inside, the C
 callback may call any `ic_apid_conn_*` and `ic_apid_query_*` function
 on that connection except a poll or flush, which does nothing, and must
-not free the connection.
+not free the connection. A bind there of a table or index whose
+description is being fetched, when the callback runs inside a bind of
+its own thread, is refused with `IC_ERROR_NOT_SUPPORTED`.
 
 ### Example in C, asynchronous
 

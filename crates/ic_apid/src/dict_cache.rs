@@ -16,6 +16,16 @@
 //! Threads that ask for it meanwhile wait for that fetch rather than
 //! sending one of their own, as the C does.
 //!
+//! **A thread inside a fetch never waits for one.** A fetch polls its
+//! connection while it waits for the dictionary, and the poll may run a
+//! query's or a scan's callback, which may bind. A bind from there of the
+//! name being fetched would wait for the fetch it interrupted, and one of
+//! a name another thread fetches could wait on a thread waiting in turn
+//! for this one: either for ever. So a thread holding a mark that comes
+//! upon another mark is refused with `IC_ERROR_NOT_SUPPORTED`, as other
+//! waits inside a callback are; any other bind there goes on, its own
+//! fetch waiting for its own reply alone.
+//!
 //! **A connection keeps what it has bound**, so binding the same table
 //! again takes no lock: it only checks that the object is still valid.
 //!
@@ -61,6 +71,7 @@ use std::collections::BTreeMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::thread::ThreadId;
 
 use ic_port::debug::IC_NDB_MESSAGE_LEVEL;
 use ic_port::err;
@@ -363,9 +374,10 @@ impl IndexDef {
 
 /// What the cache holds under one internal name.
 enum Entry {
-  /// One thread is asking the dictionary, and the others wait. Holds
-  /// the table id and version of every notice that arrived meanwhile.
-  Fetching(Vec<(u32, u32)>),
+  /// One thread, the one named, is asking the dictionary, and the others
+  /// wait. Holds the table id and version of every notice that arrived
+  /// meanwhile.
+  Fetching(ThreadId, Vec<(u32, u32)>),
   Table(Arc<TableDef>),
   Index(Arc<IndexDef>),
 }
@@ -374,7 +386,7 @@ impl Entry {
   /// The id and version a notice would name, if there is an object.
   fn id_and_version(&self) -> Option<(u32, u32)> {
     match self {
-      Entry::Fetching(_) => None,
+      Entry::Fetching(..) => None,
       Entry::Table(def) => Some((def.table_id(), def.table_version())),
       Entry::Index(def) => Some((def.index_id(), def.index_version())),
     }
@@ -382,7 +394,7 @@ impl Entry {
 
   fn invalidate(&self) {
     match self {
-      Entry::Fetching(_) => {}
+      Entry::Fetching(..) => {}
       Entry::Table(def) => def.invalidate(),
       Entry::Index(def) => def.invalidate(),
     }
@@ -409,6 +421,9 @@ enum Lookup {
   /// Nothing there. The name is now marked as being fetched by this
   /// thread, which must end with `fetched` or `fetch_failed`.
   Fetch,
+  /// The name is being fetched, and this thread, inside a fetch of its
+  /// own, may not wait for that: the caller refuses the bind.
+  Refused,
 }
 
 /// The cache every thread shares. One per process, in the shared state.
@@ -425,21 +440,27 @@ impl DictCache {
     }
   }
 
-  /// Look a name up, waiting while another thread fetches it.
+  /// Look a name up, waiting while another thread fetches it, unless
+  /// this thread is inside a fetch of its own: it then never waits, as
+  /// what it would wait for may be waiting for it (module notes).
   fn lookup(&self, name: &str) -> Lookup {
+    let me = std::thread::current().id();
     let mut state = self.state.lock();
     loop {
       match state.entries.get(name) {
         None => break,
         Some(Entry::Table(def)) => return Lookup::Table(Arc::clone(def)),
         Some(Entry::Index(def)) => return Lookup::Index(Arc::clone(def)),
-        Some(Entry::Fetching(_)) => {}
+        Some(Entry::Fetching(..)) => {}
+      }
+      if fetches(&state, me) {
+        return Lookup::Refused;
       }
       state = self.cond.wait(state);
     }
     state
       .entries
-      .insert(name.to_string(), Entry::Fetching(Vec::new()));
+      .insert(name.to_string(), Entry::Fetching(me, Vec::new()));
     Lookup::Fetch
   }
 
@@ -449,7 +470,7 @@ impl DictCache {
   fn fetched(&self, name: &str, entry: Entry) -> bool {
     let mut state = self.state.lock();
     let mut out_of_date = false;
-    if let Some(Entry::Fetching(noticed)) = state.entries.get(name) {
+    if let Some(Entry::Fetching(_, noticed)) = state.entries.get(name) {
       if let Some(id_version) = entry.id_and_version() {
         out_of_date = noticed.contains(&id_version);
       }
@@ -468,7 +489,7 @@ impl DictCache {
   /// then fetches for itself.
   fn fetch_failed(&self, name: &str) {
     let mut state = self.state.lock();
-    if let Some(Entry::Fetching(_)) = state.entries.get(name) {
+    if let Some(Entry::Fetching(..)) = state.entries.get(name) {
       state.entries.remove(name);
     }
     drop(state);
@@ -545,7 +566,7 @@ impl DictCache {
     let id_version = (table_id, table_version);
     let named = match state.entries.get_mut(name) {
       None => false,
-      Some(Entry::Fetching(noticed)) => {
+      Some(Entry::Fetching(_, noticed)) => {
         if !noticed.contains(&id_version) {
           noticed.push(id_version);
         }
@@ -618,6 +639,19 @@ impl DictCache {
   }
 }
 
+/// True if `thread` has a name marked as being fetched: it is inside a
+/// fetch, perhaps in a callback that fetch's poll ran.
+fn fetches(state: &CacheState, thread: ThreadId) -> bool {
+  for entry in state.entries.values() {
+    if let Entry::Fetching(owner, _) = entry {
+      if *owner == thread {
+        return true;
+      }
+    }
+  }
+  false
+}
+
 /// Let go of the indexes bound for one version of a table, so that the
 /// cache does not keep that version alive through them. Returns how
 /// many there were.
@@ -673,6 +707,7 @@ pub(crate) fn bind_table(
       Lookup::Index(_) => {
         return Err(IcError::new(err::IC_ERROR_NO_SUCH_TABLE))
       }
+      Lookup::Refused => return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED)),
       Lookup::Fetch => {}
     }
     let def = match fetch_table(cache, conn, name) {
@@ -883,6 +918,7 @@ fn bind_index_named(
       Lookup::Table(_) => {
         return Err(IcError::new(err::IC_ERROR_NO_SUCH_TABLE))
       }
+      Lookup::Refused => return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED)),
       Lookup::Fetch => {
         let def = match fetch_index(cache, conn, name, table) {
           Ok(def) => Arc::new(def),
@@ -1052,6 +1088,70 @@ mod tests {
     assert!(matches!(cache.lookup("db/def/t1"), Lookup::Fetch));
     cache.fetch_failed("db/def/t1");
     assert!(matches!(cache.lookup("db/def/t1"), Lookup::Fetch));
+  }
+
+  #[test]
+  fn a_bind_inside_a_fetch_of_its_name_is_refused_not_waited_for() {
+    // A callback run by the poll of this thread's fetch binds the name
+    // being fetched: it would wait for its own thread for ever.
+    let cache = DictCache::new();
+    assert!(matches!(cache.lookup("db/def/t1"), Lookup::Fetch));
+    assert!(matches!(cache.lookup("db/def/t1"), Lookup::Refused));
+    // Another name it may fetch, inside the first fetch.
+    assert!(matches!(cache.lookup("db/def/t2"), Lookup::Fetch));
+    cache.fetch_failed("db/def/t2");
+    // Once its fetch is done, the thread waits as any other does.
+    let def = Arc::new(table("db/def/t1", 13, 1));
+    assert!(cache.fetched("db/def/t1", Entry::Table(Arc::clone(&def))));
+    match cache.lookup("db/def/t1") {
+      Lookup::Table(found) => assert!(Arc::ptr_eq(&found, &def)),
+      _ => panic!("expected the table"),
+    }
+  }
+
+  #[test]
+  fn a_thread_inside_a_fetch_does_not_wait_for_another_threads() {
+    // This thread fetches t1 and another t2; were each to wait for the
+    // other's from a callback inside its own, neither would end.
+    let cache = DictCache::new();
+    let (marked, other_marked) = std::sync::mpsc::channel::<()>();
+    let (asked, ask_done) = std::sync::mpsc::channel::<()>();
+    assert!(matches!(cache.lookup("db/def/t1"), Lookup::Fetch));
+    std::thread::scope(|scope| {
+      let cache = &cache;
+      let other = scope.spawn(move || {
+        assert!(matches!(cache.lookup("db/def/t2"), Lookup::Fetch));
+        marked.send(()).expect("told");
+        ask_done.recv().expect("told back");
+        let def = Arc::new(table("db/def/t2", 14, 1));
+        assert!(cache.fetched("db/def/t2", Entry::Table(def)));
+      });
+      other_marked.recv().expect("the other thread's mark");
+      assert!(matches!(cache.lookup("db/def/t2"), Lookup::Refused));
+      asked.send(()).expect("told");
+      other.join().expect("the other thread");
+    });
+    cache.fetch_failed("db/def/t1");
+    // Outside a fetch of its own, what the other thread fetched is there.
+    assert!(matches!(cache.lookup("db/def/t2"), Lookup::Table(_)));
+  }
+
+  #[test]
+  fn a_thread_outside_a_fetch_waits_for_another_threads() {
+    let cache = DictCache::new();
+    assert!(matches!(cache.lookup("db/def/t1"), Lookup::Fetch));
+    let def = Arc::new(table("db/def/t1", 13, 1));
+    std::thread::scope(|scope| {
+      let cache = &cache;
+      let waiter = scope.spawn(move || match cache.lookup("db/def/t1") {
+        Lookup::Table(found) => found,
+        _ => panic!("expected the table, after waiting"),
+      });
+      ic_port::time::microsleep(20_000);
+      assert!(cache.fetched("db/def/t1", Entry::Table(Arc::clone(&def))));
+      let found = waiter.join().expect("the waiting thread");
+      assert!(Arc::ptr_eq(&found, &def), "the one object, shared");
+    });
   }
 
   #[test]

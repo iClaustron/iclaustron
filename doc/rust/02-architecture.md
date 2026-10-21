@@ -395,6 +395,15 @@ As built (`ic_apid::apid_conn`):
   every `poll`, a request whose node's link is down, or is a newer link
   than the one it went over, is completed with the node's error. Its
   reply cannot come, and waiting would only run into the timeout.
+- A request that names a coordinator record goes over the link the
+  record was allocated on, and its expectation records that link's
+  generation, not the one up when it is sent (`send_on`,
+  `expect_several_on`, `call_on`): a record lives no longer than its
+  link, so once that link is replaced the request is refused with
+  `IC_ERROR_LINK_LOST` rather than sent over the new one, where the
+  pointer names nothing of ours. A transaction's and a scan's requests
+  were sent so already; the synchronous key operations and the
+  allocates of records now are too (review, 2026-10-21).
 - `call` sends and waits in 100 ms slices, so a lost link is noticed
   within one slice. A request that times out is forgotten; its reply,
   if it comes later, is counted as unexpected.
@@ -452,7 +461,12 @@ pointer the transaction was allocated on; the reading node's, about the
 operation, through the query's id in the object map, both checked
 against the transaction id. `poll` also fails every transaction whose
 coordinator's link has gone since it began, with the link's error; the
-takeover replies of a failed coordinator are still to come.
+takeover replies of a failed coordinator are still to come. A committed
+read whose reading node is lost before its row comes fails with 4119:
+looked for over every transaction when a link or node changes, and,
+for a confirmation that comes only after the loss was looked for, for
+that one read as the confirmation comes. Both run once the poll's
+replies are in, so that a row that has come wins.
 
 ## Data flow for a scan (phase 8.3; planned 2026-10-16)
 

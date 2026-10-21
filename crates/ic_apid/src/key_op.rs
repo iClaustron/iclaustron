@@ -60,7 +60,6 @@ use crate::node_connect::ReceivedSignal;
 use crate::query::QueryId;
 use crate::query::ReadKeyArgs;
 use crate::query::ReadKind;
-use crate::query::TransId;
 use crate::record::Record;
 use crate::row_codec;
 
@@ -193,7 +192,12 @@ pub fn read_unique_committed(
 }
 
 /// The transaction of one committed read, waited for, at a node that
-/// holds the index's row for the key.
+/// holds the index's row for the key. The transaction is always ended
+/// and closed, so that neither it nor its coordinator record is left
+/// behind: one whose read is refused before anything goes, as a NULL
+/// key is, is rolled back, which ends it at once, and the wait lasts
+/// until the reply timeout has ended one whose coordinator does not
+/// answer, its read failing with 4012.
 fn unique_read(
   conn: &mut ApidConnection,
   index: &IndexDef,
@@ -211,15 +215,21 @@ fn unique_read(
     kind: ReadKind::Committed,
     ..ReadKeyArgs::default()
   };
-  let result = match conn.read_key(qid, tid, &args) {
-    Ok(()) => match conn.commit_transaction(tid) {
-      Ok(()) => wait_for_transaction(conn, tid),
-      Err(e) => Err(e),
-    },
-    Err(e) => Err(e),
+  let asked = match conn.read_key(qid, tid, &args) {
+    Ok(()) => conn.commit_transaction(tid),
+    Err(e) => {
+      let _ = conn.rollback_transaction(tid);
+      Err(e)
+    }
   };
-  let _ = conn.close_transaction(tid);
-  result?;
+  let ended = conn.wait_for_end(tid);
+  if ended.is_some() {
+    let _ = conn.close_transaction(tid);
+  }
+  asked?;
+  if ended.is_none() {
+    return Err(IcError::new(err::IC_ERROR_TIMEOUT));
+  }
   // Read only our result. The caller's free_query removes its completion
   // entry, leaving unrelated completions in their original order.
   let query = match conn.query(qid) {
@@ -233,27 +243,6 @@ fn unique_read(
       let len = query.attr_row().len();
       attr_row[..len].copy_from_slice(query.attr_row());
       Ok(true)
-    }
-  }
-}
-
-/// Send, then poll until the transaction is done or the wait runs out.
-fn wait_for_transaction(
-  conn: &mut ApidConnection,
-  tid: TransId,
-) -> Result<(), IcError> {
-  let start = ic_port::time::gethrtime();
-  loop {
-    conn.flush(IC_KEY_OP_SLICE_MS, true)?;
-    if let Some(trans) = conn.transaction(tid) {
-      if trans.is_done() {
-        return Ok(());
-      }
-    }
-    let waited =
-      ic_port::time::millis_elapsed(start, ic_port::time::gethrtime());
-    if waited >= IC_KEY_OP_WAIT_MS as u64 {
-      return Err(IcError::new(err::IC_ERROR_TIMEOUT));
     }
   }
 }
@@ -383,13 +372,22 @@ fn run_op(
     trans_id_lo: trans_id as u32,
     trans_id_hi: (trans_id >> 32) as u32,
   };
+  // The request names the record, which lives no longer than the link
+  // it was allocated over: it goes over that link or not at all, and the
+  // wait for its replies ends with that link.
   let op_replies = [numbers::IC_SIG_KEY_OP_REF, numbers::IC_SIG_ROW_DATA_REP];
-  conn.expect_several(op_id, rec.node_id, &op_replies, true)?;
+  conn.expect_several_on(op_id, rec.node_id, rec.generation, &op_replies, true);
   let trans_replies = [
     numbers::IC_SIG_KEY_OP_CONF,
     numbers::IC_SIG_TRANS_ABORTED_REP,
   ];
-  conn.expect_several(rec.api_ptr, rec.node_id, &trans_replies, false)?;
+  conn.expect_several_on(
+    rec.api_ptr,
+    rec.node_id,
+    rec.generation,
+    &trans_replies,
+    false,
+  );
   let header = SignalHeader::new(
     numbers::IC_SIG_KEY_OP_REQ,
     conn.block_number(),
@@ -400,7 +398,14 @@ fn run_op(
   if attr_info.is_empty() {
     sections = &both[..1];
   }
-  let result = match conn.send(rec.node_id, &header, &req.encode(), sections) {
+  let sent = conn.send_on(
+    rec.node_id,
+    rec.generation,
+    &header,
+    &req.encode(),
+    sections,
+  );
+  let result = match sent {
     Ok(()) => wait_for_outcome(conn, &rec, op_id, &req),
     Err(e) => Err(e),
   };
@@ -412,8 +417,12 @@ fn run_op(
       Ok(outcome)
     }
     Err(e) => {
-      // The record's transaction may still be open at the coordinator.
+      // The record's transaction may still be open at the coordinator:
+      // the record is used no more, and freed there, which makes the
+      // coordinator let go of whatever it still holds of it, as the
+      // reply timeout does.
       conn.lose_coord_record(&rec);
+      conn.send_coord_free(&rec);
       Err(e)
     }
   }

@@ -2098,7 +2098,44 @@ found. Known now, to weigh there:
 - chapter 10's open questions, most of them settled in fact (Q2, Q5,
   Q11, Q12);
 - the RonDB tree's path written into `doc/dev-cluster.md` and
-  `examples/README.md`, where the clusters run from several trees.
+  `examples/README.md`, where the clusters run from several trees;
+- a bind inside a callback fails for a table whose description comes in
+  more than one fragment, as the wait there holds the other fragments
+  back (`poll_for_reply`; found in the review of 2026-10-21).
+
+### 11.1 The author's first review (2026-10-21)
+
+Five comments, each checked against the code and fixed (all five held):
+
+1. A synchronous key operation sent its request, which names a
+   coordinator record, over whatever link was current, not the
+   record's: now sent, and its replies waited for, on the record's own
+   link (`send_on`, `expect_several_on`), and so are the requests that
+   allocate records, which had the same window.
+2. A bind from a callback run inside a dictionary fetch could wait for
+   ever: for the fetch it interrupted, or, across two threads, for one
+   waiting in turn for it. A thread inside a fetch of its own now never
+   waits for another's: the bind is refused with
+   `IC_ERROR_NOT_SUPPORTED`, which the author chose over fetching the
+   description again inside (2026-10-21).
+3. A synchronous unique read refused before anything was sent, as a
+   NULL key is, left its transaction and coordinator record open for
+   good, and one that timed out left its query and transaction behind.
+   Every such helper now rolls back what it opened, waits for it to end
+   (up to the reply timeout and a second, where it gave up after 10 s;
+   as long a wait is as the reference's, whose NDB API gives up after 6
+   minutes: the author, 2026-10-21) and closes it; the key operation
+   helpers free a record whose transaction may still be open.
+4. A committed read whose confirmation named a reading node already
+   lost was not looked at again until the next link change, and waited
+   for the reply timeout: it now fails with 4119 at that poll.
+5. A table or index found changed or gone (241, 284) in a
+   transaction's abort report, which is how the coordinator usually
+   reports them for key operations, was not let go of: it is now, for
+   each query still waiting, before their callbacks run. On every path,
+   a refusal, a scan's and the report, every code NDB classes as a
+   schema error now lets go, 283, a drop in progress, among them, as
+   MySQL's handler does (the author, 2026-10-21).
 
 ## Later — after the first version
 

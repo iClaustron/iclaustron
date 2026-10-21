@@ -71,8 +71,12 @@
 //! What is not here yet: placing a unique query by the index's own hash
 //! map, so it goes to a node holding the index.
 
+use std::sync::Arc;
+
 use ic_port::debug::IC_NDB_MESSAGE_LEVEL;
 use ic_port::err;
+use ic_port::ndb_err;
+use ic_port::ndb_err::ErrorClass;
 use ic_port::IcError;
 use ic_signals::header::SignalHeader;
 use ic_signals::interp;
@@ -131,6 +135,15 @@ pub const IC_NDB_ERROR_SCHEMA_CHANGED: i32 = 241;
 /// NDB's error for an operation on a table or index the coordinator
 /// does not know, such as one dropped since it was bound.
 pub const IC_NDB_ERROR_UNKNOWN_TABLE: i32 = 284;
+
+/// True if `code` says a table or index is not what it was bound as:
+/// any error NDB classes as a schema error, 241, 283, 284, 709, 710 and
+/// 723 among those known here. A refusal, a scan's or an abort report
+/// with one lets the table or index go, so that the next bind fetches
+/// it afresh, as MySQL's own handler does (the author, 2026-10-21).
+pub(crate) fn schema_error(code: i32) -> bool {
+  ndb_err::class_of(code) == ErrorClass::Schema
+}
 /// NDB's error for a transaction whose replies never came while its
 /// link stayed up: the data node did not answer in time, and the
 /// outcome is unknown (chapter 06 §6.3).
@@ -301,6 +314,53 @@ fn holds_indexed_column(index: &IndexDef, rec: &Record) -> bool {
     }
   }
   false
+}
+
+/// True if a dirty read sent at `sent_at` can no longer have its row
+/// from its reading node: the node has failed, is not connected
+/// (`connected_since` 0), or has connected again since the read was
+/// sent, which its row would not have outlived.
+fn reader_gone(failed: bool, connected_since: u64, sent_at: u64) -> bool {
+  failed || connected_since == 0 || connected_since >= sent_at
+}
+
+/// A table, or the index a query goes through, to be bound afresh.
+enum Stale {
+  Table(Arc<TableDef>),
+  Index(Arc<IndexDef>),
+}
+
+/// What a transaction the coordinator ended with `code` leaves to be
+/// bound afresh. With a schema error (`schema_error`), such as 241, a
+/// table or index changed since it was bound, the abort report does not
+/// say which operation it was, only that one still waiting was: so each
+/// of `waiting`, once, its index if it goes through one, else its table,
+/// as a refusal is read. One not out of date is only fetched again at its
+/// next bind; those holding it go on using it. Nothing for any other
+/// code.
+fn stale_after(code: i32, waiting: &[&ApidQuery]) -> Vec<Stale> {
+  let mut stale: Vec<Stale> = Vec::new();
+  if !schema_error(code) {
+    return stale;
+  }
+  for query in waiting {
+    let one = match query.index() {
+      Some(index) => Stale::Index(Arc::clone(index)),
+      None => Stale::Table(Arc::clone(query.table())),
+    };
+    let mut seen = false;
+    for had in &stale {
+      seen |= match (had, &one) {
+        (Stale::Table(a), Stale::Table(b)) => Arc::ptr_eq(a, b),
+        (Stale::Index(a), Stale::Index(b)) => Arc::ptr_eq(a, b),
+        _ => false,
+      };
+    }
+    if !seen {
+      stale.push(one);
+    }
+  }
+  stale
 }
 
 /// The record of a query's transaction id and the transaction's, for
@@ -517,6 +577,38 @@ impl ApidConnection {
       }
     }
     Ok(())
+  }
+
+  /// Transactions started on this connection and not yet closed.
+  pub fn transactions_open(&self) -> u32 {
+    self.transactions.len()
+  }
+
+  /// For a synchronous helper that started the transaction: send and
+  /// poll until it has ended, and how it ended. A transaction rolled
+  /// back before anything of it went ends with the send, at once; one
+  /// whose coordinator does not answer is ended by the reply timeout,
+  /// which is why the wait is that long and a little more. None if it
+  /// is not there, or has not ended even then, which the reply timeout
+  /// and the loss of its link rule out; it can then not be closed.
+  pub(crate) fn wait_for_end(&mut self, tid: TransId) -> Option<CommitState> {
+    let start = ic_port::time::gethrtime();
+    let limit = self.shared.reply_wait_ms as u64 + IC_END_GRACE_MS;
+    loop {
+      // A send that fails fails its transaction at the poll, as its
+      // link is gone.
+      let _ = self.send_queries(true);
+      let trans = self.transaction(tid)?;
+      if trans.is_done() {
+        return Some(trans.commit_state());
+      }
+      let waited =
+        ic_port::time::millis_elapsed(start, ic_port::time::gethrtime());
+      if waited >= limit {
+        return None;
+      }
+      self.poll(IC_END_POLL_MS);
+    }
   }
 
   /// Define a read by primary key on a transaction
@@ -1192,6 +1284,12 @@ impl ApidConnection {
         }
       }
       self.complete_if_done(qid);
+      // A committed read whose reading node was lost before this came:
+      // failed once the poll's replies are in, so that its row, if it
+      // is among them, still wins.
+      if op.is_dirty_read() && self.reader_lost(qid) {
+        self.late_readers.push(qid);
+      }
     }
     true
   }
@@ -1256,8 +1354,7 @@ impl ApidConnection {
     // next bind fetches it afresh; the query's index if it has one,
     // since a unique request names the index's own version.
     let code = refusal.error_code as i32;
-    if code == IC_NDB_ERROR_SCHEMA_CHANGED || code == IC_NDB_ERROR_UNKNOWN_TABLE
-    {
+    if schema_error(code) {
       let bound = self.queries.get(qid.0).map(|query| {
         (std::sync::Arc::clone(query.table()), query.index().cloned())
       });
@@ -1295,8 +1392,37 @@ impl ApidConnection {
       trans.error_data = rep.error_data;
     }
     let error = IcError::new(rep.error_code as i32);
+    // So does a table or index found out of date, which the coordinator
+    // checks before any operation can be allowed to fail: let go of it
+    // before the queries' callbacks run, as a refusal does.
+    self.forget_stale_schema(tid, error.code);
     self.end_transaction(tid, CommitState::RolledBack, Some(error), 0);
     true
+  }
+
+  /// A transaction ended by the coordinator with `code`: if that says a
+  /// table or index has changed or gone (`schema_error`), let go of each
+  /// that `stale_after` names, so that the next bind fetches it afresh.
+  fn forget_stale_schema(&mut self, tid: TransId, code: i32) {
+    let stale = {
+      let sent = match self.transactions.get(tid.0) {
+        Some(trans) => &trans.sent,
+        None => return,
+      };
+      let mut waiting: Vec<&ApidQuery> = Vec::new();
+      for qid in sent {
+        if let Some(query) = self.queries.get(qid.0) {
+          waiting.push(query);
+        }
+      }
+      stale_after(code, &waiting)
+    };
+    for one in &stale {
+      match one {
+        Stale::Table(table) => self.table_changed(table),
+        Stale::Index(index) => self.index_changed(index),
+      }
+    }
   }
 
   fn take_commit_conf(&mut self, signal: &SignalView<'_>) -> bool {
@@ -1352,6 +1478,7 @@ impl ApidConnection {
       None => return false,
     };
     let error = IcError::new(refusal.error_code as i32);
+    self.forget_stale_schema(tid, error.code);
     self.end_transaction(tid, CommitState::RolledBack, Some(error), 0);
     true
   }
@@ -1661,29 +1788,7 @@ impl ApidConnection {
         None => continue,
       };
       for qid in &trans.sent {
-        let query = match self.queries.get(qid.0) {
-          Some(query) => query,
-          None => continue,
-        };
-        let exec = &query.execution;
-        if query.state() != QueryState::Sent
-          || exec.has_row
-          || exec.sent_at == 0
-        {
-          continue;
-        }
-        let conf = match exec.confirmed {
-          Some(conf) if conf.is_dirty_read() => conf,
-          _ => continue,
-        };
-        let gone = match self.shared.node(conf.reading_node()) {
-          Some(node) => {
-            let since = node.published.connected_since();
-            node.failure_reported() || since == 0 || since >= exec.sent_at
-          }
-          None => true,
-        };
-        if gone {
+        if self.reader_lost(*qid) {
           lost.push(*qid);
         }
       }
@@ -1692,6 +1797,51 @@ impl ApidConnection {
     let error = IcError::new(IC_NDB_ERROR_READ_NODE_FAILURE);
     for qid in lost {
       self.fail_query(qid, error);
+    }
+  }
+
+  /// Fail the committed reads noted as their confirmations came naming
+  /// a reading node already lost, those still without their row: a loss
+  /// seen before the confirmation is otherwise not looked at again until
+  /// the next change, and the read would wait for the reply timeout. Run
+  /// after draining the inbox, as `fail_lost_readers` is.
+  pub(crate) fn fail_late_readers(&mut self) {
+    let mut late = std::mem::take(&mut self.late_readers);
+    let error = IcError::new(IC_NDB_ERROR_READ_NODE_FAILURE);
+    for qid in &late {
+      if self.reader_lost(*qid) {
+        self.fail_query(*qid, error);
+      }
+    }
+    late.clear();
+    // A callback may have noted more meanwhile; they wait for the next
+    // poll.
+    late.append(&mut self.late_readers);
+    self.late_readers = late;
+  }
+
+  /// True if the query is a dirty read, sent and confirmed, still
+  /// waiting for its row from a reading node that can no longer send it.
+  fn reader_lost(&self, qid: QueryId) -> bool {
+    let query = match self.queries.get(qid.0) {
+      Some(query) => query,
+      None => return false,
+    };
+    let exec = &query.execution;
+    if query.state() != QueryState::Sent || exec.has_row || exec.sent_at == 0 {
+      return false;
+    }
+    let conf = match exec.confirmed {
+      Some(conf) if conf.is_dirty_read() => conf,
+      _ => return false,
+    };
+    match self.shared.node(conf.reading_node()) {
+      Some(node) => reader_gone(
+        node.failure_reported(),
+        node.published.connected_since(),
+        exec.sent_at,
+      ),
+      None => true,
     }
   }
 
@@ -1809,6 +1959,13 @@ impl ApidConnection {
 /// Emptied query lists a connection keeps for its next transactions;
 /// enough for a few thousand in flight, beyond which they are freed.
 const IC_SPARE_QUERY_LISTS: usize = 8192;
+
+/// How much longer than a transaction's own wait for replies a
+/// synchronous helper waits for it to end: the reply timeout is looked
+/// at once a second.
+const IC_END_GRACE_MS: u64 = 1000;
+/// How long such a helper polls for replies at a time.
+const IC_END_POLL_MS: u32 = 100;
 
 /// The request word of a `KEY_OP_REQ` or `UNIQUE_OP_REQ` that holds the
 /// flags, among its data words (`KeyOpReq::encode`).
@@ -2031,6 +2188,38 @@ mod tests {
   }
 
   #[test]
+  fn an_abort_for_a_changed_table_lets_go_of_those_still_waiting() {
+    let t = crate::program::test_table();
+    let other = crate::program::test_table();
+    let key_rec = Record::default_for(&t, Some(&[0])).expect("key");
+    let other_rec = Record::default_for(&other, Some(&[0])).expect("key");
+    let one = ApidQuery::new(&t, &key_rec, &key_rec).expect("query");
+    let two = ApidQuery::new(&t, &key_rec, &key_rec).expect("query");
+    let three = ApidQuery::new(&other, &other_rec, &other_rec).expect("query");
+    for code in [IC_NDB_ERROR_SCHEMA_CHANGED, IC_NDB_ERROR_UNKNOWN_TABLE] {
+      // Two queries over one table: that table once.
+      let stale = stale_after(code, &[&one, &two]);
+      assert_eq!(stale.len(), 1, "{}", code);
+      assert!(
+        matches!(&stale[0], Stale::Table(table) if Arc::ptr_eq(table, &t)),
+        "{}",
+        code
+      );
+      // Which of the waiting was out of date is not said: each table.
+      assert_eq!(stale_after(code, &[&one, &three, &two]).len(), 2);
+    }
+    // Every schema error does, 283, a drop in progress, too.
+    for code in [283, 709, 710, 723] {
+      assert_eq!(stale_after(code, &[&one, &two]).len(), 1, "{}", code);
+    }
+    // Any other error, or nothing waiting, leaves every table as it is.
+    for code in [0, 626, 630, 4012] {
+      assert!(stale_after(code, &[&one, &three]).is_empty(), "{}", code);
+    }
+    assert!(stale_after(IC_NDB_ERROR_SCHEMA_CHANGED, &[]).is_empty());
+  }
+
+  #[test]
   fn a_transaction_is_done_only_when_ended_and_empty() {
     let mut trans = Transaction {
       trans_id: 5,
@@ -2106,5 +2295,19 @@ mod tests {
     let mut idle = sent_at(0);
     idle.state = CommitState::CommitRequested;
     assert!(!idle.waited_too_long(AT + 10 * LIMIT, LIMIT));
+  }
+
+  #[test]
+  fn a_reading_node_failed_gone_or_connected_anew_cannot_send_the_row() {
+    // Connected before the read was sent, and not failed: its row may
+    // still come.
+    assert!(!reader_gone(false, 99, 100));
+    // Failed, whenever it connected.
+    assert!(reader_gone(true, 99, 100));
+    // Not connected.
+    assert!(reader_gone(false, 0, 100));
+    // Connected again since the read was sent, or as it was.
+    assert!(reader_gone(false, 100, 100));
+    assert!(reader_gone(false, 150, 100));
   }
 }

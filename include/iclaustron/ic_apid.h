@@ -1415,9 +1415,12 @@ void ic_apid_conn_free(IC_APID_CONNECTION *conn);
  Errors: `IC_ERROR_NO_SUCH_TABLE` when the database has no such table;
  `IC_ERROR_TABLE_KEEPS_CHANGING` when it changed every time it was fetched;
  `IC_ERROR_DICT_REFUSED` when the data node's dictionary refused;
- `IC_ERROR_BAD_TEXT`. It waits for the data node when the description is not
- cached yet. The handle is the caller's, freed with `ic_table_def_free`; it
- may outlive the connection and be used by any thread.
+ `IC_ERROR_BAD_TEXT`; `IC_ERROR_NOT_SUPPORTED` from a callback run inside
+ a bind of this thread, for a table whose description is being fetched,
+ which it would wait for for ever. It waits for the data node when the
+ description is not cached yet. The handle is the caller's, freed with
+ `ic_table_def_free`; it may outlive the connection and be used by any
+ thread.
 
  # Safety
 

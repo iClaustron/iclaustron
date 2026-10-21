@@ -70,7 +70,6 @@ use crate::program::Program;
 use crate::program::ProgramBuilder;
 use crate::query::QueryId;
 use crate::query::ReadKeyArgs;
-use crate::query::TransId;
 use crate::query::WriteKeyArgs;
 use crate::record::Record;
 use crate::transaction::CommitState;
@@ -93,12 +92,6 @@ const IC_COUNTER_FIRST_PAUSE_US: u64 = 100;
 /// How long a counter operation is tried for, in microseconds, from
 /// the first attempt.
 const IC_COUNTER_RETRY_US: u64 = 3_600_000;
-/// How long one attempt polls for its replies at a time.
-const IC_COUNTER_POLL_MS: u32 = 100;
-/// How much longer than a transaction's own wait for replies an attempt
-/// waits for it to end, before the counter's connection is given up and
-/// made again.
-const IC_COUNTER_GRACE_MS: u64 = 1000;
 
 // ---- What a table holds ----
 
@@ -532,10 +525,13 @@ impl CounterLink {
       }
     };
     let next_at = bound.next_at;
-    let state = match wait_for_end(&mut self.conn, tid) {
+    // Waited for a little longer than the reply timeout takes to end a
+    // transaction whose coordinator does not answer.
+    let state = match self.conn.wait_for_end(tid) {
       Some(state) => state,
       None => {
-        // The transaction goes with the connection.
+        // The transaction goes with the connection, given up and made
+        // again.
         self.broken = true;
         return Err(IcError::new(err::IC_ERROR_TIMEOUT));
       }
@@ -573,29 +569,6 @@ impl CounterLink {
         Ok(u64::from_le_bytes(le))
       }
       None => Err(IcError::new(err::IC_ERROR_INCONSISTENT_DATA)),
-    }
-  }
-}
-
-/// Send and poll until the transaction has ended, and how it ended;
-/// none if it is not there, or has not ended a while after its own wait
-/// for replies should have ended it.
-fn wait_for_end(
-  conn: &mut ApidConnection,
-  tid: TransId,
-) -> Option<CommitState> {
-  let start = time::gethrtime();
-  let limit = conn.shared.reply_wait_ms as u64 + IC_COUNTER_GRACE_MS;
-  loop {
-    // A send that fails fails its transaction at the poll, as its link
-    // is gone.
-    let _ = conn.flush(IC_COUNTER_POLL_MS, true);
-    let trans = conn.transaction(tid)?;
-    if trans.is_done() {
-      return Some(trans.commit_state());
-    }
-    if time::millis_elapsed(start, time::gethrtime()) >= limit {
-      return None;
     }
   }
 }

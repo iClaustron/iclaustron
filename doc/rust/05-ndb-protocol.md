@@ -982,6 +982,24 @@ column, 0xFC01 write part of a column. Verify:
   otherwise, and `:10576-10583, 21571-21588`, where the rollback report
   is sent with the transaction's return code;
   `include/kernel/signaldata/TcRollbackRep.hpp:53-59`.
+
+  **A table or index out of date is found before an operation can be
+  allowed to fail.** The coordinator checks the version a key request
+  names as the request arrives, and on a mismatch aborts the whole
+  transaction, whatever the abort option: 241 for a wrong version, 284
+  for a table it does not know, 283 while a drop is in progress, in
+  `TRANS_ABORTED_REP`. A dropped index's request gets 284 the same way.
+  So these are read in the report as in a refusal: the tables and
+  indexes of the transaction's operations still waiting are let go of
+  before their queries fail, since the report does not say which
+  operation it was (review, 2026-10-21). In the report, a refusal and a
+  scan's refusal alike, every code the error table classes as a schema
+  error lets go, 283 among them, as MySQL's handler drops its cached
+  table on any schema error (the author, 2026-10-21;
+  `storage/ndb/plugin/ha_ndbcluster.cc:1259-1266`, a path from the
+  tree's root). Verify:
+  `src/kernel/blocks/dbtc/DbtcMain.cpp:4368-4378, 2768-2771,
+  16617-16629, 27656-27661, 25200-25218, 10589-10616`.
 - `ROW_DATA_REP` (signal 5): row data (column header + data words) for one
   operation, first word = our operation object id; long form in section 0.
   May arrive **before or after** the matching `KEY_OP_CONF`. The long

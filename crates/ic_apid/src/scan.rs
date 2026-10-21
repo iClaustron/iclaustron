@@ -104,10 +104,9 @@ use crate::query::QueryId;
 use crate::query::TransId;
 use crate::record::Record;
 use crate::row_codec;
+use crate::transaction::schema_error;
 use crate::transaction::CommitState;
 use crate::transaction::TransactionHint;
-use crate::transaction::IC_NDB_ERROR_SCHEMA_CHANGED;
-use crate::transaction::IC_NDB_ERROR_UNKNOWN_TABLE;
 
 /// Marks a receiver's id, in the first word of `ROW_DATA_REP`, apart
 /// from a query's: bit 23, the top bit of an object map's index, which
@@ -747,12 +746,12 @@ impl Scan {
   }
 
   /// The flags of the run's request (chapter 05 §7.2): committed reads
-  /// set 11, and 2 too for a continuous scan; shared locks 10, and 12 for keys when the rows may be taken
-  /// over; exclusive locks 8, 10 and 12, as the data node requires keys
-  /// with them. Every table scan goes in storage order, as the
-  /// reference's do; a scan of an ordered index sets 15 instead, and 14
-  /// to read from the high end. Every scan asks for the extended
-  /// confirmation.
+  /// set 11, and 2 too for a continuous scan; shared locks 10, and 12
+  /// for keys when the rows may be taken over; exclusive locks 8, 10
+  /// and 12, as the data node requires keys with them. Every table scan
+  /// goes in storage order, as the reference's do; a scan of an ordered
+  /// index sets 15 instead, and 14 to read from the high end. Every scan
+  /// asks for the extended confirmation.
   fn flags(&self) -> ScanFlags {
     let of_index = self.index.is_some();
     let mut flags = ScanFlags {
@@ -2764,8 +2763,7 @@ impl ApidConnection {
       None => return false,
     };
     let code = refusal.error_code as i32;
-    if code == IC_NDB_ERROR_SCHEMA_CHANGED || code == IC_NDB_ERROR_UNKNOWN_TABLE
-    {
+    if schema_error(code) {
       let table = self.scans.get(id.0).map(|scan| Arc::clone(&scan.table));
       let index = self.scans.get(id.0).and_then(|scan| scan.index().cloned());
       if let Some(index) = index {

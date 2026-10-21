@@ -10673,3 +10673,51 @@ fn fanout_a_scan_by_its_base_skips_the_other_partitions() {
     db = IC_IT_DB
   ));
 }
+
+// ---- Review 3: failed synchronous operations clean up ----
+
+#[test]
+fn review_3_a_refused_unique_read_leaves_no_transaction_behind() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_uk2().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let t = bind(&mut conn, "uk2");
+  let n = bind_unique_index(&mut conn, "uk2_n", "uk2");
+  let key_rec = record_over(&t, &["n"]);
+  let mut key = vec![0; key_rec.row_size() as usize];
+  key_rec.set_null(&mut key, 0, true).expect("set NULL");
+  let open = conn.transactions_open();
+  // A NULL key is refused after the read's transaction has started, and
+  // before anything goes. Each such transaction is rolled back and
+  // closed, its coordinator record back in the pool: far more of them
+  // than the coordinators keep records for one connection would
+  // otherwise run them out.
+  let mut tries: u32 = 0;
+  while tries < 2000 {
+    let mut out = t.row();
+    let e = key_op::read_unique_committed(
+      &mut conn, &n, &key_rec, &key, &t.rec, &mut out,
+    )
+    .expect_err("a NULL key is refused");
+    assert_eq!(e.code, IC_NDB_ERROR_NULL_KEY, "try {}", tries);
+    assert_eq!(conn.transactions_open(), open, "try {}", tries);
+    tries += 1;
+  }
+  // A read that finds its row still works, and leaves nothing open.
+  let row = read_through(&mut conn, &t, &n, &[("n", "0")])
+    .expect("read through uk2_n")
+    .expect("row 2");
+  assert_eq!(t.get(&row, "id"), "2");
+  let missing = read_through(&mut conn, &t, &n, &[("n", "12345")])
+    .expect("read through uk2_n");
+  assert!(missing.is_none(), "no row has n = 12345");
+  assert_eq!(conn.transactions_open(), open);
+  // Nothing of the refused reads is left on the executed list either.
+  assert!(conn.get_next_executed_query().is_none());
+  assert_eq!(conn.unexpected(), 0);
+}

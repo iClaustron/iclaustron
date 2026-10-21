@@ -501,11 +501,14 @@ pub struct ApidConnection {
   /// How many query callbacks are running, on this thread, inside the
   /// poll that completed them. A poll from inside one does nothing.
   pub(crate) in_callback: u32,
-  /// Where a request's key and attribute sections are built before
-  /// they are packed: two buffers for every query, warm in the cache.
   /// The count of link and node changes as of the last failure checks;
   /// see `apid_global::link_events`.
   seen_link_events: u64,
+  /// Committed reads by key whose confirmation named a reading node
+  /// already lost when it came: checked once the poll's replies are in
+  /// (`fail_late_readers`), since the failure checks, which saw the loss
+  /// before the confirmation, do not run again until the next change.
+  pub(crate) late_readers: Vec<QueryId>,
   /// Transactions with something for the next send: queries defined or
   /// an end asked for. The send takes these, not every transaction in
   /// flight.
@@ -658,6 +661,7 @@ impl ApidConnection {
       in_callback: 0,
       pages: Vec::new(),
       seen_link_events: u64::MAX,
+      late_readers: Vec::new(),
       to_send: Vec::new(),
       spare_lists: Vec::new(),
       queued_since: 0,
@@ -1010,6 +1014,33 @@ impl ApidConnection {
     self.send_queued(true)
   }
 
+  /// As [`send`](Self::send), over the link of `generation` only: for a
+  /// request that names a coordinator record, which lives no longer than
+  /// the link it was allocated over. Refused with `IC_ERROR_LINK_LOST`
+  /// once that link has been replaced, so that the record's pointer
+  /// never goes over another link, where it names nothing of ours.
+  pub(crate) fn send_on(
+    &mut self,
+    node_id: u32,
+    generation: u32,
+    header: &SignalHeader,
+    data: &[u32],
+    sections: &[&[u32]],
+  ) -> Result<(), IcError> {
+    self.queue_signal_for_generation(
+      node_id, generation, header, data, sections,
+    )?;
+    self.send_queued(true)
+  }
+
+  /// The generation of the link to `node_id` as it stands now.
+  fn generation_of(&self, node_id: u32) -> Result<u32, IcError> {
+    match self.shared.node(node_id) {
+      Some(node) => Ok(node.published.generation()),
+      None => Err(IcError::new(err::IC_ERROR_NO_SUCH_NODE)),
+    }
+  }
+
   /// Send a request, and say which signals answer it: `sig_nos`, echoing
   /// `request_id` in their first data word. The reply is collected by
   /// [`poll`](Self::poll) and handed out by [`take_reply`](Self::take_reply).
@@ -1022,17 +1053,29 @@ impl ApidConnection {
     request_id: u32,
     sig_nos: &[u16],
   ) -> Result<(), IcError> {
-    let node = match self.shared.node(node_id) {
-      Some(node) => Arc::clone(node),
-      None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_NODE)),
-    };
     // Read before sending, so that a link replaced while the request is
     // on its way is seen as a different one.
-    let generation = node.published.generation();
-    self.queue_signal_for_generation(
-      node_id, generation, header, data, sections,
-    )?;
-    self.send_queued(true)?;
+    let generation = self.generation_of(node_id)?;
+    self.send_expecting_on(
+      node_id, generation, header, data, sections, request_id, sig_nos,
+    )
+  }
+
+  /// As [`send_expecting`](Self::send_expecting), over the link of
+  /// `generation` only, the wait for the reply tied to that link: for a
+  /// request whose answer belongs to a record of that link, as an
+  /// allocate's does.
+  pub(crate) fn send_expecting_on(
+    &mut self,
+    node_id: u32,
+    generation: u32,
+    header: &SignalHeader,
+    data: &[u32],
+    sections: &[&[u32]],
+    request_id: u32,
+    sig_nos: &[u16],
+  ) -> Result<(), IcError> {
+    self.send_on(node_id, generation, header, data, sections)?;
     // Nothing is read from the inbox but by this thread, so the reply
     // cannot be taken before this is recorded.
     self
@@ -1056,14 +1099,26 @@ impl ApidConnection {
     sig_nos: &[u16],
     any_node: bool,
   ) -> Result<(), IcError> {
-    let generation = match self.shared.node(node_id) {
-      Some(node) => node.published.generation(),
-      None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_NODE)),
-    };
+    let generation = self.generation_of(node_id)?;
+    self.expect_several_on(request_id, node_id, generation, sig_nos, any_node);
+    Ok(())
+  }
+
+  /// As [`expect_several`](Self::expect_several), the wait tied to the
+  /// link of `generation`: for a request sent with
+  /// [`send_on`](Self::send_on) over a record's link, whose loss, or
+  /// replacement, ends the wait.
+  pub(crate) fn expect_several_on(
+    &mut self,
+    request_id: u32,
+    node_id: u32,
+    generation: u32,
+    sig_nos: &[u16],
+    any_node: bool,
+  ) {
     self
       .expectations
       .add(request_id, node_id, generation, sig_nos, true, any_node);
-    Ok(())
   }
 
   /// The replies gathered for a request that expects several, each
@@ -1153,6 +1208,11 @@ impl ApidConnection {
       self.fail_lost_readers();
       self.seen_link_events = events;
     }
+    // Committed reads confirmed after their reading node's loss was
+    // checked for, which no check would look at again.
+    if !self.late_readers.is_empty() {
+      self.fail_late_readers();
+    }
     // Records that came start the scans waiting for them, scans whose
     // coordinator's link went fail, and what the scans called for goes
     // now rather than with the next send.
@@ -1203,12 +1263,31 @@ impl ApidConnection {
     sig_nos: &[u16],
     wait_ms: u32,
   ) -> Result<ReceivedSignal, IcError> {
+    let generation = self.generation_of(node_id)?;
+    self.call_on(
+      node_id, generation, header, data, sections, sig_nos, wait_ms,
+    )
+  }
+
+  /// As [`call`](Self::call), over the link of `generation` only: see
+  /// [`send_expecting_on`](Self::send_expecting_on).
+  pub(crate) fn call_on(
+    &mut self,
+    node_id: u32,
+    generation: u32,
+    header: &SignalHeader,
+    data: &[u32],
+    sections: &[&[u32]],
+    sig_nos: &[u16],
+    wait_ms: u32,
+  ) -> Result<ReceivedSignal, IcError> {
     let request_id = match data.first() {
       Some(first) => *first,
       None => return Err(IcError::new(err::IC_ERROR_INCONSISTENT_DATA)),
     };
-    self
-      .send_expecting(node_id, header, data, sections, request_id, sig_nos)?;
+    self.send_expecting_on(
+      node_id, generation, header, data, sections, request_id, sig_nos,
+    )?;
     self.wait_for(request_id, wait_ms)
   }
 
@@ -1358,8 +1437,12 @@ impl ApidConnection {
       numbers::IC_SIG_COORD_ALLOC_CONF,
       numbers::IC_SIG_COORD_ALLOC_REF,
     ];
-    let reply = self.call(
+    // Over the link the record is noted on: a link replaced since would
+    // allocate a record there that this one, of the old link, would
+    // never use nor give back.
+    let reply = self.call_on(
       node_id,
+      generation,
       &header,
       &allocate.encode(),
       &[],
@@ -1533,8 +1616,10 @@ impl ApidConnection {
       numbers::IC_SIG_COORD_ALLOC_CONF,
       numbers::IC_SIG_COORD_ALLOC_REF,
     ];
-    self.send_expecting(
+    // Over the link the record is noted on, as for a transaction's.
+    self.send_expecting_on(
       node_id,
+      generation,
       &header,
       &allocate.encode(),
       &[],
@@ -2167,5 +2252,22 @@ mod tests {
     assert_eq!(e.code, err::IC_ERROR_LINK_LOST);
     // A row arriving after that is nobody's.
     assert!(exp.offer(reply(ROW, 2, 22)).is_some());
+  }
+
+  #[test]
+  fn a_wait_on_a_records_link_ends_when_that_link_is_replaced() {
+    // An operation on a record of link 3 waits on link 3, whatever link
+    // was up when the wait was noted: link 4 up, the node connected all
+    // the while, ends it, as its replies cannot come over link 4.
+    let mut exp = Expectations::default();
+    exp.add(22, 1, 3, &[ROW, KEYREF], true, true);
+    exp.add(23, 1, 3, &[CONF], true, false);
+    let lost = IcError::new(err::IC_ERROR_LINK_LOST);
+    exp.link_changed(1, true, 4, lost);
+    let e = exp.take_several(22).expect_err("ended");
+    assert_eq!(e.code, err::IC_ERROR_LINK_LOST);
+    assert!(exp.take_several(23).is_err());
+    // A reply over the new link to the old request is nobody's.
+    assert!(exp.offer(reply(CONF, 1, 23)).is_some());
   }
 }
