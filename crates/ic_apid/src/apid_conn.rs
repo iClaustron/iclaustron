@@ -467,6 +467,8 @@ pub struct ApidConnection {
   next_request_id: u32,
   /// Signals that arrived and that no request was waiting for.
   unexpected: u64,
+  /// The last of those, by its number and the node it came from.
+  last_unexpected: Option<(u16, u32)>,
   /// Signals of scan runs that had ended when they came, dropped.
   pub(crate) late_scan_signals: u64,
   /// The tables this thread has bound, by internal name.
@@ -645,6 +647,7 @@ impl ApidConnection {
       deferred: VecDeque::new(),
       next_request_id: 1,
       unexpected: 0,
+      last_unexpected: None,
       late_scan_signals: 0,
       tables: HashMap::new(),
       indexes: HashMap::new(),
@@ -746,6 +749,18 @@ impl ApidConnection {
   /// Signals that arrived and that no request was waiting for.
   pub fn unexpected(&self) -> u64 {
     self.unexpected
+  }
+
+  /// The last signal no request was waiting for: its name, or its
+  /// number when it has none, and the node it came from. What a test
+  /// shows when `unexpected` is not 0.
+  pub fn last_unexpected(&self) -> Option<(String, u32)> {
+    let (sig_no, node_id) = self.last_unexpected?;
+    let name = match numbers::sig_name(sig_no) {
+      Some(name) => name.to_string(),
+      None => format!("signal {}", sig_no),
+    };
+    Some((name, node_id))
   }
 
   /// Signals of scan runs that had ended when they came, dropped as
@@ -971,22 +986,40 @@ impl ApidConnection {
   /// ([`adaptive_send`](crate::adaptive_send)). Returns the first
   /// error, after every node has been given its signals.
   pub fn send_queued(&mut self, force: bool) -> Result<(), IcError> {
+    self.send_batches(force, None)
+  }
+
+  /// Hand every node what has been packed for it, as `send_queued`
+  /// does. With `own`, a node and its link's generation, only that
+  /// batch's error is returned: a request waited for fails with its own
+  /// link, not with another's that was lost while something was still
+  /// packed for it, whose loss the next poll reports to whoever used it.
+  fn send_batches(
+    &mut self,
+    force: bool,
+    own: Option<(u32, u32)>,
+  ) -> Result<(), IcError> {
     self.queued_since = 0;
     let mut first_error: Option<IcError> = None;
+    let mut own_error: Option<IcError> = None;
     let mut index: usize = 0;
     while index < self.outgoing.len() {
       if !self.outgoing[index].words.is_empty() {
         let node_id = self.outgoing[index].node_id;
+        let generation = self.outgoing[index].generation;
         let result = match self.shared.node(node_id) {
           Some(node) => node.send_words_for_generation(
             &self.outgoing[index].words,
             force,
-            self.outgoing[index].generation,
+            generation,
           ),
           None => Err(IcError::new(err::IC_ERROR_NO_SUCH_NODE)),
         };
         self.outgoing[index].words.clear();
         if let Err(e) = result {
+          if own == Some((node_id, generation)) {
+            own_error = Some(e);
+          }
           if first_error.is_none() {
             first_error = Some(e);
           }
@@ -994,7 +1027,11 @@ impl ApidConnection {
       }
       index += 1;
     }
-    match first_error {
+    let error = match own {
+      Some(_) => own_error,
+      None => first_error,
+    };
+    match error {
       Some(e) => Err(e),
       None => Ok(()),
     }
@@ -1002,7 +1039,8 @@ impl ApidConnection {
 
   /// Send a signal now, with whatever else is packed for its node. For
   /// a request that will be waited for, and for what no reply is
-  /// expected to.
+  /// expected to. Fails only if this signal's own link does: what else
+  /// was packed goes too, its links' losses reported by the next poll.
   pub fn send(
     &mut self,
     node_id: u32,
@@ -1010,8 +1048,8 @@ impl ApidConnection {
     data: &[u32],
     sections: &[&[u32]],
   ) -> Result<(), IcError> {
-    self.queue_signal(node_id, header, data, sections)?;
-    self.send_queued(true)
+    let generation = self.generation_of(node_id)?;
+    self.send_on(node_id, generation, header, data, sections)
   }
 
   /// As [`send`](Self::send), over the link of `generation` only: for a
@@ -1030,7 +1068,7 @@ impl ApidConnection {
     self.queue_signal_for_generation(
       node_id, generation, header, data, sections,
     )?;
-    self.send_queued(true)
+    self.send_batches(true, Some((node_id, generation)))
   }
 
   /// The generation of the link to `node_id` as it stands now.
@@ -1903,6 +1941,7 @@ impl ApidConnection {
 
   fn note_stray(&mut self, signal: &SignalView<'_>) {
     self.unexpected += 1;
+    self.last_unexpected = Some((signal.sig_no, signal.sender_node_id));
     ic_port::debug_print!(
       IC_NDB_MESSAGE_LEVEL,
       "No request expects {} from node {} to block {:#06x}",

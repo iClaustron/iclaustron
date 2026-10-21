@@ -2388,6 +2388,18 @@ fn failure_a_management_server_gone_for_a_while_is_found_again() {
   let victim = started[1];
   eprintln!("restarting data node {}", victim);
   mgm_client(&format!("{} RESTART", victim));
+  // Until it is down it may still be dealt a write in turn, which then
+  // fails with its link: wait for it to go, so that the writes below go
+  // to the survivor, as the test means them to.
+  let start = time::gethrtime();
+  while cluster.global.started_nodes().contains(&victim) {
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let waited = time::millis_elapsed(start, time::gethrtime());
+    if waited >= IC_IT_RESTART_WAIT_MS {
+      panic!("data node {} did not go down", victim);
+    }
+  }
+  eprintln!("data node {} is down", victim);
   match std::env::var("IC_TEST_MGM_RESTART") {
     Ok(command) => {
       eprintln!("restarting the management server: {}", command);
@@ -7660,7 +7672,13 @@ fn failure_a_data_node_restarted_during_a_scan_fails_it_and_a_retry_reads_all()
     }
   }
   eprintln!("the scan run again read every row, try {}", tries);
-  assert_eq!(conn.unexpected(), 0);
+  assert_eq!(
+    conn.unexpected(),
+    0,
+    "the last no request expected: {:?}; {} late scan signals",
+    conn.last_unexpected(),
+    conn.late_scan_signals()
+  );
 
   // Wait for the victim to be started again, so that the cluster is
   // left as it was found and the next test finds it whole.

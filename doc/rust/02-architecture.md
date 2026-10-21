@@ -404,6 +404,13 @@ As built (`ic_apid::apid_conn`):
   pointer names nothing of ours. A transaction's and a scan's requests
   were sent so already; the synchronous key operations and the
   allocates of records now are too (review, 2026-10-21).
+- A request sent to be waited for (`send`, `send_on`, so `call`) fails
+  only if its own link does. The send writes whatever else is packed
+  for every node; a batch for a link lost meanwhile fails there, and
+  that loss reaches the requests that used the link at the next poll.
+  Until 2026-10-21 the first such failure failed the request too,
+  though it had gone: a write to a healthy node failed with another's
+  `IC_ERROR_LINK_LOST`, and its reply then came to nobody.
 - `call` sends and waits in 100 ms slices, so a lost link is noticed
   within one slice. A request that times out is forgotten; its reply,
   if it comes later, is counted as unexpected.
