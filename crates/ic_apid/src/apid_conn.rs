@@ -443,6 +443,12 @@ fn release_id_after(seed: &mut u64) -> u32 {
   }
 }
 
+/// True for an answer to `COORD_ALLOC_REQ`.
+fn is_allocate_answer(sig_no: u16) -> bool {
+  sig_no == numbers::IC_SIG_COORD_ALLOC_CONF
+    || sig_no == numbers::IC_SIG_COORD_ALLOC_REF
+}
+
 /// True if an allocate's answer naming `client_ptr`, from `sender`,
 /// answers the allocate of `held` given up on before it came.
 fn answers_abandoned(held: &CoordRecord, client_ptr: u32, sender: u32) -> bool {
@@ -457,6 +463,46 @@ fn take_abandoned(held: &mut CoordRecord, conf: &CoordAllocConf) {
   held.coord_ptr = conf.coord_ptr;
   held.coord_block = blocks::ref_to_block(conf.coord_block_ref);
   held.lost = true;
+}
+
+/// The links, as (node id, generation), over which a coordinator may
+/// yet answer an allocate of ours: those of the records at `asked`, and
+/// of the records whose allocate was given up on, that `stands` says
+/// still stand, each once. A connection going leaves its block number
+/// to rest until they have gone (chapter 02, "Closing a connection").
+fn links_still_allocating(
+  records: &[CoordRecord],
+  asked: &[u32],
+  stands: impl Fn(u32, u32) -> bool,
+) -> Vec<(u32, u32)> {
+  let mut links: Vec<(u32, u32)> = Vec::new();
+  let mut note = |rec: &CoordRecord| {
+    let link = (rec.node_id, rec.generation);
+    if stands(link.0, link.1) && !links.contains(&link) {
+      links.push(link);
+    }
+  };
+  for index in asked {
+    if let Some(rec) = records.get(*index as usize) {
+      note(rec);
+    }
+  }
+  for rec in records {
+    if rec.abandoned {
+      note(rec);
+    }
+  }
+  links
+}
+
+/// True if the link to `node_id` is up and is the one of `generation`.
+fn link_stands(shared: &ApidShared, node_id: u32, generation: u32) -> bool {
+  match shared.node(node_id) {
+    Some(node) => {
+      node.published.is_connected() && node.published.generation() == generation
+    }
+    None => false,
+  }
 }
 
 /// Mark `held`, the record `rec` names, as given back, if it may be:
@@ -651,7 +697,9 @@ impl ApidConnection {
   pub(crate) fn new(
     shared: Arc<ApidShared>,
   ) -> Result<ApidConnection, IcError> {
-    let inbox = shared.thread_table.allocate()?;
+    let stands =
+      |node_id: u32, generation: u32| link_stands(&shared, node_id, generation);
+    let inbox = shared.thread_table.allocate(&stands)?;
     let trans_counter = shared.thread_table.trans_counter(inbox.thread_id());
     let reply_wait_nanos = shared.reply_wait_ms as u64 * 1_000_000;
     // Seeded from the keys the standard library draws at random for its
@@ -1796,13 +1844,78 @@ impl ApidConnection {
 
   /// True if the link to `node_id` is up and is the one of `generation`.
   pub(crate) fn link_is(&self, node_id: u32, generation: u32) -> bool {
-    match self.shared.node(node_id) {
-      Some(node) => {
-        node.published.is_connected()
-          && node.published.generation() == generation
+    link_stands(&self.shared, node_id, generation)
+  }
+
+  /// True while a record a scan pool asked for is unanswered over a
+  /// link that still stands.
+  fn scan_records_asked(&self) -> bool {
+    for pool in &self.scan_pools {
+      for index in &pool.asked {
+        let rec = &self.coord_records[*index as usize];
+        if self.link_is(rec.node_id, rec.generation) {
+          return true;
+        }
       }
-      None => false,
     }
+    false
+  }
+
+  /// As the connection goes, wait for the answers to the records its
+  /// scans' pools have asked for, so that each one confirmed is given
+  /// back with the rest rather than left held at the coordinator, its
+  /// answer coming to whichever connection has the block number next
+  /// (the author, 2026-10-21). Only allocates' answers are taken in,
+  /// those to an allocate given up on as well; everything else is
+  /// dropped, as it would be once the inbox closes, and no callback
+  /// runs. It waits at most as long as an allocate does, and normally
+  /// well under a millisecond: a pool asks ahead as a scan starts.
+  fn settle_allocates(&mut self) {
+    // What a callback's wait set aside came before the inbox's.
+    let deferred = std::mem::take(&mut self.deferred);
+    for signal in deferred {
+      if is_allocate_answer(signal.sig_no) {
+        self.receive(signal);
+      }
+    }
+    self.collect_scan_records();
+    let start = ic_port::time::gethrtime();
+    while self.scan_records_asked() {
+      let waited =
+        ic_port::time::millis_elapsed(start, ic_port::time::gethrtime());
+      if waited >= IC_COORD_ALLOC_WAIT_MS as u64 {
+        break;
+      }
+      let left = IC_COORD_ALLOC_WAIT_MS - waited as u32;
+      let mut pages = std::mem::take(&mut self.pages);
+      self.inbox.exchange(left.min(IC_CALL_SLICE_MS), &mut pages);
+      for page in &pages {
+        let mut at: usize = 0;
+        while let Some(signal) = signal_page::next(page, &mut at) {
+          if is_allocate_answer(signal.sig_no) {
+            self.receive(signal.to_owned());
+          }
+        }
+      }
+      self.pages = pages;
+      // An ask whose link went is answered by its loss.
+      self.fail_lost_requests();
+      self.collect_scan_records();
+    }
+  }
+
+  /// The links over which an allocate of ours may still be answered as
+  /// the connection goes (see `links_still_allocating`).
+  fn links_left_allocating(&self) -> Vec<(u32, u32)> {
+    let mut asked: Vec<u32> = Vec::new();
+    for pool in &self.scan_pools {
+      asked.extend_from_slice(&pool.asked);
+    }
+    links_still_allocating(
+      &self.coord_records,
+      &asked,
+      |node_id, generation| self.link_is(node_id, generation),
+    )
   }
 
   /// Give back every record whose link still stands and that is not
@@ -2073,20 +2186,51 @@ impl ApidConnection {
 
 impl Drop for ApidConnection {
   fn drop(&mut self) {
-    // Acknowledgements left to go with a send that will not come.
+    // Acknowledgements left to go with a send that will not come, and
+    // allocates asked for and not yet written.
     let _ = self.send_queued(true);
+    // Records asked for are answered first, so that they are given back
+    // too. A connection a panic left unusable is not waited on: it may
+    // be half way through a change, and its block number rests instead.
+    if !self.unusable && !std::thread::panicking() {
+      self.settle_allocates();
+    }
     self.release_coord_records();
+    let waiting_on = self.links_left_allocating();
     self
       .shared
       .thread_table
       .keep_trans_counter(self.inbox.thread_id(), self.trans_counter);
-    self.shared.thread_table.release(&self.inbox);
+    self
+      .shared
+      .thread_table
+      .release_waiting(&self.inbox, waiting_on);
   }
 }
 
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn a_connection_going_rests_on_the_links_its_allocates_are_out_on() {
+    // Records 0 and 2 asked for over node 1's link, record 1 given up
+    // on over node 2's, and record 3 asked for over node 3's, gone
+    // since: the block number rests on two links, each named once.
+    let mut records = vec![
+      CoordRecord::for_test(1),
+      CoordRecord::for_test(2),
+      CoordRecord::for_test(1),
+      CoordRecord::for_test(3),
+    ];
+    records[1].abandoned = true;
+    let stands = |node_id: u32, _generation: u32| node_id != 3;
+    let links = links_still_allocating(&records, &[0, 2, 3], stands);
+    assert_eq!(links, vec![(1, 1), (2, 1)]);
+    // Nothing out: nothing to rest on.
+    records[1].abandoned = false;
+    assert!(links_still_allocating(&records, &[], stands).is_empty());
+  }
 
   #[test]
   fn release_ids_are_never_zero_and_do_not_repeat_soon() {

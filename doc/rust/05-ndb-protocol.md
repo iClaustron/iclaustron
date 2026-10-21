@@ -579,6 +579,17 @@ came on; a late refusal needs nothing. A scan's allocate is never given
 up on in that way: its pool waits for the answer, or for the link's
 loss.
 
+**An allocate out as its connection goes** (the author, 2026-10-21).
+The coordinator answers to the block reference the allocate gave, and
+our block numbers are reused: a confirmation that comes after the
+connection has gone either finds no inbox, and the record stays held
+until the link goes, or reaches the next connection given the number,
+whose pointers start from 0 again, and may be taken for its own. So a
+connection's free waits up to 5 s for its allocates' answers, and gives
+back each record confirmed; a block number with an allocate still out
+over a link that stands is not handed out again until that link has
+gone (chapter 02, "Data flow for a scan").
+
 **The coordinator's block reference is echoed, never decoded.** Its
 upper sixteen bits hold the block and the instance, and RonDB packs up
 to 1024 instances into them with a transform of its own. An API node has

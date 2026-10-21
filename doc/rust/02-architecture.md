@@ -509,6 +509,19 @@ The protocol is chapter 05 §7; this is how the connection runs it.
   a scan that finds its pool empty sends the allocate and starts when
   the confirmation comes in a poll, and the pool is then topped up
   ahead of the next scan.
+- **Closing a connection** (the author, 2026-10-21). An allocate is
+  often still out as a connection is freed: the pool asks ahead as each
+  scan starts. Its confirmation names the record only by our pointer,
+  which the next connection given the block number numbers from 0 again
+  and may have asked for itself. So the free first waits for those
+  answers, taking in allocate answers alone and running no callback,
+  for at most an allocate's 5 s and normally well under a millisecond,
+  and gives back each record confirmed with the others. One still
+  unanswered then, or one given up on earlier, leaves the block number
+  at rest in the thread table: not handed out again until each link it
+  could come over has gone, and with it the coordinator's record. A
+  connection a panic left unusable is not waited on; its block number
+  rests instead.
 - **A batch.** A receiver asked for a batch copies each row out of the
   receive page into its batch buffer as the row comes, and counts its
   words, and a key's words too. The batch is complete when its

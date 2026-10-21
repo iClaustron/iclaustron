@@ -1404,7 +1404,9 @@ int32_t ic_apid_global_create_connection(IC_APID_GLOBAL *global,
  Free a connection, its queries and transactions with it.
 
  Its queries and transactions go with it, and every row pointer they gave; a
- transaction left open does not commit.
+ transaction left open does not commit. It first waits for the answers to
+ the coordinator records it has asked for, so as to give them back: well
+ under a millisecond as a rule, 5 seconds at most, and no callback runs.
 
  # Safety
 

@@ -70,6 +70,13 @@
 //! rare rather than merely survivable, ids are handed out in rotation:
 //! a freed id is not used again until every other id has been.
 //!
+//! One answer is not safe even so: a coordinator record's allocation,
+//! whose pointer a new thread numbers from 0 again and may have asked
+//! for itself. A connection waits for those answers as it goes, and one
+//! still missing then keeps its id at rest: not handed out until each
+//! link it may come over has gone, and with it the coordinator's
+//! record (the author, 2026-10-21).
+//!
 //! # Requests
 //!
 //! An [executor](crate::executor) is a user thread that runs work for
@@ -484,6 +491,10 @@ struct TableSlots {
   /// that takes the slot goes on from where the last one left it, so
   /// that its block number never makes the same id twice.
   trans_counters: Vec<u32>,
+  /// Per slot, the links, as (node id, generation), over which an
+  /// allocate of the connection that left it may still be answered: the
+  /// slot is not handed out while any of them stands.
+  waiting_on: Vec<Vec<(u32, u32)>>,
 }
 
 /// Finds a user thread's inbox by its thread id
@@ -520,16 +531,19 @@ impl ThreadTable {
   pub fn new() -> ThreadTable {
     let mut slots: Vec<Option<Arc<ThreadConnection>>> = Vec::new();
     let mut trans_counters: Vec<u32> = Vec::new();
+    let mut waiting_on: Vec<Vec<(u32, u32)>> = Vec::new();
     let mut i: u32 = 0;
     while i < IC_MAX_THREAD_CONNECTIONS {
       slots.push(None);
       trans_counters.push(0);
+      waiting_on.push(Vec::new());
       i += 1;
     }
     let table = TableSlots {
       slots,
       next: 0,
       trans_counters,
+      waiting_on,
     };
     ThreadTable {
       slots: IcMutex::new(IC_MUTEX_LEVEL_GLOBAL, table),
@@ -539,14 +553,27 @@ impl ThreadTable {
   }
 
   /// Give a new user thread an inbox, in the next free slot going
-  /// round the table.
-  pub fn allocate(&self) -> Result<Arc<ThreadConnection>, IcError> {
+  /// round the table. A slot left resting is passed over while
+  /// `link_stands` says a link it waits on, as (node id, generation),
+  /// still stands; it is called under the table's lock, so it may only
+  /// read the links' published state.
+  pub fn allocate(
+    &self,
+    link_stands: &dyn Fn(u32, u32) -> bool,
+  ) -> Result<Arc<ThreadConnection>, IcError> {
     let mut table = self.slots.lock();
     let size = table.slots.len();
     let mut tried: usize = 0;
     while tried < size {
       let thread_id = (table.next + tried) % size;
-      if table.slots[thread_id].is_none() {
+      let waiting = &mut table.waiting_on[thread_id];
+      if !waiting.is_empty() {
+        waiting
+          .retain(|&(node_id, generation)| link_stands(node_id, generation));
+      }
+      if table.slots[thread_id].is_none()
+        && table.waiting_on[thread_id].is_empty()
+      {
         let conn = Arc::new(ThreadConnection::new(thread_id as u32));
         table.slots[thread_id] = Some(Arc::clone(&conn));
         table.next = (thread_id + 1) % size;
@@ -561,10 +588,23 @@ impl ThreadTable {
   /// Take a user thread's inbox out of the table. Signals still on
   /// their way to it are dropped from here on.
   pub fn release(&self, conn: &ThreadConnection) {
+    self.release_waiting(conn, Vec::new());
+  }
+
+  /// As [`release`](Self::release), leaving the slot to rest while any
+  /// of `links`, as (node id, generation), stands: an allocate of the
+  /// connection going may still be answered over it, and the answer
+  /// must not reach a new one.
+  pub(crate) fn release_waiting(
+    &self,
+    conn: &ThreadConnection,
+    links: Vec<(u32, u32)>,
+  ) {
     let mut table = self.slots.lock();
     let thread_id = conn.thread_id as usize;
     if thread_id < table.slots.len() {
       table.slots[thread_id] = None;
+      table.waiting_on[thread_id] = links;
     }
     self.changes.fetch_add(1, Ordering::Release);
     // Under the table lock, so that a receive thread refreshing its
@@ -787,11 +827,16 @@ mod tests {
     }
   }
 
+  /// For a table whose slots wait on no link that stands.
+  fn no_link(_node_id: u32, _generation: u32) -> bool {
+    false
+  }
+
   #[test]
   fn threads_get_the_block_numbers_data_nodes_reply_to() {
     let table = ThreadTable::new();
-    let first = table.allocate().expect("first");
-    let second = table.allocate().expect("second");
+    let first = table.allocate(&no_link).expect("first");
+    let second = table.allocate(&no_link).expect("second");
     assert_eq!(first.thread_id(), 0);
     assert_eq!(second.thread_id(), 1);
     assert_eq!(first.block_number(), blocks::IC_FIRST_USER_THREAD_BLOCK);
@@ -806,11 +851,42 @@ mod tests {
     // A late answer to a thread that has exited must find nobody home,
     // not a new thread under the old number.
     let table = ThreadTable::new();
-    let first = table.allocate().expect("first");
-    let _second = table.allocate().expect("second");
+    let first = table.allocate(&no_link).expect("first");
+    let _second = table.allocate(&no_link).expect("second");
     table.release(&first);
-    let third = table.allocate().expect("third");
+    let third = table.allocate(&no_link).expect("third");
     assert_eq!(third.thread_id(), 2);
+  }
+
+  #[test]
+  fn an_id_left_waiting_on_a_link_rests_until_the_link_goes() {
+    // An allocate's answer may still come over node 2's link of
+    // generation 7, so the slot waits out that link even once the table
+    // has gone round to it again.
+    let table = ThreadTable::new();
+    let first = table.allocate(&no_link).expect("first");
+    table.release_waiting(&first, vec![(2, 7)]);
+    let link_up =
+      |node_id: u32, generation: u32| node_id == 2 && generation == 7;
+    let mut i: u32 = 1;
+    while i < IC_MAX_THREAD_CONNECTIONS {
+      let conn = table.allocate(&link_up).expect("another slot");
+      table.release(&conn);
+      i += 1;
+    }
+    // Round again: slot 0 is passed over while the link stands.
+    let passed = table.allocate(&link_up).expect("the next slot");
+    assert_eq!(passed.thread_id(), 1);
+    table.release(&passed);
+    // The link has gone, and the coordinator's records with it.
+    let mut i: u32 = 2;
+    while i < IC_MAX_THREAD_CONNECTIONS {
+      let conn = table.allocate(&no_link).expect("another slot");
+      table.release(&conn);
+      i += 1;
+    }
+    let back = table.allocate(&no_link).expect("slot 0 again");
+    assert_eq!(back.thread_id(), 0);
   }
 
   #[test]
@@ -820,7 +896,7 @@ mod tests {
     let table = ThreadTable::new();
     let mut i: u32 = 0;
     while i < IC_MAX_THREAD_CONNECTIONS * 3 {
-      let conn = table.allocate().expect("always room for one");
+      let conn = table.allocate(&no_link).expect("always room for one");
       assert_eq!(conn.thread_id(), i % IC_MAX_THREAD_CONNECTIONS);
       table.release(&conn);
       i += 1;
@@ -833,18 +909,18 @@ mod tests {
     let mut held: Vec<Arc<ThreadConnection>> = Vec::new();
     let mut i: u32 = 0;
     while i < IC_MAX_THREAD_CONNECTIONS {
-      held.push(table.allocate().expect("room"));
+      held.push(table.allocate(&no_link).expect("room"));
       i += 1;
     }
-    let e = table.allocate().expect_err("full");
+    let e = table.allocate(&no_link).expect_err("full");
     assert_eq!(e.code, err::IC_ERROR_TOO_MANY_USER_THREADS);
   }
 
   #[test]
   fn signals_reach_the_thread_they_are_addressed_to() {
     let table = Arc::new(ThreadTable::new());
-    let first = table.allocate().expect("first");
-    let second = table.allocate().expect("second");
+    let first = table.allocate(&no_link).expect("first");
+    let second = table.allocate(&no_link).expect("second");
     let mut router = Router::new(Arc::clone(&table));
     assert!(router.route(signal_for(&first, 10)).is_none());
     assert!(router.route(signal_for(&second, 11)).is_none());
@@ -901,7 +977,7 @@ mod tests {
     // this test posted an empty round first, which hid exactly that.
     let table = Arc::new(ThreadTable::new());
     let mut router = Router::new(Arc::clone(&table));
-    let late = table.allocate().expect("late");
+    let late = table.allocate(&no_link).expect("late");
     assert!(router.route(signal_for(&late, 10)).is_none());
     router.post_all();
     assert_eq!(late.take(0).len(), 1);
@@ -913,10 +989,10 @@ mod tests {
     // With real receive threads the inbox can appear while a round is
     // under way, after other signals have already been sorted.
     let table = Arc::new(ThreadTable::new());
-    let early = table.allocate().expect("early");
+    let early = table.allocate(&no_link).expect("early");
     let mut router = Router::new(Arc::clone(&table));
     assert!(router.route(signal_for(&early, 10)).is_none());
-    let late = table.allocate().expect("late");
+    let late = table.allocate(&no_link).expect("late");
     assert!(router.route(signal_for(&late, 11)).is_none());
     assert!(router.route(signal_for(&early, 12)).is_none());
     router.post_all();
@@ -928,7 +1004,7 @@ mod tests {
   #[test]
   fn a_late_reply_to_a_thread_that_has_gone_is_dropped() {
     let table = Arc::new(ThreadTable::new());
-    let conn = table.allocate().expect("conn");
+    let conn = table.allocate(&no_link).expect("conn");
     let mut router = Router::new(Arc::clone(&table));
     assert!(router.route(signal_for(&conn, 10)).is_none());
     // The thread goes between the signal being sorted and posted.
@@ -941,7 +1017,7 @@ mod tests {
   #[test]
   fn a_waiting_thread_is_woken_by_a_post() {
     let table = Arc::new(ThreadTable::new());
-    let conn = table.allocate().expect("conn");
+    let conn = table.allocate(&no_link).expect("conn");
     let waiter = Arc::clone(&conn);
     let handle = thread::spawn(move || {
       // Long enough that only a wake-up explains a prompt return.
@@ -969,7 +1045,7 @@ mod tests {
   #[test]
   fn an_empty_inbox_gives_up_after_the_wait() {
     let table = ThreadTable::new();
-    let conn = table.allocate().expect("conn");
+    let conn = table.allocate(&no_link).expect("conn");
     let start = ic_port::time::gethrtime();
     assert!(conn.take(30).is_empty());
     let waited =
@@ -994,7 +1070,7 @@ mod tests {
   #[test]
   fn a_thread_that_is_no_executor_takes_no_requests() {
     let table = ThreadTable::new();
-    let conn = table.allocate().expect("conn");
+    let conn = table.allocate(&no_link).expect("conn");
     let refused = conn.submit(request(), false).expect_err("refused");
     assert_eq!(refused.1.code, err::IC_ERROR_EXECUTOR_STOPPED);
   }
@@ -1002,7 +1078,7 @@ mod tests {
   #[test]
   fn requests_are_taken_whole_in_order() {
     let table = ThreadTable::new();
-    let conn = table.allocate().expect("conn");
+    let conn = table.allocate(&no_link).expect("conn");
     conn.open_requests(4);
     conn.submit(request(), false).expect("first");
     conn.submit(request(), false).expect("second");
@@ -1018,7 +1094,7 @@ mod tests {
   #[test]
   fn a_full_list_refuses_or_waits_for_room() {
     let table = ThreadTable::new();
-    let conn = table.allocate().expect("conn");
+    let conn = table.allocate(&no_link).expect("conn");
     conn.open_requests(2);
     conn.submit(request(), false).expect("first");
     conn.submit(request(), false).expect("second");
@@ -1037,7 +1113,7 @@ mod tests {
   #[test]
   fn a_request_wakes_an_executor_waiting_for_one() {
     let table = ThreadTable::new();
-    let conn = table.allocate().expect("conn");
+    let conn = table.allocate(&no_link).expect("conn");
     conn.open_requests(4);
     let executor = Arc::clone(&conn);
     let handle = thread::spawn(move || {
@@ -1059,7 +1135,7 @@ mod tests {
     // It waits for signals only; a request must not wake it, which
     // would cost it a wake-up for nothing it can take.
     let table = ThreadTable::new();
-    let conn = table.allocate().expect("conn");
+    let conn = table.allocate(&no_link).expect("conn");
     conn.open_requests(4);
     let executor = Arc::clone(&conn);
     let handle = thread::spawn(move || {
@@ -1078,7 +1154,7 @@ mod tests {
   #[test]
   fn closing_refuses_new_requests_and_those_waiting_for_room() {
     let table = ThreadTable::new();
-    let conn = table.allocate().expect("conn");
+    let conn = table.allocate(&no_link).expect("conn");
     conn.open_requests(1);
     conn.submit(request(), false).expect("first");
     let waiter = Arc::clone(&conn);
@@ -1106,7 +1182,7 @@ mod tests {
     // An executor at its in-flight limit takes no requests, but a scan's
     // reader handing a batch back must still reach it.
     let table = ThreadTable::new();
-    let conn = table.allocate().expect("conn");
+    let conn = table.allocate(&no_link).expect("conn");
     conn.open_requests(1);
     conn.submit(request(), false).expect("fills the list");
     let executor = Arc::clone(&conn);
@@ -1149,7 +1225,7 @@ mod tests {
     // Several receive threads post to one user thread at once. Every
     // signal must arrive exactly once.
     let table = Arc::new(ThreadTable::new());
-    let conn = table.allocate().expect("conn");
+    let conn = table.allocate(&no_link).expect("conn");
     let mut posters = Vec::new();
     let mut p: u16 = 0;
     while p < 4 {

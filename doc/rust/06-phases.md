@@ -2099,11 +2099,6 @@ found. Known now, to weigh there:
 - a bind inside a callback fails for a table whose description comes in
   more than one fragment, as the wait there holds the other fragments
   back (`poll_for_reply`; found in the review of 2026-10-21);
-- a connection closed while its scans' pool still waits for an
-  allocate leaks that record at the coordinator, and a later
-  connection given the same block number could take its answer as its
-  own (`release_coord_records` skips records not yet confirmed; found
-  in the second review of 2026-10-21).
 
 ### 11.1 The author's first review (2026-10-21)
 
@@ -2180,6 +2175,21 @@ held, two of them in part:
 8. A coordinator record whose allocate was given up on after five
    seconds was never freed when its answer came late: the late answer
    now frees it, over the link it was asked on.
+
+### 11.3 From the list (2026-10-21)
+
+- A connection freed while its scans' pool waited for an allocate,
+  which the pool asks ahead as each scan starts, left that record held
+  at the coordinator until the link went, and a later connection given
+  the block number could take its answer as its own. The free now
+  waits for its allocates' answers, 5 s at most, taking nothing else
+  in and running no callback, and gives each record back; a block
+  number with an answer still out, or with an allocate given up on,
+  rests in the thread table until that link has gone (the author's
+  choice; chapter 02, "Data flow for a scan"). The integration test
+  `scan_a_connection_freed_while_a_record_is_asked_for_gives_it_back`
+  counts, through `ndbinfo`, the records the freed connection's block
+  still holds.
 
 ## Later — after the first version
 

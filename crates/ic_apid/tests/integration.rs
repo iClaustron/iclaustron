@@ -68,6 +68,7 @@ use std::sync::Arc;
 
 use ic_apic::mgm_client;
 use ic_apid::apid_conn::ApidConnection;
+use ic_apid::apid_conn::IC_COORD_ALLOC_WAIT_MS;
 use ic_apid::apid_global::ApidGlobal;
 use ic_apid::apid_global::GlobalOptions;
 use ic_apid::collation_client;
@@ -10855,4 +10856,68 @@ fn review_2_5_a_filter_on_a_disk_column_reads_the_disk() {
   assert_eq!(ids, expected, "the rows whose val is above 90");
   assert_eq!(conn.unexpected(), 0);
   conn.free_scan(scan).expect("free the scan");
+}
+
+/// How many coordinator records the data nodes hold for the block
+/// reference `apiref`, idle ones included, as `ndbinfo` lists them; or
+/// `None` without a MySQL client.
+fn records_held_by(apiref: u32) -> Option<u64> {
+  let out = mysql(&format!(
+    "SELECT COUNT(*) FROM ndbinfo.`ndb$transactions_full` WHERE apiref = {}",
+    apiref
+  ))?;
+  Some(out.trim().parse::<u64>().expect("a count"))
+}
+
+#[test]
+fn scan_a_connection_freed_while_a_record_is_asked_for_gives_it_back() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_scan_table().is_none() {
+    return;
+  }
+  // Each round's connection starts a scan, whose pool has no record yet
+  // and asks the coordinator for one, and is freed at once, before any
+  // poll could take the answer in. The free waits for the answer and
+  // gives the record back; else it would stay held while our node is
+  // up, and its answer go to the next connection with the block number.
+  let mut round: u32 = 0;
+  while round < 4 {
+    let mut conn = cluster.global.create_connection().expect("connection");
+    let apiref = conn.block_ref();
+    let t = bind(&mut conn, "scan");
+    let scan = conn.create_scan(&t.def, &t.rec).expect("create the scan");
+    conn.start_scan(scan, &ScanArgs::default()).expect("start");
+    assert_eq!(
+      conn.scan(scan).expect("the scan").state(),
+      ScanState::Starting,
+      "a new connection has no record for a scan yet"
+    );
+    let start = time::gethrtime();
+    drop(conn);
+    let took = time::millis_elapsed(start, time::gethrtime());
+    println!("round {}: the free took {} ms", round, took);
+    assert!(
+      took < IC_COORD_ALLOC_WAIT_MS as u64,
+      "the free waited it out"
+    );
+    // The record's COORD_FREE_REQ goes without an answer waited for, so
+    // the coordinator may list it a moment longer.
+    let start = time::gethrtime();
+    loop {
+      let held = match records_held_by(apiref) {
+        Some(held) => held,
+        None => return,
+      };
+      if held == 0 {
+        break;
+      }
+      let waited = time::millis_elapsed(start, time::gethrtime());
+      assert!(waited < 2_000, "round {}: {} record(s) held", round, held);
+      std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    round += 1;
+  }
 }

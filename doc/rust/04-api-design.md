@@ -1159,7 +1159,11 @@ A connection, and an executor, is freed before its global, a query,
 transaction or scan with its connection. A table, index or record
 handle may outlive the connection that bound it; a request, or a scan
 reader, keeps what it needs of its shapes. A submitter outlives its
-executor harmlessly: it refuses.
+executor harmlessly: it refuses. Freeing a connection, an executor's
+too, first waits for the answers to the coordinator records it has
+asked for, so as to give them back: well under a millisecond as a
+rule, 5 s at most, with no callback run (the author, 2026-10-21;
+chapter 02, "Data flow for a scan").
 
 ### Functions
 
