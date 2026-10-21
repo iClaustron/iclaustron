@@ -9,10 +9,9 @@
 - The new Rust code, the C header and the C++ wrapper are copyright
   Hopsworks and/or its affiliates, MIT licensed.
 - RonDB / MySQL NDB Cluster is GPLv2 with the Universal FOSS Exception,
-  copyright Oracle and Hopsworks. Nothing from
-  `/Users/mikael/mysql_trees/rondb_2604_main` may be copied into the new
-  code base: no code, no tables, no comments, no header layouts pasted
-  verbatim.
+  copyright Oracle and Hopsworks. Nothing from a RonDB tree may be
+  copied into the new code base: no code, no tables, no comments, no
+  header layouts pasted verbatim.
 - The wire protocol itself (signal numbers, block numbers, field layouts,
   text protocol strings) is an interface. Reimplementing an interface is
   what the GPL's own FAQ and decades of practice (Samba, Wine, ReactOS)
@@ -42,10 +41,11 @@ listening to the network.
    facts, never to copy.
 4. **Write a specification note** in [05-ndb-protocol.md](05-ndb-protocol.md)
    in our own words: field names of our own, word offsets, bit widths,
-   semantics, naming the capture it came from and, where the source was
-   read, a bare *file:line pointer* into RonDB. The pointer is a
-   citation, not a copy, and names no RonDB function, class, constant
-   or signal.
+   semantics, naming the capture it came from. Where the source was
+   read the note says which part of RonDB does it, and a mend its
+   commit, never a file and line, which change from time to time (the
+   author, 2026-10-21); it names no RonDB function, class, constant or
+   signal.
 5. **Implement** from the note, not from a capture window or the RonDB
    source. Code comments cite the chapter 05 section, never RonDB.
 6. **Verify** against a live RonDB cluster, the dissector showing our
@@ -68,9 +68,9 @@ we used RonDB's names for signals and blocks as interface vocabulary.
   Constants are `IC_SIG_<NAME>` and `IC_BLOCK_<NAME>`, Rust types
   CamelCase (`KeyOpReq`). The table by number is in chapter 05; the
   first draft is in chapter 06 §6.1.
-- **RonDB names appear nowhere** in code or docs. Chapter 05 cites RonDB
-  by bare file:line and refers to signals by number; code comments cite
-  chapter 05. `cargo xtask names` checks this against a RonDB tree given
+- **RonDB names appear nowhere** in code or docs. Chapter 05 refers to
+  signals by number and cites RonDB by no file and line; code comments
+  cite chapter 05. `cargo xtask names` checks this against a RonDB tree given
   at check time, so that the list of RonDB names is never stored here.
 - **The wire is the boundary** (author, 2026-10-08): whatever travels
   on it stays exactly as it is: numbers, word layouts, error codes,

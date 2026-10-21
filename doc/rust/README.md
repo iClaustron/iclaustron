@@ -14,7 +14,7 @@ Read in order the first time; afterwards each chapter stands alone.
 | [02 Architecture](02-architecture.md) | Crate layering, runtime objects, the fixed threading model, data flows, mutex levels |
 | [03 Module map](03-module-map.md) | Every surviving C file → Rust module with mode (1:1 / redesign / new / out) |
 | [04 API design](04-api-design.md) | Rust, C and C++ surfaces; record-style rows; transactions; queries; what changes in `ic_apid.h` |
-| [05 NDB protocol](05-ndb-protocol.md) | Clean-room protocol spec for 26.10 with verification pointers; delta from the 7.2.9 baseline |
+| [05 NDB protocol](05-ndb-protocol.md) | Clean-room protocol spec for 26.10; delta from the 7.2.9 baseline |
 | [06 Phases](06-phases.md) | Phases 0–10 with exit criteria and proof commands; replanned 2026-10-08: our own names, key operations completed, C API and 0.1, then the executor and scans, then a basic interpreter and AUTO_INCREMENT |
 | [07 Style guide](07-style-guide.md) | Allowed and forbidden Rust; naming; memory; errors |
 | [08 Testing and tooling](08-testing-and-tooling.md) | Toolchain, developer-run test pyramid, captured vectors, integration cluster, benchmark |
@@ -46,4 +46,4 @@ Read in order the first time; afterwards each chapter stands alone.
 
 - iClaustron C code: this repository, branch `RUST-iclaustron`, to be
   moved unchanged to `legacy-c/` in Phase 0.
-- RonDB 26.10: `/Users/mikael/mysql_trees/rondb_2604_main/storage/ndb`. Read for protocol facts; never copy.
+- RonDB 26.10: a RonDB source tree. Read for protocol facts; never copy.

@@ -27,7 +27,10 @@
 #      time (--batch 1 --depth 1); then ic_model's prediction of the same.
 set -u
 
-RONDB=${RONDB:-/Users/mikael/mysql_trees/rondb_2604_main}
+# RONDB names the RonDB tree the cluster runs from (doc/dev-cluster.md),
+# whose xxHash source step 1 builds; RONDB_BIN, its programs' directory,
+# defaults to its release build's.
+RONDB=${RONDB:?set RONDB to the RonDB tree of the cluster}
 RONDB_BIN=${RONDB_BIN:-$RONDB/prod_build/bin}
 CS=${CS:-localhost:1186}
 MYSQL=${MYSQL:-"$RONDB_BIN/mysql -uroot --protocol=tcp --host=127.0.0.1 --port 13000"}

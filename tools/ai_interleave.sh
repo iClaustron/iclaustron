@@ -32,8 +32,11 @@
 # when every check holds.
 set -u
 
-RONDB=${RONDB:-/Users/mikael/mysql_trees/rondb_2604_main}
-BIN=${BIN:-$RONDB/debug_build/bin}
+# RONDB names the RonDB tree the cluster runs from (doc/dev-cluster.md);
+# BIN, its programs' directory, may be given instead.
+if [ -z "${BIN:-}" ]; then
+  BIN=${RONDB:?set RONDB to the RonDB tree of the cluster}/debug_build/bin
+fi
 CS=${CS:-${IC_TEST_CONNECTSTRING:-localhost:1186}}
 MYSQL=${MYSQL:-${IC_TEST_MYSQL:-"$BIN/mysql -uroot --protocol=tcp --host=127.0.0.1 --port 13000"}}
 MYSQL2=${MYSQL2:-}

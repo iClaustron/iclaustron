@@ -56,9 +56,8 @@ is later, after it. Phase 10's size is an estimate of ours.
 - **Rewrite `ic_apid.h`** to chapter 04: records, args structs, flat
   functions, no savepoints, no cluster ids, RonDB 26.10 types. This is the
   design review artefact; the Rust follows it.
-- A RonDB 26.10 development cluster: build the tree at
-  `/Users/mikael/mysql_trees/rondb_2604_main` with NDB, or use the docker
-  images; document start/stop in `doc/dev-cluster.md`.
+- A RonDB 26.10 development cluster: build a RonDB tree with NDB, or
+  use the docker images; document start/stop in `doc/dev-cluster.md`.
 - Exit: `cargo build --workspace` on the empty workspace; header reviewed.
 
 ## Phase 1 — Foundations (3–4 weeks)
@@ -532,8 +531,9 @@ numbers, word layouts and error codes are the interface and do not
 change. Every name we give a signal, a block, a signal's fields, a
 dictionary property key, a pseudo-column or a module is our own and
 says what the thing does. RonDB names appear nowhere in code or docs:
-chapter 05 cites RonDB by bare file:line and refers to signals by
-number, and code comments cite chapter 05's sections, not RonDB.
+chapter 05 refers to signals by number and to RonDB by the part that
+does a thing and by commit, never by file and line (the author,
+2026-10-21), and code comments cite chapter 05's sections, not RonDB.
 
 The style (author): new stems with the suffixes `_REQ` (request),
 `_CONF` (confirm), `_REF` (refuse) and `_REP` (report); a signal that
@@ -591,8 +591,9 @@ are used as they are. "RonDB" and "NDB" name what we interoperate with.
 only, never built.
 
 Citations: the code's comments cite chapter 05, and chapter 05 §17
-holds, module by module, the facts the code relies on with their bare
-RonDB file:line. Chapter 05 is the only file that cites RonDB.
+holds, module by module, the facts the code relies on. RonDB's files
+and lines change from time to time, so no doc cites them (the author,
+2026-10-21).
 
 `cargo xtask names` (`xtask/src/names.rs`) reads, when it runs, the
 names of signals, blocks, signal layouts, dictionary keys,
@@ -1327,8 +1328,8 @@ failure.
   it on the node and coordinator instance of the transaction's record
   and names that record; every other scan names none (the author,
   2026-10-16; chapter 04, chapter 05 §7.2). A scan naming none needs
-  the author's mend of the coordinator's check on that word, in
-  `rondb_1107_cte_test` (d9f777a6847); on a tree without it such a
+  the author's mend of the coordinator's check on that word, RonDB
+  d9f777a6847; on a tree without it such a
   scan may stop a data node.
   Records for scans are pooled per node and instance and taken ahead,
   so that nothing waits for one, an executor least of all.
@@ -1383,13 +1384,13 @@ failure.
   comes later over the same.
 - Chapter 04, "Consuming scans", has the design, and the C ABI for
   scans on a connection and through an executor.
-- **Built 2026-10-16**; the `scan_` integration group passes against
-  `rondb_1107_cte_test`: the 7 tests of 8.3 and 5 new ones (`next_row`
-  on a connection; a scan read row by row beside another; readers on an
-  executor in every lock mode and with `read_ahead`; readers closed
-  early, dropped and refused; a slow reader), and the C ABI's test.
-  While one reader held a batch, five other readers on the same
-  executor each read the whole table, in 7 ms together.
+- **Built 2026-10-16**; the `scan_` integration group passes against a
+  tree with the author's scan mends: the 7 tests of 8.3 and 5 new ones
+  (`next_row` on a connection; a scan read row by row beside another;
+  readers on an executor in every lock mode and with `read_ahead`;
+  readers closed early, dropped and refused; a slow reader), and the C
+  ABI's test. While one reader held a batch, five other readers on the
+  same executor each read the whole table, in 7 ms together.
 - Left for later: a Rust stream over the reader; scans whose
   coordinator stays up but never answers still wait for the run's own
   `timeout_ms` or the coordinator's timers (from 8.3).
@@ -1416,7 +1417,7 @@ asked for more only once every takeover of its batch has its
   transaction's no-wait read (635); takeovers on batches handed back at
   once and across a close; the refusals; and in C, every row updated.
 - **Passes 2026-10-16**: the `scan_` group against
-  `rondb_1107_cte_test`, the 12 tests of 8.3 and 8.4 and the 3 new
+  a tree with the scan mends, the 12 tests of 8.3 and 8.4 and the 3 new
   ones, and the C ABI's test with its takeovers.
 
 ### 8.6 Character sets from the data nodes (1 week, with RonDB's new request)
@@ -1522,7 +1523,7 @@ The test `charset_text_in_and_out_through_the_tables` checks every byte
 of latin1, and text in each Unicode set, against what MySQL converts
 and stores, both ways, and latin2 and cp1251 in hexadecimal. It, the
 `charset_` group and the whole integration run pass against
-`rondb_1107_cte_test` (2026-10-16). The merge is 8.7's.
+a tree with the scan mends (2026-10-16). The merge is 8.7's.
 
 ### 8.7 Ordered index range scans (1.5 weeks)
 
@@ -1561,7 +1562,7 @@ fixes the distribution key.
   that sort apart in some, and six utf8mb4 collations; rows taken over
   from an ordered exclusive scan and updated; and the refusals.
 - **Passes 2026-10-17**: the eight new tests and the whole `scan_`
-  group against `rondb_1107_cte_test`; the merge's order matches
+  group against a tree with the scan mends; the merge's order matches
   MySQL's for every type, collation and word tried.
 - **8.7b, through an executor, built 2026-10-17**
   (chapter 04, "Index scans"): `ScanShape::new_index`,
@@ -1579,7 +1580,7 @@ fixes the distribution key.
   ahead, and with shared and exclusive locks; numbered ranges; the
   refusals; a reader closed early and run again; and an ordered run of
   each latin1 collation, both ways. **Passes 2026-10-17**, with the
-  whole `scan_` group, against `rondb_1107_cte_test`.
+  whole `scan_` group, against a tree with the scan mends.
 
 ### 8.8 C ABI and examples (3 days)
 
@@ -1606,7 +1607,7 @@ executor.
   name, not the column the scan goes by. The C one with threads uses
   POSIX threads, `-pthread` in the Makefile.
 - **8.8c, the exit's runs, pass 2026-10-17** against
-  `rondb_1107_cte_test`, and with them phase 8's exit is met: the
+  a tree with the scan mends, and with them phase 8's exit is met: the
   `exit` group's `exit_a_scan_of_a_million_rows_counts_what_mysql_counts`
   fills a table through an executor, sixteen threads of transactions of
   250 writes, and counts and sums it by a scan of every fragment, on a
@@ -2095,8 +2096,6 @@ found. Known now, to weigh there:
 - a Rust stream over the scan reader (8.4);
 - chapter 10's open questions, most of them settled in fact (Q2, Q5,
   Q11, Q12);
-- the RonDB tree's path written into `doc/dev-cluster.md` and
-  `examples/README.md`, where the clusters run from several trees;
 - a bind inside a callback fails for a table whose description comes in
   more than one fragment, as the wait there holds the other fragments
   back (`poll_for_reply`; found in the review of 2026-10-21);
@@ -2201,9 +2200,8 @@ may move into phase 11 if an early application needs it.
 
 1. Read the C header and source; copy the header prose into Rust doc
    comments (it is our text). Check every protocol constant against 26.10.
-   Each protocol fact goes into chapter 05 in our words, with a bare
-   RonDB file:line, before the code that uses it; code comments cite the
-   chapter 05 section.
+   Each protocol fact goes into chapter 05 in our words before the code
+   that uses it; code comments cite the chapter 05 section.
 2. Write the Rust module with the same file name and function names as
    the C, and give anything the C does not have a name of our own that
    says what it does, never a RonDB name (chapter 09).
@@ -2219,7 +2217,7 @@ may move into phase 11 if an early application needs it.
 
 | Risk | Mitigation |
 |---|---|
-| iClaustron's protocol knowledge is NDB 7.2.9; anything not re-verified against 26.10 is suspect | every protocol constant is backed by a chapter 05 section with a 26.10 file:line; Phase 3 signal tracing shows mismatches immediately |
+| iClaustron's protocol knowledge is NDB 7.2.9; anything not re-verified against 26.10 is suspect | every protocol constant is backed by a chapter 05 section, checked against 26.10; Phase 3 signal tracing shows mismatches immediately |
 | Legacy vs TLS-capable socket auth (Q2) | test both on day one of Phase 3 |
 | The rename (6.1) changes something on the wire | a pure rename: a capture taken before replays byte for byte after; every test passes unchanged |
 | A RonDB name creeps back in | `cargo xtask names` reads the names from a RonDB tree at check time; review checklist item |
@@ -2228,5 +2226,5 @@ may move into phase 11 if an early application needs it.
 | Scan flow control starves an executor | credit per receiver, rows copied out of receive pages (8.3, 8.4); measured with many consumers |
 | Interpreter encoding is large | phase 9 starts by writing chapter 05 §9; basic first; register-only programs, spill strategy decided later |
 | Performance below target with dedicated receive threads | benchmark at Phase 5 and 7; tune receive thread count, batching, page sizes; the model itself is fixed |
-| Clean-room slips | review checklist item; `MODULE.md` cites, never quotes; RonDB is cited only in chapter 05, by file:line |
+| Clean-room slips | review checklist item; `MODULE.md` cites, never quotes; RonDB is named only in chapter 05, never by file and line |
 | Scope creep into RonDB-only features | Later, by decision (replanned 2026-10-20) |

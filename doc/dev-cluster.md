@@ -11,7 +11,9 @@ The usual setup: the RonDB tree's own test runner starts a cluster and
 keeps it running, with the management server and the data nodes on
 fixed ports, so that a capture can be set up for them beforehand.
 
-Source: `/Users/mikael/mysql_trees/rondb_2604_main`, with two builds:
+Source: a RonDB 26.10 tree, named `$RONDB` below (`export RONDB=` its
+path); the clusters run from whichever tree has the newest mends. It
+has two builds:
 
 - `debug_build`: a debug build (`CMAKE_BUILD_TYPE=Debug`,
   `WITH_DEBUG=1`), made with `build_scripts/build_script_debug.sh`. The
@@ -24,13 +26,13 @@ Each has its programs in `bin/`; the commands below name each by its
 file name, with
 
 ```sh
-BIN=/Users/mikael/mysql_trees/rondb_2604_main/debug_build/bin
+BIN=$RONDB/debug_build/bin
 ```
 
 Start the cluster and keep it running until Ctrl-C:
 
 ```sh
-cd /Users/mikael/mysql_trees/rondb_2604_main/debug_build/mysql-test
+cd $RONDB/debug_build/mysql-test
 ./mtr --suite=ndb ndb_setup_fixed_ports --start
 ```
 
@@ -63,7 +65,7 @@ cargo xtask test-integration localhost:1186 pk_    # one group
 ```
 
 `IC_TEST_MYSQL` may name the socket instead:
-`$BIN/mysql -uroot -S /Users/mikael/mysql_trees/rondb_2604_main/debug_build/mysql-test/var/tmp/mysqld-13000.sock`.
+`$BIN/mysql -uroot -S $RONDB/debug_build/mysql-test/var/tmp/mysqld-13000.sock`.
 
 The tests make their tables through the MySQL server, in the database
 `ic_it`. The `big_rows` group also needs disk data: when the cluster

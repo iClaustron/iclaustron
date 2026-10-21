@@ -57,9 +57,7 @@ asynchronous interface, later a scan) against a local 26.10 cluster.
 
 Need a live cluster. Two ways to get one:
 
-- **Local build**: the RonDB tree at
-  `/Users/mikael/mysql_trees/rondb_2604_main` built with
-  `-DWITH_NDB=1`; start with the MTR-provided cluster
+- **Local build**: a RonDB tree built with `-DWITH_NDB=1`; start with the MTR-provided cluster
   (`cd mysql-test && ./mtr --start ndb.ndb_basic` leaves a cluster running
   on well-known ports) or with a hand-written `config.ini`, the
   management server, the data nodes and `mysqld`. This is the primary

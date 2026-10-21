@@ -11,8 +11,11 @@
 #   tools/desc_compare.sh          # from the repository's root
 set -u
 
-RONDB=${RONDB:-/Users/mikael/mysql_trees/rondb_2604_main}
-RONDB_BIN=${RONDB_BIN:-$RONDB/prod_build/bin}
+# RONDB names the RonDB tree the cluster runs from (doc/dev-cluster.md);
+# RONDB_BIN, its programs' directory, may be given instead.
+if [ -z "${RONDB_BIN:-}" ]; then
+  RONDB_BIN=${RONDB:?set RONDB to the RonDB tree of the cluster}/prod_build/bin
+fi
 CS=${CS:-localhost:1186}
 MYSQL=${MYSQL:-"$RONDB_BIN/mysql -uroot --protocol=tcp --host=127.0.0.1 --port 13000"}
 IC_DESC=${IC_DESC:-target/release/ic_desc}

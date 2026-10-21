@@ -33,7 +33,7 @@ range of val finds them alone, and `conditional_update` ids 300 to
 without t2 and t3, are made again by running it again:
 
 ```sh
-BIN=/Users/mikael/mysql_trees/rondb_2604_main/debug_build/bin
+BIN=$RONDB/debug_build/bin   # the RonDB tree the cluster runs from
 $BIN/mysql -uroot --protocol=tcp --host=127.0.0.1 --port 13000 \
   < examples/setup.sql
 ```
