@@ -73,6 +73,7 @@ use ic_port::debug::IC_HEARTBEAT_LEVEL;
 use ic_port::debug::IC_NDB_MESSAGE_LEVEL;
 use ic_port::err;
 use ic_port::sync::IcMutex;
+use ic_port::sync::IcMutexGuard;
 use ic_port::sync::IC_MUTEX_LEVEL_COUNTER;
 use ic_port::sync::IC_MUTEX_LEVEL_GLOBAL;
 use ic_port::sync::IC_MUTEX_LEVEL_NODE_CONN;
@@ -592,19 +593,39 @@ impl NodeShared {
     self.write_out(&conn, buf)
   }
 
-  /// The pool's write: what waits, if anything still does. With `due`
-  /// the wait for company is over, and the chain is claimed here; else
-  /// it was left claimed by the writer that asked.
-  pub(crate) fn send_for_pool(&self, due: bool) {
-    let mut sender = self.sender.lock();
-    if due {
-      sender.deferred = false;
-      if sender.send_active {
-        // Someone is writing, and takes what waits.
-        return;
-      }
-      sender.adaptive.wait_ended();
+  /// The pool's write of what a writer handed it on the link of
+  /// `generation`, whose send chain that writer left claimed for the
+  /// pool. A job for a link since replaced is not the new link's: that
+  /// link's chain is free, or claimed by a thread writing its socket
+  /// now, and a write or a let-go from here would let two threads write
+  /// one socket at once. Such a job does nothing; the link it was for
+  /// took what waited when it went.
+  pub(crate) fn send_handed_over(&self, generation: u32) {
+    let sender = self.sender.lock();
+    if sender.generation != generation {
+      return;
     }
+    self.write_waiting(sender);
+  }
+
+  /// The pool's write once a wait for company is over: what waits, if
+  /// anything still does and no one is writing it. The chain is claimed
+  /// here, under the mutex, so a job left from an earlier link takes
+  /// nothing from the writer of this one.
+  pub(crate) fn send_due(&self) {
+    let mut sender = self.sender.lock();
+    sender.deferred = false;
+    if sender.send_active {
+      // Someone is writing, and takes what waits.
+      return;
+    }
+    sender.adaptive.wait_ended();
+    self.write_waiting(sender);
+  }
+
+  /// The pool's write of what waits, the chain its own: claimed by the
+  /// writer that handed it over, or free for `send_due` to take.
+  fn write_waiting(&self, mut sender: IcMutexGuard<'_, Sender>) {
     let conn = match sender.conn.as_ref() {
       Some(conn) => Arc::clone(conn),
       None => {
@@ -669,9 +690,10 @@ impl NodeShared {
           drop(sender);
         } else {
           // More was queued while we wrote: the pool takes it, and the
-          // chain stays claimed for it.
+          // chain stays claimed for it, on this link alone.
+          let generation = sender.generation;
           drop(sender);
-          self.pool.ask(self.node_id);
+          self.pool.ask(self.node_id, generation);
         }
         Ok(())
       }
@@ -1608,6 +1630,76 @@ mod tests {
   /// A node with a pool of its own, for tests of what needs no thread.
   fn test_node(node_id: u32, heartbeat_interval_ms: u32) -> NodeShared {
     NodeShared::new(node_id, heartbeat_interval_ms, Arc::new(SendPool::new()))
+  }
+
+  /// A link to a listener of our own on the loopback, and the
+  /// listener's end of it, for tests of the send chain.
+  fn loopback_link() -> (Arc<Connection>, std::net::TcpStream) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = listener.local_addr().expect("an address").port();
+    let config = ic_comm::connection::ConnectConfig {
+      server_name: "127.0.0.1".to_string(),
+      server_port: port,
+      connect_timeout_ms: 2000,
+      ..ic_comm::connection::ConnectConfig::default()
+    };
+    let conn = Connection::connect(&config).expect("connect");
+    let (peer, _) = listener.accept().expect("accept");
+    (Arc::new(conn), peer)
+  }
+
+  /// Install `conn` as the node's link and publish it, as the receive
+  /// thread does; the link's generation.
+  fn link_up(node: &NodeShared, conn: Arc<Connection>, now: IcTimer) -> u32 {
+    node.install_sender(conn, false);
+    node.published.publish_connected(&NodeState::default(), now);
+    node.sender.lock().generation
+  }
+
+  #[test]
+  fn a_pool_job_of_a_replaced_link_leaves_the_new_links_writer_alone() {
+    use std::io::Read;
+    let node = test_node(2, 1500);
+    let (first, _first_peer) = loopback_link();
+    let old = link_up(&node, first, 1);
+    // A writer of the first link left more for the pool, the chain
+    // claimed for it; then the link went, and another took its place.
+    {
+      let mut sender = node.sender.lock();
+      sender.send_active = true;
+      sender.waiting.extend_from_slice(&[1, 2, 3]);
+    }
+    node.clear_sender();
+    let (second, mut second_peer) = loopback_link();
+    let new = link_up(&node, second, 2);
+    assert_ne!(old, new, "a new link, a new generation");
+    // A thread writes the new link's socket now, outside the mutex, and
+    // what is queued meanwhile is left to it.
+    {
+      let mut sender = node.sender.lock();
+      sender.send_active = true;
+      sender.waiting.push(9);
+    }
+    // The old link's job takes nothing and lets go of nothing.
+    node.send_handed_over(old);
+    // Nor does a wait for company that ends while the writer writes.
+    node.send_due();
+    {
+      let sender = node.sender.lock();
+      assert!(sender.send_active, "the writer's claim is kept");
+      assert_eq!(sender.waiting, vec![9]);
+    }
+    // A job the writer hands over on the new link writes what waits,
+    // and lets the chain go.
+    node.send_handed_over(new);
+    {
+      let sender = node.sender.lock();
+      assert!(!sender.send_active);
+      assert!(sender.waiting.is_empty());
+    }
+    let mut word = [0u8; 4];
+    second_peer.read_exact(&mut word).expect("the word written");
+    assert_eq!(u32::from_ne_bytes(word), 9);
   }
 
   #[test]

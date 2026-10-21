@@ -151,7 +151,14 @@ route; user threads execute.**
   our receive thread sleeps for milliseconds when nothing arrives,
   where a wait is bounded in microseconds, and a thread that sleeps
   until the deadline ends the wait when it is due rather than when the
-  next signal happens to come in.
+  next signal happens to come in. A remainder handed to the pool names
+  the link it was handed over on, by its generation, and the chain
+  stays claimed for the pool on that link alone: once that link has
+  gone, the job does nothing, for the link that took its place has a
+  chain of its own, free or claimed by a thread writing its socket,
+  and a write from the pool there would put two writes into one
+  stream (review, 2026-10-21). An ending wait claims the chain under
+  the mutex, as any writer does.
 - **Heartbeat thread** (one): walks the node table on its schedule and
   sends `HEARTBEAT_REQ` to every node that is up. It reads node state and
   never writes it. It times a node out when the last `HEARTBEAT_CONF`
@@ -413,7 +420,10 @@ As built (`ic_apid::apid_conn`):
   `IC_ERROR_LINK_LOST`, and its reply then came to nobody.
 - `call` sends and waits in 100 ms slices, so a lost link is noticed
   within one slice. A request that times out is forgotten; its reply,
-  if it comes later, is counted as unexpected.
+  if it comes later, is counted as unexpected, but for an allocate's:
+  a record allocated after its wait ended is freed as its confirmation
+  comes, since nothing else could give it back (review, 2026-10-21;
+  chapter 05 §6.1, "An allocate given up on").
 
 Mutex ordering levels (lock lower before higher, never the reverse):
 

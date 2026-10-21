@@ -136,6 +136,12 @@ pub const IC_NDB_ERROR_SCHEMA_CHANGED: i32 = 241;
 /// does not know, such as one dropped since it was bound.
 pub const IC_NDB_ERROR_UNKNOWN_TABLE: i32 = 284;
 
+/// True if a send failed because its node's link has gone, which the
+/// next poll reports to the requests that used it.
+fn lost_link(error: IcError) -> bool {
+  error.code == err::IC_ERROR_LINK_LOST || error.code == err::IC_ERROR_NODE_DOWN
+}
+
 /// True if `code` says a table or index is not what it was bound as:
 /// any error NDB classes as a schema error, 241, 283, 284, 709, 710 and
 /// 723 among those known here. A refusal, a scan's or an abort report
@@ -1009,10 +1015,19 @@ impl ApidConnection {
   }
 
   /// Send, then poll (`ic_apid_conn_flush`, `ic_flush`). Returns how
-  /// many signals the poll took.
+  /// many signals the poll took. The poll always runs, and a send that
+  /// failed because a link has gone is no error here: the poll fails the
+  /// transactions sent over that link with its error, as it reports any
+  /// link's loss, and completes the others (the author, 2026-10-21).
+  /// Any other error of the send is returned, after the poll.
+  /// `send_queries` still says every error.
   pub fn flush(&mut self, wait_ms: u32, force: bool) -> Result<usize, IcError> {
-    self.send_queries(force)?;
-    Ok(self.poll(wait_ms))
+    let sent = self.send_queries(force);
+    let taken = self.poll(wait_ms);
+    match sent {
+      Err(e) if !lost_link(e) => Err(e),
+      _ => Ok(taken),
+    }
   }
 
   fn active_transactions(&self) -> Vec<TransId> {
@@ -1206,6 +1221,10 @@ impl ApidConnection {
       numbers::IC_SIG_TAKEOVER_REF => self.take_fail_ref(signal),
       numbers::IC_SIG_COORD_FREE_CONF | numbers::IC_SIG_COORD_FREE_REF => {
         self.take_free_reply(signal)
+      }
+      // An allocate's answer no wait claimed: one given up on.
+      numbers::IC_SIG_COORD_ALLOC_CONF | numbers::IC_SIG_COORD_ALLOC_REF => {
+        self.take_late_allocate(signal)
       }
       _ => false,
     }

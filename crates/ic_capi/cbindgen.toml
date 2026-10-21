@@ -70,15 +70,19 @@ after_includes = """
  * from; an error's text is copied into the caller's buffer.
  *
  * Structs with a size. IC_GLOBAL_OPTIONS, IC_EXECUTOR_OPTIONS,
- * IC_READ_KEY_ARGS, IC_WRITE_KEY_ARGS, IC_SCAN_ARGS and
+ * IC_READ_KEY_ARGS, IC_WRITE_KEY_ARGS, IC_SCAN_ARGS, IC_SCAN_RANGE and
  * IC_TAKEOVER_ARGS are filled by their _init(&s, sizeof s) before the
  * program sets what it wants;
  * IC_FIELD_INFO and IC_EXECUTOR_STATS are given with their size. A
- * later release adds fields at the end, and a program built against an
- * older header gets the fields it knows: IC_EXECUTOR_OPTIONS and
- * IC_EXECUTOR_STATS gained `scans` after 0.1, IC_GLOBAL_OPTIONS its
- * three AUTO_INCREMENT fields, and IC_FIELD_INFO its `auto_increment`
- * and `hidden_key` flags, in what was its padding.
+ * later release adds fields at the end. Of IC_GLOBAL_OPTIONS,
+ * IC_EXECUTOR_OPTIONS, IC_FIELD_INFO and IC_EXECUTOR_STATS a program
+ * built against an older header gets the fields it knows:
+ * IC_EXECUTOR_OPTIONS and IC_EXECUTOR_STATS gained `scans` after 0.1,
+ * IC_GLOBAL_OPTIONS its three AUTO_INCREMENT fields, and IC_FIELD_INFO
+ * its `auto_increment` and `hidden_key` flags, in what was its padding.
+ * The argument structs are taken whole, and one shorter than this
+ * header's is refused with IC_ERROR_INCONSISTENT_DATA: a program is
+ * built again against the header of a release that grows one.
  *
  * Threads. The functions that take no handle (ic_api_version,
  * ic_error_*, ic_field_type_name, the _init functions) may be called

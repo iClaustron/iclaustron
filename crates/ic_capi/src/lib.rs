@@ -876,6 +876,68 @@ unsafe fn row_arg_mut<'a>(row: *mut u8, len: usize) -> &'a mut [u8] {
   unsafe { std::slice::from_raw_parts_mut(row, len) }
 }
 
+/// A key row copied aside while the row it came from is written: on
+/// the stack up to 256 bytes, else on the heap. The size is in the
+/// type, not a constant, as cbindgen warns of a constant not `pub`.
+struct KeyCopy {
+  inline: [u8; 256],
+  heap: Vec<u8>,
+}
+
+impl KeyCopy {
+  fn new() -> KeyCopy {
+    KeyCopy {
+      inline: [0; 256],
+      heap: Vec::new(),
+    }
+  }
+}
+
+/// True if the `a_len` bytes at `a` and the `b_len` bytes at `b` share
+/// any byte.
+fn overlaps(a: *const u8, a_len: usize, b: *const u8, b_len: usize) -> bool {
+  if a.is_null() || b.is_null() || a_len == 0 || b_len == 0 {
+    return false;
+  }
+  let a_start = a as usize;
+  let b_start = b as usize;
+  a_start < b_start.saturating_add(b_len)
+    && b_start < a_start.saturating_add(a_len)
+}
+
+/// The key row of an operation that writes the `out_len` bytes at
+/// `out`. C may name one buffer for both, as a read into the row that
+/// holds its key does: the key is then copied now, before the row is
+/// written, into `copy`, so that no reference to the key's bytes is
+/// alive while they are written. The caller's own bytes when the two do
+/// not overlap.
+///
+/// # Safety
+///
+/// As `row_arg`, for `key` and `key_len`; nothing writes the bytes at
+/// `out` before this returns.
+unsafe fn key_arg(
+  key: *const u8,
+  key_len: usize,
+  out: *const u8,
+  out_len: usize,
+  copy: &mut KeyCopy,
+) -> &[u8] {
+  // SAFETY: the caller's promise; when the key overlaps the row to be
+  // written, this reference is used for the copy alone, and ends here.
+  let given = unsafe { row_arg(key, key_len) };
+  if !overlaps(key, key_len, out, out_len) {
+    return given;
+  }
+  if key_len <= copy.inline.len() {
+    copy.inline[..key_len].copy_from_slice(given);
+    return &copy.inline[..key_len];
+  }
+  copy.heap.clear();
+  copy.heap.extend_from_slice(given);
+  &copy.heap[..]
+}
+
 /// The table behind a handle.
 ///
 /// # Safety
@@ -2353,8 +2415,10 @@ pub unsafe extern "C" fn ic_apid_query_user_ref(
 /// Fill `args`, `size` bytes, with the defaults: a simple read, the
 /// default abort option, no callback.
 ///
-/// Leaves `args` as it is when `size` is smaller than this header's
-/// `IC_READ_KEY_ARGS`.
+/// When `size` is smaller than this header's `IC_READ_KEY_ARGS`, as for a
+/// program built against an older header, only the size is written
+/// into `args`, so that a call given it sees how short it is and
+/// refuses it, without reading past it.
 ///
 /// # Safety
 ///
@@ -2364,7 +2428,12 @@ pub unsafe extern "C" fn ic_read_key_args_init(
   args: *mut IcReadKeyArgs,
   size: usize,
 ) {
-  if args.is_null() || size < std::mem::size_of::<IcReadKeyArgs>() {
+  if args.is_null() {
+    return;
+  }
+  if size < std::mem::size_of::<IcReadKeyArgs>() {
+    // SAFETY: the caller's promise.
+    unsafe { mark_short(args.cast::<u8>(), size) };
     return;
   }
   let value = IcReadKeyArgs {
@@ -2381,8 +2450,10 @@ pub unsafe extern "C" fn ic_read_key_args_init(
 /// Fill `args`, `size` bytes, with the defaults: an update, the default
 /// abort option, no batching hint, no callback.
 ///
-/// Leaves `args` as it is when `size` is smaller than this header's
-/// `IC_WRITE_KEY_ARGS`.
+/// When `size` is smaller than this header's `IC_WRITE_KEY_ARGS`, as for a
+/// program built against an older header, only the size is written
+/// into `args`, so that a call given it sees how short it is and
+/// refuses it, without reading past it.
 ///
 /// # Safety
 ///
@@ -2392,7 +2463,12 @@ pub unsafe extern "C" fn ic_write_key_args_init(
   args: *mut IcWriteKeyArgs,
   size: usize,
 ) {
-  if args.is_null() || size < std::mem::size_of::<IcWriteKeyArgs>() {
+  if args.is_null() {
+    return;
+  }
+  if size < std::mem::size_of::<IcWriteKeyArgs>() {
+    // SAFETY: the caller's promise.
+    unsafe { mark_short(args.cast::<u8>(), size) };
     return;
   }
   let value = IcWriteKeyArgs {
@@ -2431,13 +2507,10 @@ pub unsafe extern "C" fn ic_apid_conn_read_key(
   args: *const IcReadKeyArgs,
 ) -> i32 {
   // SAFETY: the caller's promise.
-  let given = match unsafe { args.as_ref() } {
-    Some(given) => *given,
-    None => return err::IC_ERROR_NULL_POINTER,
+  let given = match unsafe { sized_from_c(args) } {
+    Ok(given) => given,
+    Err(code) => return code,
   };
-  if (given.size as usize) < std::mem::size_of::<IcReadKeyArgs>() {
-    return err::IC_ERROR_INCONSISTENT_DATA;
-  }
   let kind = match read_kind_from_c(given.kind) {
     Some(kind) => kind,
     None => return err::IC_ERROR_NOT_SUPPORTED,
@@ -2490,13 +2563,10 @@ pub unsafe extern "C" fn ic_apid_conn_write_key(
   args: *const IcWriteKeyArgs,
 ) -> i32 {
   // SAFETY: the caller's promise.
-  let given = match unsafe { args.as_ref() } {
-    Some(given) => *given,
-    None => return err::IC_ERROR_NULL_POINTER,
+  let given = match unsafe { sized_from_c(args) } {
+    Ok(given) => given,
+    Err(code) => return code,
   };
-  if (given.size as usize) < std::mem::size_of::<IcWriteKeyArgs>() {
-    return err::IC_ERROR_INCONSISTENT_DATA;
-  }
   let kind = match write_kind_from_c(given.kind) {
     Some(kind) => kind,
     None => return err::IC_ERROR_NOT_SUPPORTED,
@@ -2934,9 +3004,12 @@ pub unsafe extern "C" fn ic_apid_conn_poll(
   }
 }
 
-/// Send, then poll.
+/// Send, then poll. The poll always runs, and a send that failed
+/// because a link has gone is no error here: the poll fails the
+/// transactions sent over that link with its error.
 ///
-/// Errors: as `ic_apid_conn_send`.
+/// Errors: as `ic_apid_conn_send`, but for a lost link; returned after
+/// the poll.
 ///
 /// # Safety
 ///
@@ -2978,7 +3051,8 @@ pub unsafe extern "C" fn ic_apid_conn_flush(
 ///
 /// `conn`, `key_rec` and `attr_rec` are handles not yet freed;
 /// `key_row` points to `key_len` readable bytes, `attr_row` to
-/// `attr_len` writable ones; `found` to a writable `bool`.
+/// `attr_len` writable ones, which may be the same buffer, as the key
+/// is read before the row is written; `found` to a writable `bool`.
 #[no_mangle]
 pub unsafe extern "C" fn ic_apid_conn_read_committed(
   conn: *mut IcApidConnection,
@@ -3001,9 +3075,14 @@ pub unsafe extern "C" fn ic_apid_conn_read_committed(
   if key_len < key.row_size() as usize || attr_len < attr.row_size() as usize {
     return err::IC_ERROR_RECORD_LAYOUT;
   }
-  // SAFETY: the caller's promise.
-  let (key_bytes, attr_bytes) =
-    unsafe { (row_arg(key_row, key_len), row_arg_mut(attr_row, attr_len)) };
+  // The key first, copied aside if it is in the row to be written; only
+  // then the row, so that the two are never borrowed over the same bytes.
+  let mut copy = KeyCopy::new();
+  // SAFETY: the caller's promise; nothing is written yet.
+  let key_bytes =
+    unsafe { key_arg(key_row, key_len, attr_row, attr_len, &mut copy) };
+  // SAFETY: the caller's promise; the key is no longer read from here.
+  let attr_bytes = unsafe { row_arg_mut(attr_row, attr_len) };
   // SAFETY: the caller's promise.
   match unsafe {
     on_conn(conn, |c| {
@@ -3052,9 +3131,14 @@ pub unsafe extern "C" fn ic_apid_conn_read_unique_committed(
   if key_len < key.row_size() as usize || attr_len < attr.row_size() as usize {
     return err::IC_ERROR_RECORD_LAYOUT;
   }
-  // SAFETY: the caller's promise.
-  let (key_bytes, attr_bytes) =
-    unsafe { (row_arg(key_row, key_len), row_arg_mut(attr_row, attr_len)) };
+  // The key first, copied aside if it is in the row to be written; only
+  // then the row, so that the two are never borrowed over the same bytes.
+  let mut copy = KeyCopy::new();
+  // SAFETY: the caller's promise; nothing is written yet.
+  let key_bytes =
+    unsafe { key_arg(key_row, key_len, attr_row, attr_len, &mut copy) };
+  // SAFETY: the caller's promise; the key is no longer read from here.
+  let attr_bytes = unsafe { row_arg_mut(attr_row, attr_len) };
   // SAFETY: the caller's promise.
   match unsafe {
     on_conn(conn, |c| {
@@ -3180,13 +3264,7 @@ fn scan_trampoline(
 /// A non-null `args` was filled by `ic_scan_args_init`.
 unsafe fn scan_args_from_c(args: *const IcScanArgs) -> Result<ScanArgs, i32> {
   // SAFETY: the caller's promise.
-  let given = match unsafe { args.as_ref() } {
-    Some(given) => *given,
-    None => return Err(err::IC_ERROR_NULL_POINTER),
-  };
-  if (given.size as usize) < std::mem::size_of::<IcScanArgs>() {
-    return Err(err::IC_ERROR_INCONSISTENT_DATA);
-  }
+  let given = unsafe { sized_from_c(args) }?;
   let lock = match scan_lock_from_c(given.lock) {
     Some(lock) => lock,
     None => return Err(err::IC_ERROR_NOT_SUPPORTED),
@@ -3221,15 +3299,22 @@ unsafe fn scan_args_from_c(args: *const IcScanArgs) -> Result<ScanArgs, i32> {
 /// every fragment, batches as the configuration says, no transaction,
 /// no partition, no limit, no callback, in no order, not continuous.
 ///
-/// Leaves `args` as it is when `size` is smaller than this header's
-/// `IC_SCAN_ARGS`.
+/// When `size` is smaller than this header's `IC_SCAN_ARGS`, as for a
+/// program built against an older header, only the size is written
+/// into `args`, so that a call given it sees how short it is and
+/// refuses it, without reading past it.
 ///
 /// # Safety
 ///
 /// A non-null `args` points to `size` writable bytes.
 #[no_mangle]
 pub unsafe extern "C" fn ic_scan_args_init(args: *mut IcScanArgs, size: usize) {
-  if args.is_null() || size < std::mem::size_of::<IcScanArgs>() {
+  if args.is_null() {
+    return;
+  }
+  if size < std::mem::size_of::<IcScanArgs>() {
+    // SAFETY: the caller's promise.
+    unsafe { mark_short(args.cast::<u8>(), size) };
     return;
   }
   let value = IcScanArgs {
@@ -3340,8 +3425,10 @@ pub unsafe extern "C" fn ic_apid_index_scan_create(
 /// Fill `range`, `size` bytes, with the defaults: no bound on either
 /// side, which takes in every row, as range 0.
 ///
-/// Leaves `range` as it is when `size` is smaller than this header's
-/// `IC_SCAN_RANGE`.
+/// When `size` is smaller than this header's `IC_SCAN_RANGE`, as for a
+/// program built against an older header, only the size is written
+/// into `range`, so that a call given it sees how short it is and
+/// refuses it, without reading past it.
 ///
 /// # Safety
 ///
@@ -3351,7 +3438,12 @@ pub unsafe extern "C" fn ic_scan_range_init(
   range: *mut IcScanRange,
   size: usize,
 ) {
-  if range.is_null() || size < std::mem::size_of::<IcScanRange>() {
+  if range.is_null() {
+    return;
+  }
+  if size < std::mem::size_of::<IcScanRange>() {
+    // SAFETY: the caller's promise.
+    unsafe { mark_short(range.cast::<u8>(), size) };
     return;
   }
   let value = IcScanRange {
@@ -3375,13 +3467,7 @@ unsafe fn scan_range_from_c(
   range: *const IcScanRange,
 ) -> Result<ScanRange, i32> {
   // SAFETY: the caller's promise.
-  let given = match unsafe { range.as_ref() } {
-    Some(given) => *given,
-    None => return Err(err::IC_ERROR_NULL_POINTER),
-  };
-  if (given.size as usize) < std::mem::size_of::<IcScanRange>() {
-    return Err(err::IC_ERROR_INCONSISTENT_DATA);
-  }
+  let given = unsafe { sized_from_c(range) }?;
   Ok(ScanRange {
     low_columns: given.low_columns,
     low_inclusive: given.low_inclusive,
@@ -3896,8 +3982,10 @@ pub unsafe extern "C" fn ic_apid_conn_next_batch(
 /// Fill `args`, `size` bytes, with the defaults: the default abort
 /// option, no callback.
 ///
-/// Leaves `args` as it is when `size` is smaller than this header's
-/// `IC_TAKEOVER_ARGS`.
+/// When `size` is smaller than this header's `IC_TAKEOVER_ARGS`, as for a
+/// program built against an older header, only the size is written
+/// into `args`, so that a call given it sees how short it is and
+/// refuses it, without reading past it.
 ///
 /// # Safety
 ///
@@ -3907,7 +3995,12 @@ pub unsafe extern "C" fn ic_takeover_args_init(
   args: *mut IcTakeoverArgs,
   size: usize,
 ) {
-  if args.is_null() || size < std::mem::size_of::<IcTakeoverArgs>() {
+  if args.is_null() {
+    return;
+  }
+  if size < std::mem::size_of::<IcTakeoverArgs>() {
+    // SAFETY: the caller's promise.
+    unsafe { mark_short(args.cast::<u8>(), size) };
     return;
   }
   let value = IcTakeoverArgs {
@@ -3929,13 +4022,7 @@ unsafe fn takeover_args_from_c(
   args: *const IcTakeoverArgs,
 ) -> Result<TakeoverArgs, i32> {
   // SAFETY: the caller's promise.
-  let given = match unsafe { args.as_ref() } {
-    Some(given) => *given,
-    None => return Err(err::IC_ERROR_NULL_POINTER),
-  };
-  if (given.size as usize) < std::mem::size_of::<IcTakeoverArgs>() {
-    return Err(err::IC_ERROR_INCONSISTENT_DATA);
-  }
+  let given = unsafe { sized_from_c(args) }?;
   let abort_option = match abort_from_c(given.abort_option) {
     Some(option) => option,
     None => return Err(err::IC_ERROR_NOT_SUPPORTED),
@@ -4168,6 +4255,41 @@ unsafe fn get_sized<T: Copy>(
   }
   // SAFETY: the caller's promise; the field lies within `size` bytes.
   Some(unsafe { base.add(offset).cast::<T>().read_unaligned() })
+}
+
+/// A struct with a size from C, whose first field is its size: copied
+/// whole only once that field says it is as long as this header's. One
+/// built against an older header is shorter, and is refused with
+/// `IC_ERROR_INCONSISTENT_DATA` without a byte past its size field
+/// read; a null pointer with `IC_ERROR_NULL_POINTER`.
+///
+/// # Safety
+///
+/// A non-null `given` points to a struct its `_init` was given, at
+/// least as many bytes as its size field says.
+unsafe fn sized_from_c<T: Copy>(given: *const T) -> Result<T, i32> {
+  if given.is_null() {
+    return Err(err::IC_ERROR_NULL_POINTER);
+  }
+  // SAFETY: the caller's promise; the size field is the first 4 bytes.
+  let size = unsafe { get_sized::<u32>(given.cast::<u8>(), 4, 0) };
+  if (size.unwrap_or(0) as usize) < std::mem::size_of::<T>() {
+    return Err(err::IC_ERROR_INCONSISTENT_DATA);
+  }
+  // SAFETY: the caller's promise, and its size says it holds a whole T.
+  Ok(unsafe { given.read_unaligned() })
+}
+
+/// For an `_init` given a struct shorter than this header's: its size
+/// alone written into its first field, if it holds that much, so that a
+/// call given it sees how short it is (`sized_from_c`).
+///
+/// # Safety
+///
+/// `base` points to `size` writable bytes.
+unsafe fn mark_short(base: *mut u8, size: usize) {
+  // SAFETY: the caller's promise; put_sized writes within `size` bytes.
+  unsafe { put_sized(base, size, 0, size as u32) };
 }
 
 /// Fill `options`, `size` bytes, with the defaults: the fields that fit,
@@ -7007,6 +7129,87 @@ mod tests {
     assert_eq!(code, IC_ERROR_NOT_SUPPORTED, "the arguments come first");
   }
 
+  /// True if an init wrote the size alone into `bytes`, its first four
+  /// bytes, and left the rest as they were, 0xA5.
+  fn holds_its_size_alone(bytes: &[u8]) -> bool {
+    let mut size = [0u8; 4];
+    size.copy_from_slice(&bytes[..4]);
+    if u32::from_ne_bytes(size) as usize != bytes.len() {
+      return false;
+    }
+    let mut at: usize = 4;
+    while at < bytes.len() {
+      if bytes[at] != 0xA5 {
+        return false;
+      }
+      at += 1;
+    }
+    true
+  }
+
+  #[test]
+  fn a_struct_shorter_than_this_headers_is_refused_unread() {
+    // Each struct with a size as an older header might have made it, a
+    // field short, in a buffer no longer: its init writes its size
+    // alone, and the call given it refuses it, reading nothing past
+    // that field.
+    let read = std::mem::size_of::<IcReadKeyArgs>() - 8;
+    let mut bytes = vec![0xA5u8; read];
+    // SAFETY: the init writes within the bytes given; the arguments are
+    // read before the connection, which is never followed.
+    let code = unsafe {
+      ic_read_key_args_init(bytes.as_mut_ptr().cast(), read);
+      ic_apid_conn_read_key(std::ptr::null_mut(), 1, 1, bytes.as_ptr().cast())
+    };
+    assert!(holds_its_size_alone(&bytes), "read key args");
+    assert_eq!(code, IC_ERROR_INCONSISTENT_DATA);
+    let write = std::mem::size_of::<IcWriteKeyArgs>() - 8;
+    let mut bytes = vec![0xA5u8; write];
+    // SAFETY: as above.
+    let code = unsafe {
+      ic_write_key_args_init(bytes.as_mut_ptr().cast(), write);
+      ic_apid_conn_write_key(std::ptr::null_mut(), 1, 1, bytes.as_ptr().cast())
+    };
+    assert!(holds_its_size_alone(&bytes), "write key args");
+    assert_eq!(code, IC_ERROR_INCONSISTENT_DATA);
+    let scan = std::mem::size_of::<IcScanArgs>() - 8;
+    let mut bytes = vec![0xA5u8; scan];
+    // SAFETY: as above; the reader reads within the bytes given.
+    let refused = unsafe {
+      ic_scan_args_init(bytes.as_mut_ptr().cast(), scan);
+      scan_args_from_c(bytes.as_ptr().cast())
+    };
+    assert!(holds_its_size_alone(&bytes), "scan args");
+    assert_eq!(refused.err(), Some(IC_ERROR_INCONSISTENT_DATA));
+    let range = std::mem::size_of::<IcScanRange>() - 4;
+    let mut bytes = vec![0xA5u8; range];
+    // SAFETY: as above.
+    let refused = unsafe {
+      ic_scan_range_init(bytes.as_mut_ptr().cast(), range);
+      scan_range_from_c(bytes.as_ptr().cast())
+    };
+    assert!(holds_its_size_alone(&bytes), "scan range");
+    assert_eq!(refused.err(), Some(IC_ERROR_INCONSISTENT_DATA));
+    let takeover = std::mem::size_of::<IcTakeoverArgs>() - 8;
+    let mut bytes = vec![0xA5u8; takeover];
+    // SAFETY: as above.
+    let refused = unsafe {
+      ic_takeover_args_init(bytes.as_mut_ptr().cast(), takeover);
+      takeover_args_from_c(bytes.as_ptr().cast())
+    };
+    assert!(holds_its_size_alone(&bytes), "takeover args");
+    assert_eq!(refused.err(), Some(IC_ERROR_INCONSISTENT_DATA));
+    // Too short for even its size: nothing is written.
+    let mut tiny = vec![0xA5u8; 2];
+    // SAFETY: the init writes within the two bytes given, or not at all.
+    unsafe { ic_scan_args_init(tiny.as_mut_ptr().cast(), 2) };
+    assert_eq!(tiny, vec![0xA5u8, 0xA5]);
+    // A null pointer is refused as one.
+    // SAFETY: nothing is followed.
+    let refused = unsafe { scan_args_from_c(std::ptr::null()) };
+    assert_eq!(refused.err(), Some(IC_ERROR_NULL_POINTER));
+  }
+
   #[test]
   fn a_batch_names_its_scan() {
     let batch = ((42u64) << 32) | 0x0080_0001;
@@ -7240,5 +7443,64 @@ mod tests {
     for hint in hints {
       assert_eq!(hint_from_c(hint_to_c(hint)), hint);
     }
+  }
+
+  #[test]
+  fn buffers_overlap_only_where_they_share_a_byte() {
+    let buf = [0u8; 16];
+    let p = buf.as_ptr();
+    // SAFETY: within the 16 bytes of `buf`.
+    let (four, eight) = unsafe { (p.add(4), p.add(8)) };
+    assert!(overlaps(p, 8, p, 8));
+    assert!(overlaps(p, 8, four, 8));
+    assert!(overlaps(four, 8, p, 8));
+    // Side by side, or empty, or none at all: apart.
+    assert!(!overlaps(p, 8, eight, 8));
+    assert!(!overlaps(eight, 8, p, 8));
+    assert!(!overlaps(p, 0, p, 8));
+    assert!(!overlaps(std::ptr::null(), 8, p, 8));
+  }
+
+  #[test]
+  fn a_key_in_the_row_to_be_written_is_copied_aside_first() {
+    // One buffer for the key and the row read into it: the key comes
+    // back as a copy, which writing the row leaves as it was.
+    let mut row = vec![1u8, 2, 3, 4, 5, 6, 7, 8];
+    let p = row.as_mut_ptr();
+    let mut copy = KeyCopy::new();
+    // SAFETY: the row's 8 bytes, written only once the key is taken.
+    let key = unsafe { key_arg(p, 8, p, 8, &mut copy) };
+    assert_ne!(key.as_ptr(), p.cast_const());
+    // SAFETY: as above.
+    unsafe { p.write_bytes(0, 8) };
+    assert_eq!(key, [1, 2, 3, 4, 5, 6, 7, 8]);
+    // A key too long for the stack, overlapping part of the row: on the
+    // heap.
+    let mut copy = KeyCopy::new();
+    let len = copy.inline.len() + 10;
+    let mut long = vec![9u8; len];
+    let q = long.as_mut_ptr();
+    // SAFETY: 20 bytes inside the `len` of `long`.
+    let part = unsafe { q.add(5) };
+    // SAFETY: as above.
+    let key = unsafe { key_arg(q, len, part, 20, &mut copy) };
+    // SAFETY: as above.
+    unsafe { part.write_bytes(0, 20) };
+    assert_eq!(key.len(), len);
+    assert_ne!(key.as_ptr(), q.cast_const());
+    let mut at: usize = 0;
+    while at < len {
+      assert_eq!(key[at], 9, "byte {}", at);
+      at += 1;
+    }
+    // Apart, the key is the caller's own bytes, not copied.
+    let apart = [7u8; 8];
+    let mut out = [0u8; 8];
+    let mut copy = KeyCopy::new();
+    // SAFETY: two buffers of 8 bytes each.
+    let key =
+      unsafe { key_arg(apart.as_ptr(), 8, out.as_mut_ptr(), 8, &mut copy) };
+    assert_eq!(key.as_ptr(), apart.as_ptr());
+    assert!(copy.heap.is_empty(), "nothing copied");
   }
 }

@@ -229,9 +229,10 @@ pub struct ScanArgs {
   pub timeout_ms: u32,
   /// For a committed read through an executor: let a receiver go on as
   /// soon as its batch has moved to the reader, rather than once the
-  /// reader hands it back (chapter 04, "Consuming scans"). Refused for
-  /// a locking scan, and on a connection, where the application hands
-  /// each batch back itself.
+  /// reader hands it back, while the reader holds fewer than two of its
+  /// batches (chapter 04, "Consuming scans"). Refused for a locking
+  /// scan, and on a connection, where the application hands each batch
+  /// back itself.
   pub read_ahead: bool,
   /// For a committed read: the continuous scan, four receivers for each
   /// fragment scanned at once, so that a fragment goes on scanning while
@@ -729,8 +730,16 @@ impl Scan {
     true
   }
 
-  /// True if any column the record reads is kept on disk.
+  /// True if any column the record reads, or the run's program reads
+  /// or assigns, is kept on disk.
   fn reads_disk(&self) -> bool {
+    // A filter on a column on disk reads the disk though the record
+    // reads nothing there.
+    if let Some(program) = &self.program {
+      if program.uses_disk() {
+        return true;
+      }
+    }
     let mut position: u32 = 0;
     while position < self.rec.num_fields() {
       if let Some(field) = self.rec.field(position) {

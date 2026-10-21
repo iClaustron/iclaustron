@@ -25,6 +25,14 @@
 //! microseconds. Decided 2026-09-22, over chapter 02's "receive threads
 //! run the adaptive-send timers".
 //!
+//! A job outlives its link: a link that goes, and the one that takes
+//! its place, have the same node id, and a write of the old link's job
+//! on the new link's socket, beside the thread that writes it, would mix
+//! two writes in one stream. So a write handed over says which link it
+//! was handed over on, by the link's generation, and is dropped if that
+//! link has gone; a wait for company that ends claims the chain under
+//! the node's mutex, as any writer does, whichever link it was for.
+//!
 //! One thread for now. It never holds the pool's mutex while it writes,
 //! and a node with more to write after one write is queued again
 //! behind the others rather than written until empty, so that one busy
@@ -53,8 +61,9 @@ pub const IC_SEND_POOL_IDLE_MICROS: u64 = 10_000;
 
 struct SendQueue {
   /// Nodes with signals waiting that the pool is to write, in the order
-  /// they were handed over.
-  ready: VecDeque<u32>,
+  /// they were handed over, each with the generation of the link whose
+  /// send chain was left claimed for the pool.
+  ready: VecDeque<(u32, u32)>,
   /// Nodes holding signals back for company, each with when it must
   /// write them.
   deferred: Vec<(u32, IcTimer)>,
@@ -86,12 +95,21 @@ impl SendPool {
   }
 
   /// Ask the pool to write what waits at a node, whose send chain the
-  /// caller has left claimed for it (`send_done_handling`: "we give
-  /// this mission to the send thread").
-  pub(crate) fn ask(&self, node_id: u32) {
+  /// caller has left claimed for it on the link of `generation`
+  /// (`send_done_handling`: "we give this mission to the send thread").
+  /// A node already asked for keeps its place, and takes the newer
+  /// link's generation: a job for an older one has nothing left to do.
+  pub(crate) fn ask(&self, node_id: u32, generation: u32) {
     let mut queue = self.queue.lock();
-    if !queue.ready.contains(&node_id) {
-      queue.ready.push_back(node_id);
+    let mut known = false;
+    for job in queue.ready.iter_mut() {
+      if job.0 == node_id {
+        job.1 = generation;
+        known = true;
+      }
+    }
+    if !known {
+      queue.ready.push_back((node_id, generation));
     }
     let wake = queue.sleeping;
     drop(queue);
@@ -155,17 +173,17 @@ pub(crate) fn run_send_thread(shared: Arc<ApidShared>, state: &ThreadState) {
   while !state.stop_flag() {
     let now = time::gethrtime();
     let mut queue = pool.queue.lock();
-    if let Some(node_id) = queue.ready.pop_front() {
+    if let Some((node_id, generation)) = queue.ready.pop_front() {
       drop(queue);
       if let Some(node) = shared.node(node_id) {
-        node.send_for_pool(false);
+        node.send_handed_over(generation);
       }
       continue;
     }
     if let Some(node_id) = take_due(&mut queue, now) {
       drop(queue);
       if let Some(node) = shared.node(node_id) {
-        node.send_for_pool(true);
+        node.send_due();
       }
       continue;
     }
@@ -178,4 +196,23 @@ pub(crate) fn run_send_thread(shared: Arc<ApidShared>, state: &ThreadState) {
     queue.sleeping = false;
   }
   ic_port::debug_print!(IC_THREAD_LEVEL, "Send thread stopped");
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn a_node_asked_for_again_keeps_its_place_and_its_newest_link() {
+    let pool = SendPool::new();
+    pool.ask(3, 7);
+    pool.ask(5, 2);
+    // Node 3 handed over again, on the link that replaced the first:
+    // one job, in its place, for that link alone.
+    pool.ask(3, 8);
+    let queue = pool.queue.lock();
+    assert_eq!(queue.ready.len(), 2);
+    assert_eq!(queue.ready[0], (3, 8));
+    assert_eq!(queue.ready[1], (5, 2));
+  }
 }

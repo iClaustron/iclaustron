@@ -10739,3 +10739,120 @@ fn review_3_a_refused_unique_read_leaves_no_transaction_behind() {
   assert!(conn.get_next_executed_query().is_none());
   assert_eq!(conn.unexpected(), 0);
 }
+
+// ---- Review 2.4: read-ahead keeps two batches a receiver ----
+
+#[test]
+fn review_2_4_a_paused_read_ahead_reader_holds_two_batches_a_receiver() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_scan_table().is_none() {
+    return;
+  }
+  let executor = executor_with(&cluster, 400, 4000);
+  let submitter = executor.submitter();
+  let (t, shape) = scan_through(&submitter);
+  let receivers = t.def.info().fragment_count as usize;
+  let mut reader = ScanReader::new(&shape);
+  // Batches of 10 rows, some 30 for each receiver: unbounded, all of
+  // them would move to the reader while it pauses.
+  let args = ScanArgs {
+    lock: ScanLock::Committed,
+    read_ahead: true,
+    batch_rows: 10,
+    timeout_ms: IC_IT_SCAN_WAIT_MS as u32,
+    ..ScanArgs::default()
+  };
+  submitter.scan(&mut reader, &args).expect("submit the scan");
+  assert!(reader.next_row().expect("a row"));
+  let first: i64 = t.get(reader.row(), "id").parse().expect("an id");
+  // Long enough for the whole table to come, were nothing to hold it.
+  std::thread::sleep(std::time::Duration::from_millis(500));
+  let waiting = reader.batches_waiting();
+  println!(
+    "a paused read-ahead reader: {} batches waiting, {} receivers",
+    waiting, receivers
+  );
+  // The receiver of the batch being read has at most one more waiting,
+  // every other at most two.
+  assert!(
+    waiting < 2 * receivers,
+    "{} batches waiting for {} receivers",
+    waiting,
+    receivers
+  );
+  // The rest, read on: every row once.
+  let (mut ids, error) = reader_ids(&mut reader, &t);
+  assert!(error.is_none(), "{:?}", error);
+  ids.push(first);
+  assert!(every_row_once(&ids), "{} rows", ids.len());
+}
+
+// ---- Review 2.5: a filter on a disk column ----
+
+#[test]
+fn review_2_5_a_filter_on_a_disk_column_reads_the_disk() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_tablespace().is_none() {
+    return;
+  }
+  let sql = format!(
+    "CREATE DATABASE IF NOT EXISTS {db};
+     DROP TABLE IF EXISTS {db}.disk_f;
+     CREATE TABLE {db}.disk_f (
+       id INT NOT NULL PRIMARY KEY,
+       val INT STORAGE DISK
+     ) TABLESPACE {space} STORAGE DISK ENGINE=NDB;
+     INSERT INTO {db}.disk_f
+       WITH RECURSIVE seq (n) AS
+         (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 100)
+       SELECT n, n FROM seq;",
+    db = IC_IT_DB,
+    space = IC_IT_TABLESPACE
+  );
+  if mysql(&sql).is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("connection");
+  let t = bind(&mut conn, "disk_f");
+  // Only id is read, in memory; the filter is on val, on disk, which
+  // the data node must then read: told it reads memory alone, it
+  // refused the scan with 927.
+  let id_rec = record_over(&t, &["id"]);
+  let val = t.def.field_id("val").expect("val");
+  let mut b = ProgramBuilder::new(&t.def);
+  let column = b.column(val);
+  let limit = b.integer(90);
+  let above = b.compare(Cmp::Gt, column, limit);
+  let filter = b.finish(Some(above)).expect("the filter");
+  assert!(filter.uses_disk());
+  let scan = conn.create_scan(&t.def, &id_rec).expect("create the scan");
+  conn
+    .set_scan_program(scan, Some(&filter))
+    .expect("set the filter");
+  let args = ScanArgs {
+    timeout_ms: IC_IT_SCAN_WAIT_MS as u32,
+    ..ScanArgs::default()
+  };
+  conn.start_scan(scan, &args).expect("start the scan");
+  let mut ids: Vec<i64> = Vec::new();
+  while conn.next_row(scan).expect("a row, not 927") {
+    let text = text_row::value_text(&id_rec, 0, conn.scan_row(scan));
+    ids.push(text.parse().expect("an id"));
+  }
+  ids.sort_unstable();
+  let mut expected: Vec<i64> = Vec::new();
+  let mut id: i64 = 91;
+  while id <= 100 {
+    expected.push(id);
+    id += 1;
+  }
+  assert_eq!(ids, expected, "the rows whose val is above 90");
+  assert_eq!(conn.unexpected(), 0);
+  conn.free_scan(scan).expect("free the scan");
+}

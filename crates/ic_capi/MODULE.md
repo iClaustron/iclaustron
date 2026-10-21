@@ -56,6 +56,13 @@ The C code had no counterpart: its header was the API itself, with the
   Rust takes a reference to promise the whole struct is there.
   `IC_FIELD_INFO`'s two AUTO_INCREMENT flags took what was its
   padding, so its size is still 0.1's and it is written whole.
+- The argument structs (`IC_READ_KEY_ARGS`, `IC_WRITE_KEY_ARGS`,
+  `IC_SCAN_ARGS`, `IC_SCAN_RANGE`, `IC_TAKEOVER_ARGS`) are copied whole
+  by `sized_from_c`, once their size field, read alone, says they are
+  this header's length; a shorter one is refused with
+  `IC_ERROR_INCONSISTENT_DATA`, and its `_init` writes the size alone
+  (`mark_short`). Taking a shorter one with defaults was turned down
+  (the author, 2026-10-21): none has grown since it was released.
 
 ## Deviations from the C code
 

@@ -66,7 +66,9 @@ NDB classes as a schema error (241, 283, 284, 709, 710, 723; as MySQL's
 handler does, the author, 2026-10-21), is let go of, so the next bind
 fetches it again; `table_unbind` lets go of
 it at once. The error comes in a refusal or, for a key operation, in the
-report that aborts its transaction, before any query's callback runs;
+report that aborts its transaction, before any query's callback runs,
+and the synchronous helpers' (`read_committed`, `write_key`) let go of
+their table the same way before they return (review, 2026-10-21);
 the report does not name the operation, so every table, or index gone
 through, of the transaction's operations still waiting is let go of,
 one that was not out of date only fetched again at its next bind.
@@ -199,7 +201,11 @@ whose replies stop coming ends with 4012, its outcome unknown
 for, one socket write per node; without `force` the adaptive send may
 hold a node's write back for a moment to go with other threads'.
 `conn.poll(ms)` takes what arrived and completes queries;
-`conn.flush(ms, force)` is both. A completed query with a callback has
+`conn.flush(ms, force)` is both, and always polls: a send that failed
+because a link has gone is no error of `flush`, as the poll fails the
+transactions sent over that link with its error and completes the
+others (the author, 2026-10-21); `send_queries` returns the first
+error of any send. A completed query with a callback has
 it called, on the polling thread, from inside the poll, with the
 connection, the query and its `user_ref`; the callback may define
 queries and start, commit and send transactions, and a poll from
@@ -484,7 +490,13 @@ while reader.next_row()? {
   iClaustron's own, `ScanArgs::read_ahead`, lets a committed read's
   receiver go on as soon as its batch has moved to the reader, so a
   receiver has up to two batches out, one with the reader and one
-  coming, and memory doubles. It is off by default, since a scan that
+  coming, and memory doubles. The executor holds it to that: it
+  counts each receiver's batches with the reader, and one whose reader
+  holds two goes on only when it hands one back, so a reader that
+  pauses never has more (review, 2026-10-21; the reader reports a
+  read-ahead run's hand-backs as any other's, and
+  `ScanReader::batches_waiting` says how many wait). It is off by
+  default, since a scan that
   is closed early will have read ahead for nothing. A locking scan
   with it is refused (`IC_ERROR_NOT_SUPPORTED`), since its locks would
   go before its rows were read. The flag is for scans through an
@@ -508,10 +520,17 @@ while reader.next_row()? {
   reverse. A parked scan counts against `scans`, not against
   `in_flight`.
 - **The end**: `next_row` gives `Ok(false)` once the scan has read to
-  the end, and its error once it has failed. `reader.close()` ends a
-  run early and waits for the executor to finish it, so that the
-  reader can run again. Dropping a reader ends its run without
-  waiting. A stopping executor closes its scans with
+  the end, and its error once it has failed. The rows of a failed run
+  are dropped, those the reader already holds too, the batch it is
+  reading and an ordered run's merge: no row of the run comes once its
+  failure is known, so a locking scan's rows, whose locks went with it,
+  are never given as read (review, 2026-10-21). The reader looks for
+  the failure before each row with one atomic load, not the feed's
+  lock. A connection's run lets go of the batches the application
+  holds as it fails, so their rows are not read either.
+  `reader.close()` ends a run early and waits for the executor to
+  finish it, so that the reader can run again. Dropping a reader ends
+  its run without waiting. A stopping executor closes its scans with
   `IC_ERROR_EXECUTOR_STOPPED`.
 - A Rust stream comes later, over the same reader.
 
@@ -1078,8 +1097,20 @@ node), no events.
   (a table's and a field's name) are valid until the handle is freed.
 - **Option and argument structs** begin with their own size, filled by
   `..._init(&s, sizeof s)`, so that a later release can add fields at
-  the end without breaking a program built against this one; a struct
-  the library fills (`IC_FIELD_INFO`) is given with its size likewise.
+  the end; a struct the library fills (`IC_FIELD_INFO`) is given with
+  its size likewise. The option structs (`IC_GLOBAL_OPTIONS`,
+  `IC_EXECUTOR_OPTIONS`) and `IC_EXECUTOR_STATS` are read and written
+  field by field, so a program built against an older header gets the
+  fields it knows; `IC_FIELD_INFO`'s new flags took its padding, so its
+  size has not changed. The argument structs (`IC_READ_KEY_ARGS`,
+  `IC_WRITE_KEY_ARGS`, `IC_SCAN_ARGS`, `IC_SCAN_RANGE`,
+  `IC_TAKEOVER_ARGS`) are copied whole, once their size field, read
+  alone first, says they are this header's length: a shorter one is
+  refused with `IC_ERROR_INCONSISTENT_DATA`, and an `_init` given one
+  writes its size alone. A program is built again against a release
+  that grows one; none has grown since it was released, the key
+  operations' being 0.1's and the scans' new in 0.2 (the author,
+  2026-10-21).
 - **Threads**: a global may be used from any thread. A connection, and
   every query and transaction in it, by one thread at a time. Callbacks
   run on the thread that polls.

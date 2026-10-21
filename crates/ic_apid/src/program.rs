@@ -424,7 +424,32 @@ impl ProgramBuilder {
       updates: c.updates,
       inputs: c.inputs,
       writes: !self.assignments.is_empty(),
+      uses_disk: self.uses_disk(),
     }))
+  }
+
+  /// True if a column the builder reads or assigns is kept on disk.
+  /// Every column made with it counts, used by this program's tree or
+  /// not: allowing the disk where it is not needed costs only the
+  /// shortcut a memory-only read takes.
+  fn uses_disk(&self) -> bool {
+    let on_disk = |id: u32| match self.table.field(id) {
+      Some(column) => column.storage_kind == table_props::IC_STORAGE_DISK,
+      None => false,
+    };
+    for value in &self.values {
+      if let ValueNode::Column(id) = value {
+        if on_disk(*id) {
+          return true;
+        }
+      }
+    }
+    for assignment in &self.assignments {
+      if on_disk(assignment.column) {
+        return true;
+      }
+    }
+    false
   }
 
   fn constant_bytes(
@@ -512,6 +537,8 @@ pub struct Program {
   /// The inputs it reads, a bit each.
   inputs: u32,
   writes: bool,
+  /// It reads or assigns a column kept on disk.
+  uses_disk: bool,
 }
 
 impl Program {
@@ -534,6 +561,13 @@ impl Program {
   /// True if it assigns columns, which only an update may.
   pub fn writes(&self) -> bool {
     self.writes
+  }
+
+  /// True if it reads or assigns a column kept on disk: an operation
+  /// running it reads the disk, whatever else it reads (chapter 05
+  /// §7.2, flag 9).
+  pub fn uses_disk(&self) -> bool {
+    self.uses_disk
   }
 
   /// The inputs it reads, a bit each: an operation sends these.
@@ -1262,6 +1296,7 @@ mod tests {
   use ic_signals::table_props::IC_TP_COLUMN_NAME;
   use ic_signals::table_props::IC_TP_COLUMN_NULLABLE;
   use ic_signals::table_props::IC_TP_COLUMN_PRECISION;
+  use ic_signals::table_props::IC_TP_COLUMN_STORAGE;
   use ic_signals::table_props::IC_TP_COLUMN_TYPE;
   use ic_signals::table_props::IC_TP_TABLE_NAME;
   use ic_signals::table_props::IC_TYPE_BIGUNSIGNED;
@@ -1329,6 +1364,12 @@ mod tests {
   ];
 
   pub(super) fn table() -> Arc<TableDef> {
+    table_with_disk(None)
+  }
+
+  /// The tests' table with column `disk`, if one is named, kept on
+  /// disk.
+  fn table_with_disk(disk: Option<u32>) -> Arc<TableDef> {
     let mut w = PropertyWriter::new();
     w.add_string(IC_TP_TABLE_NAME, "db/def/interp_t");
     w.add_u32(IC_TP_COLUMN_COUNT, COLUMNS.len() as u32);
@@ -1344,11 +1385,51 @@ mod tests {
       w.add_u32(IC_TP_COLUMN_NULLABLE, c.nullable as u32);
       w.add_u32(IC_TP_COLUMN_PRECISION, c.charset << 16);
       w.add_u32(IC_TP_COLUMN_ARRAY_KIND, c.array_kind);
+      if disk == Some(id) {
+        w.add_u32(IC_TP_COLUMN_STORAGE, table_props::IC_STORAGE_DISK);
+      }
       w.add_u32(IC_TP_COLUMN_END, 0);
       id += 1;
     }
     let info = parse_table_info(w.words()).expect("parsed");
     Arc::new(TableDef::new(info, None))
+  }
+
+  #[test]
+  fn a_program_on_a_disk_column_says_it_uses_the_disk() {
+    let t = table_with_disk(Some(W));
+    // A condition on the disk column, though nothing reads it back.
+    let mut b = ProgramBuilder::new(&t);
+    let w = b.column(W);
+    let five = b.integer(5);
+    let above = b.compare(Cmp::Gt, w, five);
+    assert!(b.finish(Some(above)).expect("program").uses_disk());
+    // An assignment to it.
+    let mut b = ProgramBuilder::new(&t);
+    let one = b.integer(1);
+    b.assign(W, one);
+    assert!(b.finish(None).expect("program").uses_disk());
+    // Only columns in memory: the memory alone.
+    let mut b = ProgramBuilder::new(&t);
+    let val = b.column(VAL);
+    let five = b.integer(5);
+    let above = b.compare(Cmp::Gt, val, five);
+    assert!(!b.finish(Some(above)).expect("program").uses_disk());
+    // A constant typed as the disk column reads nothing of the row.
+    let rec = Record::default_for(&t, None).expect("record");
+    let row = row_with(&rec, W, Some(&5i32.to_le_bytes()));
+    let mut b = ProgramBuilder::new(&t);
+    let val = b.column(VAL);
+    let five = b.constant(&rec, &row, W);
+    let above = b.compare(Cmp::Gt, val, five);
+    assert!(!b.finish(Some(above)).expect("program").uses_disk());
+    // The same over a table with no column on disk.
+    let plain = table();
+    let mut b = ProgramBuilder::new(&plain);
+    let w = b.column(W);
+    let five = b.integer(5);
+    let above = b.compare(Cmp::Gt, w, five);
+    assert!(!b.finish(Some(above)).expect("program").uses_disk());
   }
 
   /// A row of the default record with `bytes` in column `id`, or NULL

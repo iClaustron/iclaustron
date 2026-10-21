@@ -2101,7 +2101,12 @@ found. Known now, to weigh there:
   `examples/README.md`, where the clusters run from several trees;
 - a bind inside a callback fails for a table whose description comes in
   more than one fragment, as the wait there holds the other fragments
-  back (`poll_for_reply`; found in the review of 2026-10-21).
+  back (`poll_for_reply`; found in the review of 2026-10-21);
+- a connection closed while its scans' pool still waits for an
+  allocate leaks that record at the coordinator, and a later
+  connection given the same block number could take its answer as its
+  own (`release_coord_records` skips records not yet confirmed; found
+  in the second review of 2026-10-21).
 
 ### 11.1 The author's first review (2026-10-21)
 
@@ -2136,6 +2141,48 @@ Five comments, each checked against the code and fixed (all five held):
    a refusal, a scan's and the report, every code NDB classes as a
    schema error now lets go, 283, a drop in progress, among them, as
    MySQL's handler does (the author, 2026-10-21).
+
+Found after it, by the full suite: a request sent to be waited for
+failed with another node's lost link, though it had gone, when
+something was still packed for that node; it now fails only on its own
+link (chapter 02). And `flush` always polls: a send that failed with a
+lost link is no error of it (the author, 2026-10-21; chapter 04).
+
+### 11.2 The author's second review (2026-10-21)
+
+Eight comments, each checked against the code and fixed; all eight
+held, two of them in part:
+
+1. A send-pool job left from a replaced link could write the new link's
+   socket beside its writer, or clear its claim: a job now names its
+   link's generation, and one of a link gone does nothing.
+2. A C read given one buffer for its key and its row made overlapping
+   shared and mutable references: the key is copied aside first when
+   they overlap (an inline buffer, a vector past it), and the docs say
+   the two may be one buffer.
+3. Five C structs with a size, `IC_READ_KEY_ARGS`, `IC_WRITE_KEY_ARGS`,
+   `IC_SCAN_ARGS`, `IC_SCAN_RANGE` and `IC_TAKEOVER_ARGS`, were copied
+   whole before their size was checked, reading past a shorter one: the
+   size is now read alone first, a short struct refused unread, and an
+   init given too short a size writes that size alone. The header's
+   promise that an older program gets the fields it knows is narrowed
+   to the structs read field by field, the option structs and those
+   the library fills; a shorter argument struct stays refused (the
+   author, 2026-10-21).
+4. A read-ahead scan through an executor let every receiver go on as
+   its batch moved, so a paused reader buffered the whole result: a
+   receiver now has at most two batches out, as chapter 04 says.
+5. A scan whose filter used a disk column the record does not read told
+   the data node not to read the disk (927): a program's disk use is now
+   noted when it is finished, and lets the scan read the disk. Key
+   operations never ask that, so they were not affected.
+6. An executor's reader went on giving the rows it held after its run
+   failed: it now lets them go at once. A connection's scan already did.
+7. A synchronous key operation ended by a schema error kept its table
+   cached: it now lets it go, as the transaction path does.
+8. A coordinator record whose allocate was given up on after five
+   seconds was never freed when its answer came late: the late answer
+   now frees it, over the link it was asked on.
 
 ## Later — after the first version
 

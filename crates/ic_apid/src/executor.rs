@@ -1256,6 +1256,44 @@ struct ScanFlight {
   error: Option<IcError>,
 }
 
+/// Batches of a read-ahead run's receiver out at once: one with the
+/// reader and one coming, or two with the reader and none coming
+/// (chapter 04, "Reading ahead").
+const IC_READ_AHEAD_BATCHES: u32 = 2;
+
+/// A read-ahead run's receiver as the executor keeps it: how many of
+/// its batches the reader has, moved to it and not yet handed back, and
+/// whether it waits to go on until one is.
+#[derive(Clone, Copy, Debug, Default)]
+struct AheadReceiver {
+  with_reader: u32,
+  held: bool,
+}
+
+impl AheadReceiver {
+  /// A batch has moved to the reader: true if the receiver may go on at
+  /// once, its next batch the last one out; else it is held.
+  fn moved(&mut self) -> bool {
+    self.with_reader += 1;
+    if self.with_reader < IC_READ_AHEAD_BATCHES {
+      return true;
+    }
+    self.held = true;
+    false
+  }
+
+  /// The reader has handed a batch back: true if the receiver was held
+  /// and may go on now.
+  fn handed_back(&mut self) -> bool {
+    self.with_reader = self.with_reader.saturating_sub(1);
+    if self.held && self.with_reader < IC_READ_AHEAD_BATCHES {
+      self.held = false;
+      return true;
+    }
+    false
+  }
+}
+
 /// The idle scans kept for one scan shape, while anyone holds it.
 struct ScanPool {
   id: u64,
@@ -1289,6 +1327,9 @@ struct Runner {
   /// The scans running, by the number their nudges carry.
   scan_flights: Vec<Option<ScanFlight>>,
   free_scan_flights: Vec<usize>,
+  /// By the same number, a read-ahead run's receivers, by their place;
+  /// kept from run to run for their allocation.
+  scan_ahead: Vec<Vec<AheadReceiver>>,
   /// The numbers of the scans running.
   running_scans: Vec<usize>,
   scan_pools: Vec<ScanPool>,
@@ -1326,6 +1367,7 @@ impl Runner {
       scan_limit,
       scan_flights: Vec::new(),
       free_scan_flights: Vec::new(),
+      scan_ahead: Vec::new(),
       running_scans: Vec::new(),
       scan_pools: Vec::new(),
       scan_pool_of: HashMap::new(),
@@ -1845,6 +1887,15 @@ impl Runner {
       Some(running) => (running.receivers(), running.per_fragment()),
       None => (0, 1),
     };
+    // A read-ahead run counts what each receiver has with the reader.
+    if work.args.read_ahead {
+      while self.scan_ahead.len() <= flight {
+        self.scan_ahead.push(Vec::new());
+      }
+      let ahead = &mut self.scan_ahead[flight];
+      ahead.clear();
+      ahead.resize(receivers as usize, AheadReceiver::default());
+    }
     // From here the reader may nudge. A close asked for meanwhile is
     // seen now, as it found no flight to nudge.
     let close_now = {
@@ -1926,10 +1977,11 @@ impl Runner {
   }
 
   /// Move every complete batch to its reader, and wake the reader if it
-  /// sleeps. A batch of a run reading ahead is handed back at once; any
-  /// other stays with the executor's connection until the reader hands
-  /// it back. One whose reader is closing stays for the close to let
-  /// go of.
+  /// sleeps. A batch of a run reading ahead is handed back at once while
+  /// its reader holds fewer than two of its receiver's, else when the
+  /// reader hands one back; any other stays with the executor's
+  /// connection until the reader hands it back. One whose reader is
+  /// closing stays for the close to let go of.
   fn take_scan_batches(&mut self) {
     while let Some(batch) = self.conn.get_next_scan_batch() {
       let flight = match self.conn.scan(batch.scan()) {
@@ -1972,9 +2024,35 @@ impl Runner {
       if wake {
         feed.cond.signal();
       }
-      if read_ahead {
+      if read_ahead && self.ahead_moved(flight, place) {
         let _ = self.conn.release_scan_batch(batch);
       }
+    }
+  }
+
+  /// A batch of a read-ahead run has moved to its reader: true if its
+  /// receiver may go on at once.
+  fn ahead_moved(&mut self, flight: usize, place: u32) -> bool {
+    let ahead = match self.scan_ahead.get_mut(flight) {
+      Some(ahead) => ahead,
+      None => return true,
+    };
+    match ahead.get_mut(place as usize) {
+      Some(receiver) => receiver.moved(),
+      None => true,
+    }
+  }
+
+  /// The reader of a read-ahead run has handed a batch back: true if its
+  /// receiver was held, and goes on now.
+  fn ahead_handed_back(&mut self, flight: usize, place: u32) -> bool {
+    let ahead = match self.scan_ahead.get_mut(flight) {
+      Some(ahead) => ahead,
+      None => return false,
+    };
+    match ahead.get_mut(place as usize) {
+      Some(receiver) => receiver.handed_back(),
+      None => false,
     }
   }
 
@@ -2013,10 +2091,17 @@ impl Runner {
       state.closing
     };
     for used in &mut back {
-      if !read_ahead && used.run == run {
+      if used.run == run {
         if let Some(batch) = used.batch {
-          // Its receiver goes on with the next send.
-          let _ = self.conn.release_scan_batch(batch);
+          // Its receiver goes on with the next send; a read-ahead run's
+          // went on as the batch moved, unless it was held.
+          let mut go = true;
+          if read_ahead {
+            go = self.ahead_handed_back(flight, used.place);
+          }
+          if go {
+            let _ = self.conn.release_scan_batch(batch);
+          }
         }
       }
       used.clear();
@@ -2343,5 +2428,35 @@ mod tests {
     assert!(request.deadline >= before + 1_000_000_000);
     request.set_timeout_ms(0);
     assert_eq!(request.deadline, 0);
+  }
+
+  #[test]
+  fn a_read_ahead_receiver_never_has_more_than_two_batches_out() {
+    let mut receiver = AheadReceiver::default();
+    // The first batch moves: the receiver goes on, its next coming.
+    assert!(receiver.moved());
+    // The second comes while the first is still read: held, two with
+    // the reader and none coming.
+    assert!(!receiver.moved());
+    assert!(receiver.held);
+    // One handed back: the held receiver goes on, once.
+    assert!(receiver.handed_back());
+    assert!(!receiver.held);
+    // The third comes before the second is read: held again.
+    assert!(!receiver.moved());
+    // Both handed back: it goes on at the first, nothing at the second.
+    assert!(receiver.handed_back());
+    assert!(!receiver.handed_back());
+    assert_eq!(receiver.with_reader, 0);
+    // A reader that keeps up: each batch read before the next comes,
+    // the receiver never held.
+    let mut quick = AheadReceiver::default();
+    let mut batch: u32 = 0;
+    while batch < 5 {
+      assert!(quick.moved());
+      assert!(!quick.handed_back());
+      batch += 1;
+    }
+    assert!(!quick.held);
   }
 }

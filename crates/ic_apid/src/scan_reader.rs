@@ -18,9 +18,11 @@
 //! that receiver asked for more, whatever the lock (the author,
 //! 2026-10-16): a locking scan's rows stay locked while they are read,
 //! and a receiver has at most one batch with the reader. A committed
-//! read started with `read_ahead` lets its receivers go on as soon as
-//! their batches have moved, and handing a batch back then only
-//! returns its buffers.
+//! read started with `read_ahead` lets a receiver go on as soon as its
+//! batch has moved while the reader holds fewer than two of its
+//! batches; one whose reader holds two goes on when it hands one back,
+//! so that a receiver never has more than two out, however long the
+//! reader pauses (review, 2026-10-21).
 //!
 //! **Between the two threads** is a feed: under one mutex, the batches
 //! for the reader, those handed back, the empty buffers, and how the
@@ -28,6 +30,14 @@
 //! no batch, and the executor signals it only then. A hand-back or a
 //! close reaches the executor as a nudge on its inbox, at most one
 //! waiting per run ([`thread_conn`](crate::thread_conn), "Nudges").
+//!
+//! **A failed run gives no more rows**, those the reader already holds
+//! included: the batch it is reading and the merge's are let go of with
+//! the feed's, and the run's error given instead, so that a locking
+//! scan's rows, whose locks went with the run, are never given as read
+//! (review, 2026-10-21). The feed notes the failed run's number in an
+//! atomic, which the reader looks at before each row it gives, so that
+//! a run going well costs it no lock for the check.
 //!
 //! Buffers go round: from the receivers to the reader, back to the
 //! executor, and to the receivers again. Once they have grown to the
@@ -50,6 +60,8 @@
 //! from each in that order, a head for each fragment.
 
 use std::collections::VecDeque;
+use std::sync::atomic::AtomicU32;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use ic_port::err;
@@ -274,6 +286,10 @@ pub(crate) struct FeedState {
 pub(crate) struct Feed {
   pub(crate) state: IcMutex<FeedState>,
   pub(crate) cond: IcCond,
+  /// The last run that failed, by the reader's count; 0 for none. Set
+  /// under the mutex with the run's end, read without it by the reader
+  /// before each row it gives.
+  failed: AtomicU32,
 }
 
 impl Feed {
@@ -281,13 +297,16 @@ impl Feed {
     Arc::new(Feed {
       state: IcMutex::new(IC_MUTEX_LEVEL_COMPLETION, FeedState::default()),
       cond: IcCond::new(),
+      failed: AtomicU32::new(0),
     })
   }
 
   /// Run `run` is over at the executor: tell the reader, unless it has
   /// moved on or ended the run itself. The unread batches of a failed
-  /// run are dropped, as on a connection; those of a run that read to
-  /// the end stay for the reader. Batches handed back become spares.
+  /// run are dropped, as on a connection, and so are those the reader
+  /// holds, at its next row (`ScanReader::drop_if_failed`); those of a
+  /// run that read to the end stay for the reader. Batches handed back
+  /// become spares.
   fn finish_run(&self, run: u32, error: Option<IcError>) {
     let mut state = self.state.lock();
     if state.run != run || state.done {
@@ -298,6 +317,7 @@ impl Feed {
     state.flight = None;
     let mut spare = std::mem::take(&mut state.spare);
     if error.is_some() {
+      self.failed.store(run, Ordering::Release);
       while let Some(mut batch) = state.full.pop_front() {
         batch.clear();
         spare.push(batch);
@@ -389,7 +409,6 @@ pub struct ScanReader {
   run: u32,
   /// A run has been started; it may since have ended.
   started: bool,
-  read_ahead: bool,
   /// For a shape over an ordered index: the ranges added for the next
   /// run.
   pending: RangeSet,
@@ -486,7 +505,6 @@ impl ScanReader {
       rows_read: 0,
       run: 0,
       started: false,
-      read_ahead: false,
       pending: RangeSet::default(),
       reads_range_no: false,
       single_no: 0,
@@ -550,6 +568,17 @@ impl ScanReader {
     self.rows_read
   }
 
+  /// Batches of the run moved to the reader and not yet begun: what it
+  /// holds ahead of the batch being read. A read-ahead run keeps it
+  /// within two for each receiver, however long the reader pauses.
+  pub fn batches_waiting(&self) -> usize {
+    let state = self.feed.state.lock();
+    if state.run != self.run {
+      return 0;
+    }
+    state.full.len()
+  }
+
   /// True once its run is over, read to the end, closed or failed, and
   /// before any run.
   pub fn is_done(&self) -> bool {
@@ -577,7 +606,7 @@ impl ScanReader {
   /// batch read is handed back once its rows are, and the next is
   /// waited for. False once the run has read to the end or was closed,
   /// or before any run; the run's error once it has failed, its unread
-  /// rows dropped.
+  /// rows dropped, those of the batch being read too.
   pub fn next_row(&mut self) -> Result<bool, IcError> {
     self.next_row_with(None)
   }
@@ -602,6 +631,11 @@ impl ScanReader {
       return self.next_merged(row);
     }
     loop {
+      // Before every row: the batch being read was taken while the run
+      // went on, and the run may have failed since.
+      if let Some(e) = self.drop_if_failed() {
+        return Err(e);
+      }
       if let Some(batch) = &self.current {
         let at = self.next_row;
         if at < batch.row_ends.len() {
@@ -658,12 +692,34 @@ impl ScanReader {
     }
   }
 
+  /// If the run has failed, let go of the rows the reader still holds
+  /// of it, the batch being read and the merge's, onto the spares, and
+  /// give the run's error, every time it is asked: no row of a failed
+  /// run is given once its failure is known here. One atomic load while
+  /// the run is well, the mutex only once it has failed.
+  fn drop_if_failed(&mut self) -> Option<IcError> {
+    if self.feed.failed.load(Ordering::Acquire) != self.run {
+      return None;
+    }
+    let mut state = self.feed.state.lock();
+    if let Some(mut used) = self.current.take() {
+      used.clear();
+      state.spare.push(used);
+    }
+    spare_merge(&mut self.heads, &mut self.early, &mut state.spare);
+    if state.run != self.run {
+      return None;
+    }
+    state.error
+  }
+
   /// A batch whose rows are read, back to the executor: its receiver
-  /// goes on, or for a run that reads ahead, its buffers are spare.
+  /// goes on, or for a run that reads ahead, one held because the reader
+  /// had two of its batches does.
   fn hand_back(&mut self, mut used: FeedBatch) {
     let mut nudge: Option<u32> = None;
     let mut state = self.feed.state.lock();
-    if self.read_ahead || used.run != state.run || state.done {
+    if used.run != state.run || state.done {
       used.clear();
       state.spare.push(used);
     } else {
@@ -685,12 +741,16 @@ impl ScanReader {
   /// (chapter 04, "Index scans"), into `row` or the reader's row. The
   /// batches that came go to their receivers, those read are handed
   /// back, and once every receiver has a row or has ended, the row that
-  /// comes first is taken; until then the reader waits.
+  /// comes first is taken; until then the reader waits. A failed run's
+  /// heads give no more.
   fn next_merged(
     &mut self,
     mut row: Option<&mut [u8]>,
   ) -> Result<bool, IcError> {
     loop {
+      if let Some(e) = self.drop_if_failed() {
+        return Err(e);
+      }
       if !self.collect_batches() {
         return Ok(false);
       }
@@ -944,7 +1004,6 @@ impl ScanReader {
     self.next_row = 0;
     self.rows_read = 0;
     self.started = true;
-    self.read_ahead = args.read_ahead;
     self.range_no = 0;
     self.ordered = args.ordered;
     self.descending = args.descending;
@@ -1132,6 +1191,74 @@ mod tests {
         }
       }
     }
+  }
+
+  /// A reader in run `run`, of a shape over the test table, its feed at
+  /// that run as the executor leaves it.
+  fn reader_on_run(run: u32) -> ScanReader {
+    let table = crate::program::test_table();
+    let rec = Record::default_for(&table, None).expect("a record");
+    let shape = ScanShape::new(&table, &rec).expect("a shape");
+    let mut reader = ScanReader::new(&shape);
+    reader.run = run;
+    reader.started = true;
+    reader.feed.state.lock().run = run;
+    reader
+  }
+
+  /// Give the reader a batch being read and a merge head and an early
+  /// batch, each with rows not yet read.
+  fn hold_rows(reader: &mut ScanReader) {
+    reader.current = Some(batch(reader.run, &[1, 2]));
+    reader.next_row = 0;
+    let head = FeedBatch {
+      run: reader.run,
+      ..of_place(0, &[5, 6], false)
+    };
+    place_batch(&mut reader.heads, &mut reader.early, head, 1);
+    reader.early.push(FeedBatch {
+      run: reader.run,
+      ..of_place(0, &[7], false)
+    });
+  }
+
+  #[test]
+  fn a_failed_run_gives_no_row_its_reader_still_holds() {
+    // While the run goes on, and once it has read to the end, the rows
+    // the reader holds are its own to read.
+    let mut reader = reader_on_run(3);
+    hold_rows(&mut reader);
+    assert!(reader.drop_if_failed().is_none());
+    reader.feed.finish_run(3, None);
+    assert!(reader.drop_if_failed().is_none());
+    assert!(reader.current.is_some() && reader.heads[0].has_row());
+    // A failed run's are let go of, and its error given, each time.
+    let mut reader = reader_on_run(3);
+    hold_rows(&mut reader);
+    reader.feed.finish_run(3, Some(IcError::new(274)));
+    assert_eq!(reader.drop_if_failed().map(|e| e.code), Some(274));
+    assert!(reader.current.is_none());
+    assert!(reader.heads.iter().all(|head| head.batch.is_none()));
+    assert!(reader.early.is_empty());
+    assert_eq!(reader.feed.state.lock().spare.len(), 3, "spares, all");
+    assert_eq!(reader.drop_if_failed().map(|e| e.code), Some(274));
+    // Through next_row: the error, no row of the batch it held, whether
+    // the run is read as it comes or merged.
+    for ordered in [false, true] {
+      let mut reader = reader_on_run(5);
+      reader.ordered = ordered;
+      hold_rows(&mut reader);
+      reader.feed.finish_run(5, Some(IcError::new(4028)));
+      assert_eq!(reader.next_row().map_err(|e| e.code), Err(4028));
+      assert_eq!(reader.rows_read(), 0, "ordered {}", ordered);
+      assert_eq!(reader.next_row().map_err(|e| e.code), Err(4028));
+    }
+    // An earlier run's failure is not this one's.
+    let mut reader = reader_on_run(4);
+    hold_rows(&mut reader);
+    reader.feed.failed.store(3, Ordering::Release);
+    assert!(reader.drop_if_failed().is_none());
+    assert!(reader.current.is_some());
   }
 
   fn of_place(place: u32, rows: &[u32], last: bool) -> FeedBatch {

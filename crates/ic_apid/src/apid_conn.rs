@@ -358,6 +358,9 @@ pub struct CoordRecord {
   /// The release id it was allocated with, which only its own free
   /// carries. Verify: chapter 05 §17.10.
   release_id: u32,
+  /// Its allocate was given up on before an answer came: a confirmation
+  /// that comes later is freed at once (`take_late_allocate`).
+  abandoned: bool,
 }
 
 #[cfg(test)]
@@ -375,6 +378,7 @@ impl CoordRecord {
       lost: false,
       freed: false,
       release_id: 1,
+      abandoned: false,
     }
   }
 }
@@ -437,6 +441,22 @@ fn release_id_after(seed: &mut u64) -> u32 {
       return id;
     }
   }
+}
+
+/// True if an allocate's answer naming `client_ptr`, from `sender`,
+/// answers the allocate of `held` given up on before it came.
+fn answers_abandoned(held: &CoordRecord, client_ptr: u32, sender: u32) -> bool {
+  held.abandoned && held.api_ptr == client_ptr && held.node_id == sender
+}
+
+/// Take into `held`, an allocate given up on, the record the late
+/// confirmation `conf` names, so that it can be given back: it stays
+/// lost, never handed out, as nothing waits for it.
+fn take_abandoned(held: &mut CoordRecord, conf: &CoordAllocConf) {
+  held.abandoned = false;
+  held.coord_ptr = conf.coord_ptr;
+  held.coord_block = blocks::ref_to_block(conf.coord_block_ref);
+  held.lost = true;
 }
 
 /// Mark `held`, the record `rec` names, as given back, if it may be:
@@ -1459,6 +1479,7 @@ impl ApidConnection {
       lost: true,
       freed: false,
       release_id,
+      abandoned: false,
     });
     let allocate = CoordAllocReq {
       client_ptr: api_ptr,
@@ -1478,7 +1499,7 @@ impl ApidConnection {
     // Over the link the record is noted on: a link replaced since would
     // allocate a record there that this one, of the old link, would
     // never use nor give back.
-    let reply = self.call_on(
+    let called = self.call_on(
       node_id,
       generation,
       &header,
@@ -1486,7 +1507,17 @@ impl ApidConnection {
       &[],
       &replies,
       IC_COORD_ALLOC_WAIT_MS,
-    )?;
+    );
+    let reply = match called {
+      Ok(reply) => reply,
+      Err(e) => {
+        // No answer in time, or none waited for: one that comes later
+        // allocated a record whose pointer nothing here would know, and
+        // that nothing would give back, so it is freed as it comes.
+        self.coord_records[index].abandoned = true;
+        return Err(e);
+      }
+    };
     if reply.sig_no == numbers::IC_SIG_COORD_ALLOC_REF {
       let refusal = CoordAllocRef::decode(&reply.data)?;
       return Err(IcError::new(refusal.error_code as i32));
@@ -1638,6 +1669,7 @@ impl ApidConnection {
       lost: true,
       freed: false,
       release_id,
+      abandoned: false,
     });
     let allocate = CoordAllocReq {
       client_ptr: api_ptr,
@@ -1822,6 +1854,41 @@ impl ApidConnection {
         &[],
       );
     }
+  }
+
+  /// An allocate's answer that no wait claimed: if it answers one given
+  /// up on, a record it confirms is freed at once, over the link it was
+  /// allocated on, since its pointer was known nowhere and nothing
+  /// would ever give it back; a refusal needs nothing. True if it was
+  /// such an answer, which is then no stray.
+  pub(crate) fn take_late_allocate(&mut self, signal: &SignalView<'_>) -> bool {
+    let client_ptr = match signal.data.first() {
+      Some(client_ptr) => *client_ptr,
+      None => return false,
+    };
+    let index = match coord_index_of(client_ptr) {
+      Some(index) => index,
+      None => return false,
+    };
+    let given_up = match self.coord_records.get(index) {
+      Some(held) => answers_abandoned(held, client_ptr, signal.sender_node_id),
+      None => false,
+    };
+    if !given_up {
+      return false;
+    }
+    if signal.sig_no == numbers::IC_SIG_COORD_ALLOC_REF {
+      self.coord_records[index].abandoned = false;
+      return true;
+    }
+    let conf = match CoordAllocConf::decode(signal.data) {
+      Ok(conf) => conf,
+      Err(_) => return false,
+    };
+    take_abandoned(&mut self.coord_records[index], &conf);
+    let rec = self.coord_records[index];
+    self.send_coord_free(&rec);
+    true
   }
 
   /// True if `client_ptr` names a record of ours that is out of use: an
@@ -2047,6 +2114,40 @@ mod tests {
     let mut unconfirmed = rec;
     unconfirmed.coord_block = 0;
     assert!(!mark_freed(&mut unconfirmed, &rec));
+  }
+
+  #[test]
+  fn an_allocate_given_up_on_is_freed_when_its_answer_comes() {
+    // The place as an allocate leaves it once its wait has ended: lost,
+    // its coordinator's pointer not known, given up on.
+    let mut placeholder = CoordRecord::for_test(1);
+    placeholder.coord_ptr = 0;
+    placeholder.coord_block = 0;
+    placeholder.lost = true;
+    let ptr = placeholder.api_ptr;
+    // Not given up on, another place, or another node: not its answer.
+    assert!(!answers_abandoned(&placeholder, ptr, 1));
+    placeholder.abandoned = true;
+    assert!(answers_abandoned(&placeholder, ptr, 1));
+    assert!(!answers_abandoned(&placeholder, coord_ptr_of(1), 1));
+    assert!(!answers_abandoned(&placeholder, ptr, 2));
+    // Its late confirmation makes it a record that can be given back,
+    // once, and that is never handed out.
+    let conf = CoordAllocConf {
+      client_ptr: ptr,
+      coord_ptr: 77,
+      coord_block_ref: 0x00F5_0002,
+    };
+    take_abandoned(&mut placeholder, &conf);
+    assert!(!placeholder.abandoned);
+    assert!(placeholder.lost, "never handed out");
+    assert_eq!(placeholder.coord_ptr, 77);
+    assert_eq!(placeholder.coord_block, 0xF5);
+    let rec = placeholder;
+    assert!(mark_freed(&mut placeholder, &rec), "its free goes");
+    assert!(!mark_freed(&mut placeholder, &rec), "once");
+    // A second answer finds it no longer given up on.
+    assert!(!answers_abandoned(&placeholder, ptr, 1));
   }
 
   #[test]

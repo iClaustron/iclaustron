@@ -69,15 +69,19 @@
  * from; an error's text is copied into the caller's buffer.
  *
  * Structs with a size. IC_GLOBAL_OPTIONS, IC_EXECUTOR_OPTIONS,
- * IC_READ_KEY_ARGS, IC_WRITE_KEY_ARGS, IC_SCAN_ARGS and
+ * IC_READ_KEY_ARGS, IC_WRITE_KEY_ARGS, IC_SCAN_ARGS, IC_SCAN_RANGE and
  * IC_TAKEOVER_ARGS are filled by their _init(&s, sizeof s) before the
  * program sets what it wants;
  * IC_FIELD_INFO and IC_EXECUTOR_STATS are given with their size. A
- * later release adds fields at the end, and a program built against an
- * older header gets the fields it knows: IC_EXECUTOR_OPTIONS and
- * IC_EXECUTOR_STATS gained `scans` after 0.1, IC_GLOBAL_OPTIONS its
- * three AUTO_INCREMENT fields, and IC_FIELD_INFO its `auto_increment`
- * and `hidden_key` flags, in what was its padding.
+ * later release adds fields at the end. Of IC_GLOBAL_OPTIONS,
+ * IC_EXECUTOR_OPTIONS, IC_FIELD_INFO and IC_EXECUTOR_STATS a program
+ * built against an older header gets the fields it knows:
+ * IC_EXECUTOR_OPTIONS and IC_EXECUTOR_STATS gained `scans` after 0.1,
+ * IC_GLOBAL_OPTIONS its three AUTO_INCREMENT fields, and IC_FIELD_INFO
+ * its `auto_increment` and `hidden_key` flags, in what was its padding.
+ * The argument structs are taken whole, and one shorter than this
+ * header's is refused with IC_ERROR_INCONSISTENT_DATA: a program is
+ * built again against the header of a release that grows one.
  *
  * Threads. The functions that take no handle (ic_api_version,
  * ic_error_*, ic_field_type_name, the _init functions) may be called
@@ -1838,8 +1842,10 @@ void *ic_apid_query_user_ref(IC_APID_CONNECTION *conn, IC_QUERY_ID query);
  Fill `args`, `size` bytes, with the defaults: a simple read, the
  default abort option, no callback.
 
- Leaves `args` as it is when `size` is smaller than this header's
- `IC_READ_KEY_ARGS`.
+ When `size` is smaller than this header's `IC_READ_KEY_ARGS`, as for a
+ program built against an older header, only the size is written
+ into `args`, so that a call given it sees how short it is and
+ refuses it, without reading past it.
 
  # Safety
 
@@ -1851,8 +1857,10 @@ void ic_read_key_args_init(IC_READ_KEY_ARGS *args, size_t size);
  Fill `args`, `size` bytes, with the defaults: an update, the default
  abort option, no batching hint, no callback.
 
- Leaves `args` as it is when `size` is smaller than this header's
- `IC_WRITE_KEY_ARGS`.
+ When `size` is smaller than this header's `IC_WRITE_KEY_ARGS`, as for a
+ program built against an older header, only the size is written
+ into `args`, so that a call given it sees how short it is and
+ refuses it, without reading past it.
 
  # Safety
 
@@ -2109,9 +2117,12 @@ int32_t ic_apid_conn_poll(IC_APID_CONNECTION *conn,
                           uint32_t *signals);
 
 /*
- Send, then poll.
+ Send, then poll. The poll always runs, and a send that failed
+ because a link has gone is no error here: the poll fails the
+ transactions sent over that link with its error.
 
- Errors: as `ic_apid_conn_send`.
+ Errors: as `ic_apid_conn_send`, but for a lost link; returned after
+ the poll.
 
  # Safety
 
@@ -2137,7 +2148,8 @@ int32_t ic_apid_conn_flush(IC_APID_CONNECTION *conn,
 
  `conn`, `key_rec` and `attr_rec` are handles not yet freed;
  `key_row` points to `key_len` readable bytes, `attr_row` to
- `attr_len` writable ones; `found` to a writable `bool`.
+ `attr_len` writable ones, which may be the same buffer, as the key
+ is read before the row is written; `found` to a writable `bool`.
  */
 int32_t ic_apid_conn_read_committed(IC_APID_CONNECTION *conn,
                                     const IC_RECORD *key_rec,
@@ -2199,8 +2211,10 @@ int32_t ic_apid_conn_write(IC_APID_CONNECTION *conn,
  every fragment, batches as the configuration says, no transaction,
  no partition, no limit, no callback, in no order, not continuous.
 
- Leaves `args` as it is when `size` is smaller than this header's
- `IC_SCAN_ARGS`.
+ When `size` is smaller than this header's `IC_SCAN_ARGS`, as for a
+ program built against an older header, only the size is written
+ into `args`, so that a call given it sees how short it is and
+ refuses it, without reading past it.
 
  # Safety
 
@@ -2254,8 +2268,10 @@ int32_t ic_apid_index_scan_create(IC_APID_CONNECTION *conn,
  Fill `range`, `size` bytes, with the defaults: no bound on either
  side, which takes in every row, as range 0.
 
- Leaves `range` as it is when `size` is smaller than this header's
- `IC_SCAN_RANGE`.
+ When `size` is smaller than this header's `IC_SCAN_RANGE`, as for a
+ program built against an older header, only the size is written
+ into `range`, so that a call given it sees how short it is and
+ refuses it, without reading past it.
 
  # Safety
 
@@ -2542,8 +2558,10 @@ int32_t ic_apid_conn_next_batch(IC_APID_CONNECTION *conn,
  Fill `args`, `size` bytes, with the defaults: the default abort
  option, no callback.
 
- Leaves `args` as it is when `size` is smaller than this header's
- `IC_TAKEOVER_ARGS`.
+ When `size` is smaller than this header's `IC_TAKEOVER_ARGS`, as for a
+ program built against an older header, only the size is written
+ into `args`, so that a call given it sees how short it is and
+ refuses it, without reading past it.
 
  # Safety
 

@@ -30,6 +30,11 @@
 //!   rolls it back: some failures are reported only this way, so the
 //!   transaction waits for it as well as for the confirmation.
 //!
+//! A refusal or a rollback with a schema error, such as 241 for a table
+//! changed since it was bound, lets the table go, so that the next bind
+//! fetches it afresh, as a transaction's replies do (review,
+//! 2026-10-21).
+//!
 //! The two may come in either order, and either may come packed with
 //! others; the receive thread has taken those apart.
 //!
@@ -62,6 +67,7 @@ use crate::query::ReadKeyArgs;
 use crate::query::ReadKind;
 use crate::record::Record;
 use crate::row_codec;
+use crate::transaction::schema_error;
 
 /// How long a key operation waits for its outcome.
 pub const IC_KEY_OP_WAIT_MS: u32 = 10_000;
@@ -414,6 +420,11 @@ fn run_op(
   match result {
     Ok(outcome) => {
       conn.free_coord_record(&rec);
+      // A table found changed or gone is let go of before the helper
+      // returns, so that a bind to try again fetches it afresh.
+      if finds_table_stale(&outcome) {
+        conn.table_changed(table);
+      }
       Ok(outcome)
     }
     Err(e) => {
@@ -547,6 +558,16 @@ fn take_conf(
   Ok(())
 }
 
+/// True if the operation ended with a schema error, in its refusal or
+/// in its transaction's rollback: its table is not what it was bound
+/// as.
+fn finds_table_stale(outcome: &Outcome) -> bool {
+  match outcome.refused {
+    Some(code) => schema_error(code as i32),
+    None => false,
+  }
+}
+
 fn same_transaction(
   req: &KeyOpReq,
   trans_id_lo: u32,
@@ -597,5 +618,26 @@ mod tests {
       ..Outcome::default()
     };
     assert!(outcome.is_complete());
+  }
+
+  #[test]
+  fn a_schema_error_says_the_table_is_stale_and_no_other_does() {
+    // Changed since bound, being dropped, not known, no such table.
+    for code in [241u32, 283, 284, 709, 723] {
+      let outcome = Outcome {
+        refused: Some(code),
+        ..Outcome::default()
+      };
+      assert!(finds_table_stale(&outcome), "{}", code);
+    }
+    // No row, a row already there, a lock wait, a constraint, success.
+    for code in [IC_NDB_ERROR_NO_SUCH_ROW, IC_NDB_ERROR_ROW_EXISTS, 266, 893] {
+      let outcome = Outcome {
+        refused: Some(code),
+        ..Outcome::default()
+      };
+      assert!(!finds_table_stale(&outcome), "{}", code);
+    }
+    assert!(!finds_table_stale(&Outcome::default()));
   }
 }

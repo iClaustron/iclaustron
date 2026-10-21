@@ -636,6 +636,17 @@ too. As built: each record gets its id when it is allocated
 Verify: `src/kernel/blocks/dbtc/DbtcMain.cpp:2374, 2450, 2468-2522`,
 `include/ndb_version.h.in:1604`.
 
+**An allocate given up on** (review, 2026-10-21). A transaction's
+allocate is waited for 5 s at most. A confirmation that comes after
+that names our pointer for a place whose request is forgotten, and the
+coordinator's pointer is in that confirmation alone, so nothing could
+give the record back and it stayed until the link went. The place is
+now kept as given up on, with its release id, and a confirmation that
+comes late is answered with `COORD_FREE_REQ` at once, over the link it
+came on; a late refusal needs nothing. A scan's allocate is never given
+up on in that way: its pool waits for the answer, or for the link's
+loss.
+
 **The coordinator's block reference is echoed, never decoded.** Its
 upper sixteen bits hold the block and the instance, and RonDB packs up
 to 1024 instances into them with a transform of its own
@@ -1348,7 +1359,15 @@ NTS = `src/ndbapi/NdbTransactionScan.cpp`, IF = `src/ndbapi/Ndbif.cpp`.
   every confirmation, 29 extended confirmation (always ours), 30 read committed base,
   31 several fragments per receiver (joins only, else 4003,
   coordinator:16936). ST:251-318 (trust the constants, not the drawing
-  beside them). Bits 0–7 are RonDB's extensions, all 0 from us in phase
+  beside them). Bit 9, no disk, says the scan reads memory alone: it is
+  set only when neither the record nor the program touches a column
+  kept on disk. The reference clears it for a program that reads,
+  writes or branches on one (`src/ndbapi/NdbInterpretedCode.cpp:1024-
+  1032, 1508-1514`, NSO:229-232); a filter on a disk column with it set
+  fails with 927, "flag set to not use disk columns, but still done"
+  (`src/ndbapi/ndberror.cpp:425`). Ours did not look at the program
+  until the review of 2026-10-21; a key operation never sets it.
+  Bits 0–7 are RonDB's extensions, all 0 from us in phase
   8 (the author, 2026-10-15):
   - 0: ring buffer metadata. 3 and 4: TTL (ignore it; expired rows
     only). 5: the user id for rate limits, with words 13–14. All later.
