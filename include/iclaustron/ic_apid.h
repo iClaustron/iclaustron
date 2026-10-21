@@ -2328,10 +2328,12 @@ int32_t ic_apid_conn_start_scan(IC_APID_CONNECTION *conn,
                                 const IC_SCAN_ARGS *args);
 
 /*
- End a run before it reads to the end: the batches asked for are
- waited for, then the coordinator is told to stop, and the run is
- done when it confirms, in later polls. Batches with the program are
- let go of.
+ End a run before it reads to the end: the coordinator is told to
+ stop at once, and the run is done when it confirms, in later polls.
+ The batches asked for are not waited for, and their rows are dropped
+ as they come; only a locking scan whose transaction goes on first
+ waits for the takeovers of its rows still to be received. Batches
+ with the program are let go of.
 
  Errors: `IC_ERROR_NO_SUCH_FIELD` for an id that names no scan.
 

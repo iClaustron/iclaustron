@@ -468,10 +468,13 @@ takeovers have completed, so the locks never go before the changes are
 in. Commit the transaction once the scan is done.
 
 Close a run early with `close_scan` (`ic_apid_conn_close_scan`), or a
-reader's with `close` (`ic_scan_reader_close`). A batch kept too long
-ends the scan with 296; a lock waited for too long with 274 or 266;
-the failure of the coordinator's node with 4028. All are temporary:
-start the scan again.
+reader's with `close` (`ic_scan_reader_close`). The run stops at once,
+without waiting for the batches on their way, whose rows are dropped;
+a locking scan on a transaction that goes on first waits for its
+takeovers to be confirmed, so that each holds its lock. A batch kept
+too long ends the scan with 296; a lock waited for too long with 274
+or 266; the failure of the coordinator's node with 4028. All are
+temporary: start the scan again.
 
 ## 6. Programs: conditions and updates on the data nodes
 

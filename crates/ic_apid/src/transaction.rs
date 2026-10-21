@@ -263,6 +263,14 @@ impl Transaction {
       || self.state == CommitState::RolledBack
   }
 
+  /// True once a rollback has been asked for, or has happened: a scan
+  /// closed on it waits no more for its takeovers (chapter 04, "Scans").
+  pub(crate) fn rolls_back(&self) -> bool {
+    self.end_wanted == Some(CommitState::RollbackRequested)
+      || self.state == CommitState::RollbackRequested
+      || self.state == CommitState::RolledBack
+  }
+
   /// True if it waits for a reply, and has since it last sent at least
   /// `limit` nanoseconds before `now`: a query sent and not complete,
   /// or a commit or rollback asked of the coordinator and not answered.
@@ -847,6 +855,10 @@ impl ApidConnection {
       if let Some(of) = takeover {
         self.takeover_settled(of);
       }
+    }
+    if how == CommitState::RollbackRequested {
+      // Nor do those that went, for a scan being closed.
+      self.stop_closing_scans_of(id);
     }
     Ok(())
   }

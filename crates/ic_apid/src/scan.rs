@@ -20,9 +20,12 @@
 //!
 //! **A run ends** when every receiver has given its last batch and it
 //! has been handed back, when it is closed, or when it fails. A close
-//! waits for the batches asked for, then stops, and the record goes
-//! back to its pool once the coordinator confirms. Rows that come after
-//! the end find their receiver's id stale and are dropped.
+//! stops at once, without waiting for the batches asked for, unless the
+//! scan's transaction goes on and takeovers of its rows are still to be
+//! received (phase 10; the author, 2026-10-21). The record goes back to
+//! its pool once the coordinator confirms. Rows that come after the
+//! end, of batches the close did not wait for, find their receiver's id
+//! stale and are dropped, counted as late rather than unexpected.
 //!
 //! A scan started on a transaction, so that its rows may be taken over,
 //! runs at the transaction's coordinator instance, under its id, and
@@ -275,8 +278,9 @@ pub enum ScanState {
   Starting,
   /// The request has gone; batches come.
   Running,
-  /// A close was asked for, or an error ends the run: waiting for what
-  /// was asked for, then for the coordinator to confirm the close.
+  /// A close was asked for, or an error ends the run: the stop sent,
+  /// or waiting for takeovers to go first, then for the coordinator to
+  /// confirm the close.
   Closing,
   /// The run is over: read to the end, closed, or failed.
   Done,
@@ -632,18 +636,6 @@ impl Scan {
     self.state == ScanState::Starting
       || self.state == ScanState::Running
       || self.state == ScanState::Closing
-  }
-
-  /// True if no receiver of the run waits for a batch it asked for.
-  fn nothing_asked(&self) -> bool {
-    let mut place: usize = 0;
-    while place < self.used as usize {
-      if self.receivers[place].state == ReceiverState::Asked {
-        return false;
-      }
-      place += 1;
-    }
-    true
   }
 
   /// True if a takeover of a row of the run is not yet done.
@@ -1486,9 +1478,12 @@ impl ApidConnection {
   }
 
   /// End a run before it reads to the end (chapter 05 §7.2): the
-  /// batches asked for are waited for, then the coordinator is told to
-  /// stop, and the run is done when it confirms. Batches with the
-  /// application are let go of. A run not yet sent ends at once.
+  /// coordinator is told to stop at once, and the run is done when it
+  /// confirms. The batches asked for are not waited for, and their rows
+  /// are dropped as they come; only a locking scan whose transaction
+  /// goes on first waits for the takeovers of its rows still to be
+  /// received. Batches with the application are let go of. A run not
+  /// yet sent ends at once.
   pub fn close_scan(&mut self, id: ScanId) -> Result<(), IcError> {
     let state = match self.scans.get(id.0) {
       Some(scan) => scan.state,
@@ -2316,6 +2311,18 @@ impl ApidConnection {
     Some(slot)
   }
 
+  /// A row or a key that names a receiver of no live run: a run's that
+  /// has ended, of a batch its close did not wait for, dropped and
+  /// counted as late (chapter 05 §7.2). False if the word is no
+  /// receiver's at all.
+  fn late_scan_signal(&mut self, word: u32) -> bool {
+    if word & IC_RECEIVER_TAG == 0 {
+      return false;
+    }
+    self.late_scan_signals += 1;
+    true
+  }
+
   /// A row of a scan: kept in its receiver's batch buffer.
   pub(crate) fn take_scan_row(&mut self, signal: &SignalView<'_>) -> bool {
     let front = match RowDataRep::decode(signal.data) {
@@ -2328,7 +2335,7 @@ impl ApidConnection {
       front.trans_id_hi,
     ) {
       Some(slot) => slot,
-      None => return false,
+      None => return self.late_scan_signal(front.query_ref),
     };
     let mut section: Option<&[u32]> = None;
     if signal.num_sections > 0 {
@@ -2369,7 +2376,7 @@ impl ApidConnection {
       front.trans_id_hi,
     ) {
       Some(slot) => slot,
-      None => return false,
+      None => return self.late_scan_signal(front.receiver_id),
     };
     let mut section: Option<&[u32]> = None;
     if signal.num_sections > 0 {
@@ -2413,6 +2420,12 @@ impl ApidConnection {
       conf.trans_id_hi,
     ) {
       Some(id) => id,
+      // A stop that crossed its run's end is confirmed by the
+      // coordinator all the same, once the run has ended here.
+      None if conf.confirms_close() => {
+        self.late_scan_signals += 1;
+        return true;
+      }
       None => return false,
     };
     if conf.confirms_close() {
@@ -2427,11 +2440,15 @@ impl ApidConnection {
     }
     if conf.end_of_data() {
       self.coord_finished(id);
-      let over = match self.scans.get(id.0) {
-        Some(scan) => scan.all_done(),
-        None => false,
+      let (closing, over) = match self.scans.get(id.0) {
+        Some(scan) => (scan.state == ScanState::Closing, scan.all_done()),
+        None => (false, false),
       };
-      if over {
+      if closing {
+        // The run ended at the coordinator as it closed here, perhaps
+        // crossing its stop: what it holds is let go of.
+        self.close_when_settled(id);
+      } else if over {
         self.end_run(id);
       }
     }
@@ -2586,28 +2603,53 @@ impl ApidConnection {
 
   // ---- Ending a run ----
 
-  /// Send the stop of a closing run once nothing it asked for is still
-  /// coming; a run the coordinator is done with ends at once.
+  /// Send the stop of a closing run (chapter 05 §7.2): at once, the
+  /// batches asked for not waited for, unless its takeovers hold it
+  /// back ([`stop_waits`]). A run the coordinator is done with ends
+  /// instead, the stop sent or not.
   fn close_when_settled(&mut self, id: ScanId) {
-    // The stop releases the locks of the batches it names, so it waits
-    // for their takeovers as a request for more does.
-    let (settled, stop_sent, coord_done) = match self.scans.get(id.0) {
+    let (pending, trans, stop_sent, coord_done) = match self.scans.get(id.0) {
       Some(scan) => (
-        scan.nothing_asked() && !scan.takeovers_pending(),
+        scan.takeovers_pending(),
+        scan.trans,
         scan.stop_sent,
         scan.coord_done,
       ),
       None => return,
     };
-    if !settled || stop_sent {
+    // A transaction gone is waited for no more than one rolling back.
+    let rolls_back = trans.map(|tid| match self.transaction(tid) {
+      Some(trans) => trans.rolls_back(),
+      None => true,
+    });
+    if stop_waits(pending, rolls_back) {
       return;
     }
     if coord_done {
       self.end_run(id);
       return;
     }
+    if stop_sent {
+      return;
+    }
     self.queue_more(id, true);
     self.scan_send_due = true;
+  }
+
+  /// The transaction `tid` rolls back: its scans being closed wait no
+  /// more for their takeovers, and send their stops.
+  pub(crate) fn stop_closing_scans_of(&mut self, tid: TransId) {
+    let mut closing: Vec<ScanId> = Vec::new();
+    for id in &self.scans_live {
+      if let Some(scan) = self.scans.get(id.0) {
+        if scan.state == ScanState::Closing && scan.trans == Some(tid) {
+          closing.push(*id);
+        }
+      }
+    }
+    for id in closing {
+      self.close_when_settled(id);
+    }
   }
 
   /// The coordinator is done with the run, and its record is free
@@ -2687,6 +2729,17 @@ impl ApidConnection {
     self.scans_live.retain(|live| *live != id);
     self.scans_waiting.retain(|waiting| *waiting != id);
   }
+}
+
+/// Whether a closing run's stop waits, given whether takeovers of its
+/// rows are still to be received and, for a scan on a transaction,
+/// whether that transaction rolls back (the author, 2026-10-21). Only
+/// the takeovers of a transaction that goes on are waited for: the stop
+/// releases the locks they take over, so they must reach them first. A
+/// committed read, a locking scan with no transaction, and one whose
+/// transaction rolls back stop at once.
+fn stop_waits(takeovers_pending: bool, rolls_back: Option<bool>) -> bool {
+  takeovers_pending && rolls_back == Some(false)
 }
 
 /// Let go of a closing run's batches: those with the application and
@@ -2855,5 +2908,19 @@ mod tests {
     assert!(receiver.rows.is_empty() && receiver.row_ends.is_empty());
     assert_eq!(receiver.next_row, 0);
     assert_eq!(receiver.rows.capacity(), capacity);
+  }
+
+  #[test]
+  fn a_close_stops_at_once_but_for_takeovers_of_a_transaction_going_on() {
+    // A committed read and a locking scan with no transaction: no
+    // transaction, and never a takeover.
+    assert!(!stop_waits(false, None));
+    // A locking scan on a transaction that goes on, started or asked to
+    // commit: its takeovers still to be received go first.
+    assert!(stop_waits(true, Some(false)));
+    assert!(!stop_waits(false, Some(false)));
+    // One whose transaction rolls back, or is gone, waits for nothing.
+    assert!(!stop_waits(true, Some(true)));
+    assert!(!stop_waits(false, Some(true)));
   }
 }

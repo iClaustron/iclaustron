@@ -102,6 +102,7 @@ use ic_apid::scan::ScanArgs;
 use ic_apid::scan::ScanBatchId;
 use ic_apid::scan::ScanId;
 use ic_apid::scan::ScanLock;
+use ic_apid::scan::ScanState;
 use ic_apid::scan::TakeoverArgs;
 use ic_apid::scan_reader::ScanReader;
 use ic_apid::scan_reader::ScanShape;
@@ -4600,7 +4601,7 @@ fn scan_closed_early_and_run_again() {
       ..ScanArgs::default()
     };
     // Read one batch, keep it, and close with the others in flight or
-    // held: the run waits for what it asked for, then stops.
+    // held: the run stops at once, the batches in flight dropped.
     conn.start_scan(scan, &args).expect("start");
     let _ = conn.send_queries(true);
     let start = time::gethrtime();
@@ -5475,6 +5476,455 @@ fn scan_takeovers_a_batch_at_a_time_and_across_a_close() {
     conn.poll(100);
   }
   assert_eq!(conn.unexpected(), 0);
+}
+
+// ---- Closing at once (chapter 06, phase 10) ----
+
+/// Poll until the scan's run is over, handing back any batch that comes
+/// meanwhile.
+fn until_done(conn: &mut ApidConnection, scan: ScanId) {
+  let start = time::gethrtime();
+  while !conn.scan_done(scan) {
+    conn.poll(100);
+    while let Some(batch) = conn.get_next_scan_batch() {
+      conn.release_scan_batch(batch).expect("hand back");
+    }
+    let waited = time::millis_elapsed(start, time::gethrtime());
+    assert!(
+      waited < IC_IT_SCAN_WAIT_MS,
+      "the close did not end: {:?}",
+      conn.scan(scan)
+    );
+  }
+}
+
+/// Poll until a batch of the scan comes, and give it.
+fn first_batch(conn: &mut ApidConnection) -> ScanBatchId {
+  let start = time::gethrtime();
+  loop {
+    conn.poll(100);
+    if let Some(batch) = conn.get_next_scan_batch() {
+      return batch;
+    }
+    let waited = time::millis_elapsed(start, time::gethrtime());
+    assert!(waited < IC_IT_SCAN_WAIT_MS, "no batch came");
+  }
+}
+
+/// True if another transaction is refused row `id` of the `scan` table
+/// exclusively, without waiting: 635, as while a lock on it is held.
+/// `reader` is a free query over the table; the executed list is
+/// emptied.
+fn row_locked(
+  conn: &mut ApidConnection,
+  t: &Table,
+  reader: QueryId,
+  id: i64,
+) -> bool {
+  let mut key = t.row();
+  t.put(&mut key, "id", &id.to_string());
+  let other = start_for(conn, t, &key);
+  conn
+    .query_mut(reader)
+    .expect("the reader")
+    .key_row_mut()
+    .copy_from_slice(&key);
+  let no_wait = ReadKeyArgs {
+    kind: ReadKind::ExclusiveNoWait,
+    ..ReadKeyArgs::default()
+  };
+  conn
+    .read_key(reader, other, &no_wait)
+    .expect("define the read");
+  complete(conn, reader);
+  let error = conn.query(reader).expect("the reader").error();
+  conn
+    .rollback_transaction(other)
+    .expect("roll the reader back");
+  finish(conn, other);
+  conn.close_transaction(other).expect("close");
+  match error {
+    None => false,
+    Some(e) if e.code == 635 => true,
+    Some(e) => panic!("reading row {}: {:?}", id, e),
+  }
+}
+
+#[test]
+fn scan_closed_at_once_with_every_batch_on_its_way() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_scan_table().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("connection");
+  let t = bind(&mut conn, "scan");
+  let scan = conn.create_scan(&t.def, &t.rec).expect("create the scan");
+  for lock in [ScanLock::Committed, ScanLock::Shared, ScanLock::Exclusive] {
+    let args = ScanArgs {
+      lock,
+      ..ScanArgs::default()
+    };
+    // The request goes once the node it runs at has given a record,
+    // which a poll may have to wait for: each run goes to the next node
+    // in turn. The close follows at once, before any batch is taken, so
+    // that every receiver's batch is on its way when the stop is.
+    conn.start_scan(scan, &args).expect("start");
+    let start = time::gethrtime();
+    while conn.scan(scan).expect("the scan").state() == ScanState::Starting {
+      conn.poll(10);
+      let waited = time::millis_elapsed(start, time::gethrtime());
+      assert!(waited < IC_IT_SCAN_WAIT_MS, "no record came");
+    }
+    assert_eq!(
+      conn.scan(scan).expect("the scan").state(),
+      ScanState::Running
+    );
+    conn.close_scan(scan).expect("close");
+    let _ = conn.send_queries(true);
+    until_done(&mut conn, scan);
+    let closed = conn.scan(scan).expect("the scan");
+    assert!(closed.error().is_none(), "{:?}: {:?}", lock, closed.error());
+    assert_eq!(closed.rows_read(), 0, "{:?}: no row was read", lock);
+    // Run again at once: every row once, none of them the closed run's.
+    let mut run: u32 = 0;
+    while run < 2 {
+      let (ids, _, error) = scan_ids(&mut conn, &t, scan, &args);
+      assert!(error.is_none(), "{:?}: {:?}", lock, error);
+      assert!(every_row_once(&ids), "{:?}: {} rows", lock, ids.len());
+      run += 1;
+    }
+  }
+  println!(
+    "signals of closed runs dropped as late: {}",
+    conn.late_scan_signals()
+  );
+  assert_eq!(conn.unexpected(), 0);
+  conn.free_scan(scan).expect("free the scan");
+}
+
+#[test]
+fn scan_closed_at_once_through_an_executor() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_scan_table().is_none() {
+    return;
+  }
+  let executor = executor_with(&cluster, 400, 4000);
+  let submitter = executor.submitter();
+  let (t, shape) = scan_through(&submitter);
+  let mut reader = ScanReader::new(&shape);
+  for lock in [ScanLock::Committed, ScanLock::Exclusive] {
+    // Closed as soon as it is submitted, every batch still to come.
+    submitter
+      .scan(&mut reader, &bounded(lock, false))
+      .expect("submit");
+    reader.close();
+    assert!(reader.is_done());
+    assert!(reader.error().is_none(), "{:?}", reader.error());
+    assert!(!reader.next_row().expect("closed"));
+    // Then whole runs on the same reader.
+    let mut run: u32 = 0;
+    while run < 2 {
+      submitter
+        .scan(&mut reader, &bounded(lock, false))
+        .expect("submit");
+      let (ids, error) = reader_ids(&mut reader, &t);
+      assert!(error.is_none(), "{:?}: {:?}", lock, error);
+      assert!(every_row_once(&ids), "{:?}: {} rows", lock, ids.len());
+      run += 1;
+    }
+  }
+}
+
+#[test]
+fn scan_locking_closed_at_once_leaves_no_row_locked() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_scan_table().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("connection");
+  let t = bind(&mut conn, "scan");
+  let scan = conn.create_scan(&t.def, &t.rec).expect("create the scan");
+  let reader = conn.create_query(&t.def, &t.rec, &t.rec).expect("a query");
+  for lock in [ScanLock::Shared, ScanLock::Exclusive] {
+    let args = ScanArgs {
+      lock,
+      batch_rows: 50,
+      timeout_ms: IC_IT_SCAN_WAIT_MS as u32,
+      ..ScanArgs::default()
+    };
+    conn.start_scan(scan, &args).expect("start");
+    let _ = conn.send_queries(true);
+    // A batch held, its rows locked, the other batches on their way.
+    let batch = first_batch(&mut conn);
+    let mut held: Vec<i64> = Vec::new();
+    while conn.next_scan_row(batch).expect("a row") {
+      let id = t.get(conn.scan_row(scan), "id");
+      held.push(id.parse().expect("an id"));
+    }
+    let first = held[0];
+    let last = held[held.len() - 1];
+    assert!(row_locked(&mut conn, &t, reader, first), "{:?}: held", lock);
+    conn.close_scan(scan).expect("close");
+    until_done(&mut conn, scan);
+    let closed = conn.scan(scan).expect("the scan");
+    assert!(closed.error().is_none(), "{:?}: {:?}", lock, closed.error());
+    // The close let go of every lock the run held, at once.
+    for id in [first, last] {
+      assert!(
+        !row_locked(&mut conn, &t, reader, id),
+        "{:?}: row {} is free after the close",
+        lock,
+        id
+      );
+    }
+  }
+  assert_eq!(conn.unexpected(), 0);
+}
+
+#[test]
+fn scan_closed_with_takeovers_pending_waits_for_them() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_scan_table().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("connection");
+  let t = bind(&mut conn, "scan");
+  let scan = conn.create_scan(&t.def, &t.rec).expect("create the scan");
+  let qid = conn.create_query(&t.def, &t.rec, &t.rec).expect("a query");
+  let reader = conn.create_query(&t.def, &t.rec, &t.rec).expect("a query");
+  let tid = conn
+    .start_transaction(TransactionHint::Any, Some(&t.def))
+    .expect("start a transaction");
+  let args = ScanArgs {
+    lock: ScanLock::Exclusive,
+    trans: Some(tid),
+    batch_rows: 20,
+    timeout_ms: IC_IT_SCAN_WAIT_MS as u32,
+    ..ScanArgs::default()
+  };
+  conn.start_scan(scan, &args).expect("start the scan");
+  let _ = conn.send_queries(true);
+  // The batch's first row taken over to be deleted, the rest left to
+  // the scan; the takeover sent, and the scan closed at once after, its
+  // reply perhaps still to come: the stop waits for it.
+  let batch = first_batch(&mut conn);
+  assert!(conn.next_scan_row(batch).expect("a row"));
+  let taken: i64 = t.get(conn.scan_row(scan), "id").parse().expect("an id");
+  conn
+    .delete_scan_row(qid, scan, &TakeoverArgs::default())
+    .expect("take the row over");
+  let mut left: Vec<i64> = Vec::new();
+  while conn.next_scan_row(batch).expect("a row") {
+    left.push(t.get(conn.scan_row(scan), "id").parse().expect("an id"));
+  }
+  assert!(!left.is_empty(), "a batch of more than one row");
+  conn.release_scan_batch(batch).expect("hand back");
+  let _ = conn.send_queries(true);
+  conn.close_scan(scan).expect("close");
+  let start = time::gethrtime();
+  let mut done = false;
+  while !conn.scan_done(scan) || !done {
+    let _ = conn.flush(100, true);
+    while let Some(executed) = conn.get_next_executed_query() {
+      if executed == qid {
+        done = true;
+      }
+    }
+    while let Some(late) = conn.get_next_scan_batch() {
+      conn.release_scan_batch(late).expect("hand back");
+    }
+    let waited = time::millis_elapsed(start, time::gethrtime());
+    assert!(waited < IC_IT_SCAN_WAIT_MS, "the close did not end");
+  }
+  let query = conn.query(qid).expect("the takeover");
+  assert!(query.error().is_none(), "{:?}", query.error());
+  assert!(conn.scan(scan).expect("the scan").error().is_none());
+  // The rows the scan held and did not take over are free before the
+  // commit; the one taken over goes with it.
+  for id in [left[0], left[left.len() - 1]] {
+    assert!(!row_locked(&mut conn, &t, reader, id), "row {} is free", id);
+  }
+  conn.commit_transaction(tid).expect("commit");
+  assert_eq!(finish(&mut conn, tid), CommitState::Committed);
+  conn.close_transaction(tid).expect("close");
+  assert_eq!(
+    count_of(&format!("SELECT COUNT(*) FROM {}.scan", IC_IT_DB)),
+    IC_IT_SCAN_ROWS - 1
+  );
+  assert_eq!(
+    count_of(&format!(
+      "SELECT COUNT(*) FROM {}.scan WHERE id = {}",
+      IC_IT_DB, taken
+    )),
+    0
+  );
+  assert_eq!(conn.unexpected(), 0);
+}
+
+#[test]
+fn scan_closed_on_a_transaction_rolling_back_waits_for_nothing() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_scan_table().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("connection");
+  let t = bind(&mut conn, "scan");
+  let scan = conn.create_scan(&t.def, &t.rec).expect("create the scan");
+  let reader = conn.create_query(&t.def, &t.rec, &t.rec).expect("a query");
+  let mut free = takeover_queries(&mut conn, &t, 40);
+  let all = free.len();
+  // Closed, then rolled back; and rolled back, then closed.
+  for close_first in [true, false] {
+    let tid = conn
+      .start_transaction(TransactionHint::Any, Some(&t.def))
+      .expect("start a transaction");
+    let args = ScanArgs {
+      lock: ScanLock::Exclusive,
+      trans: Some(tid),
+      batch_rows: 20,
+      timeout_ms: IC_IT_SCAN_WAIT_MS as u32,
+      ..ScanArgs::default()
+    };
+    conn.start_scan(scan, &args).expect("start the scan");
+    let _ = conn.send_queries(true);
+    // Every row of the first batch taken over to be deleted, the
+    // takeovers sent, their replies still to come.
+    let batch = first_batch(&mut conn);
+    let mut deleted: Vec<i64> = Vec::new();
+    while conn.next_scan_row(batch).expect("a row") {
+      deleted.push(t.get(conn.scan_row(scan), "id").parse().expect("an id"));
+      let q = free.pop().expect("a free query");
+      conn
+        .delete_scan_row(q, scan, &TakeoverArgs::default())
+        .expect("take the row over");
+    }
+    conn.release_scan_batch(batch).expect("hand back");
+    let _ = conn.send_queries(true);
+    if close_first {
+      // The transaction goes on: the stop waits for the takeovers, and
+      // the rollback lets it go.
+      conn.close_scan(scan).expect("close");
+      conn.rollback_transaction(tid).expect("roll back");
+    } else {
+      conn.rollback_transaction(tid).expect("roll back");
+      conn.close_scan(scan).expect("close");
+    }
+    let start = time::gethrtime();
+    loop {
+      let _ = conn.flush(100, true);
+      // The takeovers end with the rollback; their errors are its.
+      while let Some(executed) = conn.get_next_executed_query() {
+        free.push(executed);
+      }
+      while let Some(late) = conn.get_next_scan_batch() {
+        conn.release_scan_batch(late).expect("hand back");
+      }
+      let trans_done =
+        conn.transaction(tid).expect("the transaction").is_done();
+      if conn.scan_done(scan) && trans_done && free.len() == all {
+        break;
+      }
+      let waited = time::millis_elapsed(start, time::gethrtime());
+      assert!(waited < IC_IT_SCAN_WAIT_MS, "the close did not end");
+    }
+    let ended = conn
+      .transaction(tid)
+      .expect("the transaction")
+      .commit_state();
+    assert_eq!(
+      ended,
+      CommitState::RolledBack,
+      "close first: {}",
+      close_first
+    );
+    conn.close_transaction(tid).expect("close");
+    // Nothing was deleted, and no row the scan or its takeovers held is
+    // locked still.
+    assert_eq!(
+      count_of(&format!("SELECT COUNT(*) FROM {}.scan", IC_IT_DB)),
+      IC_IT_SCAN_ROWS,
+      "close first: {}",
+      close_first
+    );
+    for id in [deleted[0], deleted[deleted.len() - 1]] {
+      assert!(
+        !row_locked(&mut conn, &t, reader, id),
+        "close first {}: row {} is free",
+        close_first,
+        id
+      );
+    }
+  }
+  assert_eq!(conn.unexpected(), 0);
+}
+
+#[test]
+fn scan_closed_by_its_deadline_or_a_stopping_executor() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_scan_table().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("connection");
+  let t = bind(&mut conn, "scan");
+  let scan = conn.create_scan(&t.def, &t.rec).expect("create the scan");
+  // A batch held past the run's deadline, the others on their way: the
+  // run is closed at once with IC_ERROR_TIMEOUT.
+  let args = ScanArgs {
+    batch_rows: 50,
+    timeout_ms: 300,
+    ..ScanArgs::default()
+  };
+  conn.start_scan(scan, &args).expect("start");
+  let _ = conn.send_queries(true);
+  let batch = first_batch(&mut conn);
+  let start = time::gethrtime();
+  while !conn.scan_done(scan) {
+    conn.poll(100);
+    let waited = time::millis_elapsed(start, time::gethrtime());
+    assert!(waited < IC_IT_SCAN_WAIT_MS, "the deadline did not close it");
+  }
+  let error = conn.scan(scan).expect("the scan").error();
+  assert_eq!(error.map(|e| e.code), Some(err::IC_ERROR_TIMEOUT));
+  conn
+    .release_scan_batch(batch)
+    .expect("a stale batch is passed over");
+  let (ids, _, error) = scan_ids(&mut conn, &t, scan, &ScanArgs::default());
+  assert!(error.is_none(), "{:?}", error);
+  assert!(every_row_once(&ids), "{} rows", ids.len());
+  assert_eq!(conn.unexpected(), 0);
+  // An executor stopped in the middle of a run closes it, and its
+  // reader learns why once the rows it has are read.
+  let executor = executor_with(&cluster, 400, 4000);
+  let submitter = executor.submitter();
+  let (t, shape) = scan_through(&submitter);
+  let mut reader = ScanReader::new(&shape);
+  submitter
+    .scan(&mut reader, &bounded(ScanLock::Committed, false))
+    .expect("submit");
+  assert!(reader.next_row().expect("a row"));
+  drop(executor);
+  let (ids, error) = reader_ids(&mut reader, &t);
+  assert!(ids.len() < IC_IT_SCAN_ROWS as usize, "{} rows", ids.len());
+  assert_eq!(error.map(|e| e.code), Some(err::IC_ERROR_EXECUTOR_STOPPED));
+  assert!(reader.is_done());
 }
 
 // ---- Index scans (chapter 06 §8.7) ----

@@ -1956,6 +1956,30 @@ Read again for takeover (phase 8.5, 2026-10-16), the second capture:
   exclusive one; updates and deletes from either; on a base table's
   record only, aborting on error (NSO:3513-3575, 5302-5316).
 
+Closing at once (phase 10, 2026-10-21), a capture of our own runs of
+`scan_closed_at_once_with_every_batch_on_its_way` and
+`scan_closed_with_takeovers_pending_waits_for_them` (kept as
+`~/captures/close.pcap`):
+
+- **The stop goes right behind the request.** For each of the three
+  runs closed at once, committed, shared and exclusive, the stop went
+  with `SCAN_REQ`, in the same frame or 8 µs after it, and the bare end
+  of data came back 90 to 200 µs later. No `SCAN_CONF` reported a
+  batch in between. The fragments had begun all the same: each run
+  had part of a batch on its way, 149 rows from one node for the
+  committed read, rows and keys from both for the exclusive one, which
+  no confirmation ever counted.
+- **Those rows all came before the end of data**, on the same links,
+  so the closing run dropped them itself; none came after it, and the
+  late count had nothing to count in this capture.
+- **A close on a transaction that goes on waits for its takeover.**
+  The takeover's `KEY_OP_REQ` went out, its `KEY_OP_CONF` came back,
+  and the stop followed 38 µs later, then the bare end of data. No
+  request for more went between the batch handed back and the stop,
+  since the batch's receiver waited for its takeover. Reads of the
+  rows the scan had held and not taken over, by another transaction
+  without waiting, each found its row free before the commit.
+
 ## 8. Dictionary
 
 - `TABLE_DESC_REQ` (signal 24): the caller's data, the caller's

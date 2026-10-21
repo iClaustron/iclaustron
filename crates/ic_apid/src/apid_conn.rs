@@ -467,6 +467,8 @@ pub struct ApidConnection {
   next_request_id: u32,
   /// Signals that arrived and that no request was waiting for.
   unexpected: u64,
+  /// Signals of scan runs that had ended when they came, dropped.
+  pub(crate) late_scan_signals: u64,
   /// The tables this thread has bound, by internal name.
   tables: HashMap<String, Arc<TableDef>>,
   /// The indexes this thread has bound, by `database/table/index`.
@@ -640,6 +642,7 @@ impl ApidConnection {
       deferred: VecDeque::new(),
       next_request_id: 1,
       unexpected: 0,
+      late_scan_signals: 0,
       tables: HashMap::new(),
       indexes: HashMap::new(),
       coord_records: Vec::new(),
@@ -739,6 +742,14 @@ impl ApidConnection {
   /// Signals that arrived and that no request was waiting for.
   pub fn unexpected(&self) -> u64 {
     self.unexpected
+  }
+
+  /// Signals of scan runs that had ended when they came, dropped as
+  /// chapter 05 §7.2 says rather than counted with `unexpected`: rows
+  /// and keys of batches a close did not wait for, and the confirmation
+  /// of a stop that crossed its run's end at the coordinator.
+  pub fn late_scan_signals(&self) -> u64 {
+    self.late_scan_signals
   }
 
   /// How many requests are still waiting for their reply.

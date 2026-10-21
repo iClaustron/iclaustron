@@ -2024,6 +2024,15 @@ Exit for closing a scan at once (agreed with the author, 2026-10-21):
 - Unit tests for when each close sends its stop, by lock and by
   transaction state.
 
+Met 2026-10-21: built, and every test above passes, phase 8's close
+tests unchanged with them. The capture (chapter 05 §7.4,
+`~/captures/close.pcap`) shows the stop right behind the request and
+the bare end of data with no batch reported between, and the stop of a
+close on a transaction that goes on only after its takeover's reply.
+Rows of the batches on their way all came before the end of data in it,
+so none were counted late there; signals that come after a run has
+ended are counted by `late_scan_signals`, apart from `unexpected`.
+
 ## Phase 11 — Hardening, and what early applications need (open)
 
 After phase 10 the work stops (the author, 2026-10-20): to harden the

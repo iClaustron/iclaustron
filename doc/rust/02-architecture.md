@@ -488,10 +488,13 @@ The protocol is chapter 05 §7; this is how the connection runs it.
   last send go in one `SCAN_MORE_REQ` per scan with the next send.
 - **The end.** A receiver whose entry names the null record gives no
   more once its batch is handed back; when none is left the scan is
-  done and its record goes back to the pool. A close waits for the
-  batches asked for, sends stop naming the receivers held, and the
-  record goes back when the bare end of data comes. Rows that come
-  late find their receiver's id stale and are dropped.
+  done and its record goes back to the pool. A close sends stop at
+  once, naming the receivers held, without waiting for the batches
+  asked for; only a locking scan whose transaction goes on first waits
+  for its takeovers (phase 10). The record goes back when the bare end
+  of data comes. Rows that come late, of batches the close did not wait
+  for, find their receiver's id stale and are dropped, counted as late
+  rather than unexpected.
 - **Failures.** `SCAN_REF` fails the scan, closing it first if a close
   is owed. A coordinator link lost or replaced fails the scan at the
   next poll, as it fails transactions, and its record is lost with the
