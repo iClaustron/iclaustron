@@ -1881,28 +1881,148 @@ From reading (chapter 05 §16.5):
 
 The three scan items left from phase 8 (the author, 2026-10-20). How
 each is designed, and the exit, are agreed with the author before it is
-built, as in the phases before.
+built, as in the phases before: all three were, on 2026-10-21. They
+are built in this order: closing at once first, whose dropping of rows
+that come late the continuous scan's close then uses; the continuous
+scan; the fanout pruning, which combines with it.
 
 - **Four receivers per fragment for committed reads**, the continuous
   scan (`SCAN_REQ` flag bit 2, chapter 05 §7.2): a committed-read scan
   goes on in the data node after it has reported rows to the API, which
   raises the scan rate and suits an executor's readers, whose
   `read_ahead` of 8.4 is our stand-in for it. Committed reads only
-  (2202 otherwise), the receivers a multiple of four (2201). How a
-  fragment's four receivers are used is the question left for this
-  phase (chapter 05 §7.3, question 3).
+  (2202 otherwise; never a scan that locks, so no takeovers), the
+  receivers a multiple of four (2201), four in a row for each fragment.
+  A fragment's batches come in its four receivers in turn. The
+  fragment runs one batch ahead: once it has reported a batch it fills
+  the next receiver, and waits there until the batch reported is named
+  back in `SCAN_MORE_REQ`. What is named back is the fragment record,
+  the same pointer for the four receivers, once for each batch. Naming
+  back batch k lets batch k + 2 come, so ours names k back once the
+  fragment's batch k − 2 has been handed back, whether or not k's rows
+  have been used, the data nodes holding nothing for rows delivered.
+  The four receivers' roles: one being read, one waiting behind it,
+  one being filled, one cleared for the next (the author, 2026-10-21).
+  The receiver with a fragment's last batch alone says done, its three
+  companions done with it and named back no more (the author,
+  2026-10-20; chapter 05 §7.2, flag bit 2). A scan asks for it
+  with `ScanArgs::continuous`, off by default, and `IC_SCAN_ARGS`
+  gains the field at its end; a connection's scans and an executor's,
+  table and index scans, ordered runs included (the author,
+  2026-10-21; chapter 04, "Scans"). A batch's default bytes divide
+  parameter 800 over all four times as many receivers, as the
+  reference does, so the bytes in flight stay within 800 (the author,
+  2026-10-21). `read_ahead` with it is refused, the continuous scan
+  being what it stands in for (the author, 2026-10-21). Closed with
+  fragments a batch ahead, a scan drops the rows of those batches that
+  come after the end of data, by the run's transaction id and receiver
+  ids, and waits for nothing more (the author, 2026-10-21).
 - **A fanout table's scans pruned to its partitions**: on a table with
   a partition hash fanout a scan by distribution key covers every
-  partition today, which is correct (8.3); pruned, it names the base
-  hash and the fanout's number of partitions (word 5's bit 31 and word
-  11, chapter 05 §7.2). It needs the fanout hash (chapter 05 §6.3,
-  step 3), refused so far, whose table properties (166 to 168) are
-  parsed already. A wrong request is refused with 2203, which also means a
-  read rate overload (chapter 05 §7.3, for the author).
+  partition today, which is correct (8.3). Phase 10 adds the fanout
+  hash (chapter 05 §6.3, step 3), refused so far: the hash worked out
+  in two steps, the base columns and the detail columns apart, with
+  key operations otherwise unchanged (the author, 2026-10-21). An
+  index scan whose ranges fix the base columns by equality, the same
+  in both bounds, hashes them and names the base hash (word 5's bit 31
+  and word 11, chapter 05 §7.2), and the coordinator scans only the
+  fanout's fragments: in a 1:1:4 table an equality on the primary
+  key's first column leaves 4, and the API sets up 4 receivers, or 16
+  in a continuous scan, which combines with it (the author,
+  2026-10-21). A run whose ranges fix the whole distribution key goes
+  to its one partition by the full hash, as on any table. We never
+  send the request that 2203 refuses.
 - **Closing a scan at once**, with batches on their way: stop sent
   without first waiting for every batch asked for, as the coordinator
   allows; phase 8 waits, as the reference does (chapter 05 §7.2,
-  §7.3 question 9).
+  §7.3 question 9). Rows of a batch still on its way that come after
+  the end of data are dropped by the run's transaction id and receiver
+  ids, as for a continuous scan's batch ahead (the author, 2026-10-21).
+  At once for a committed read, a locking scan with no transaction, and
+  one whose transaction is rolling back; a locking scan on a
+  transaction still going, started or asked to commit, first waits
+  until its pending takeovers have been received (the author,
+  2026-10-21; chapter 04, "Scans"). Every close takes this path.
+
+Exit for the continuous scan (agreed with the author, 2026-10-21):
+
+- The same rows with `continuous` on as without: a connection's
+  committed reads (`scan_reads_every_row_in_each_lock_mode`), an
+  executor's table and index scans (`scan_through_an_executor`,
+  `scan_index_through_an_executor`), and ordered runs in MySQL's order
+  in each latin1 collation, on a connection and through an executor.
+- Many turns round the four receivers:
+  `scan_with_small_batches_and_few_receivers` with it on, each
+  fragment's fifth, ninth and later batches in its first receiver
+  again.
+- A scan closed with fragments a batch ahead, and run again at once,
+  reads every row once, none of them from the run closed.
+- A slow reader through an executor holds at most two batches of each
+  fragment, and the other scans go on.
+- `continuous` with a locking scan, and with `read_ahead`, refused with
+  `IC_ERROR_NOT_SUPPORTED`.
+- The million-row scan counts what MySQL counts with it on, and is
+  timed with it on and off. Where few rows are filtered out it should
+  be significantly faster, probably by more than 10%; with long
+  batches and most rows filtered out the gain is smaller (the author,
+  2026-10-21). So it is timed both ways: every row returned, where a
+  gain short of 10% is looked into before the item is closed, and with
+  a filter that passes few rows, its times recorded.
+- A C test that sets `IC_SCAN_ARGS.continuous`; a capture read with
+  the dissector, showing flag bit 2, four receivers per fragment and
+  `SCAN_MORE_REQ` naming fragment records; unit tests for the k − 2
+  rule, the batch sizes and the merge round the four receivers.
+
+Exit for the fanout pruning (agreed with the author, 2026-10-21), an
+integration group `fanout` on tables made as the tree's own test makes
+them, 1:1:4, 2:1:4, and 1:2:4 with `PARTITIONS 8`:
+
+- The hash against the data nodes: for every row, the partition our
+  two-step hash gives is the one the `IC_COL_PARTITION` pseudo column
+  reads back, as the plain hash was checked, with integer and
+  character key columns.
+- Key operations placed: reads, inserts, updates and deletes by key go
+  to a node holding the row's partition, and what they do matches
+  MySQL.
+- The base columns fixed by an equality: an index scan returns what
+  MySQL selects, with the fanout's number of receivers, or four times
+  as many with `continuous` on; an ordered run in MySQL's order; a
+  capture showing bits 26 and 31 and word 11. The base columns are
+  taken by column, wherever they are in the index, not only from an
+  index that begins with them as the reference requires, and a test
+  covers an index where they are not first.
+- The whole key fixed: the run pruned to its one partition, bits 26
+  and 30.
+- A range that leaves a base column open: unpruned, every fragment.
+- Timed: a scan that filters away most of a table's partitions, on a
+  table with many of them and a fair number of rows, should be a lot
+  faster than unpruned, since it avoids a great many tree searches
+  that find nothing (the author, 2026-10-21). The same rows in a table
+  without the fanout, where the same equality prunes nothing, are
+  scanned beside it, and both times recorded.
+
+Exit for closing a scan at once (agreed with the author, 2026-10-21):
+
+- A committed read closed with every receiver's batch on its way, on a
+  connection and through an executor, and run again at once: the
+  second run reads every row once. A capture shows the stop sent before
+  the first `SCAN_CONF`, and rows after the end of data dropped.
+- A locking scan with no transaction, closed with batches on their
+  way: its rows unlocked at once, a key operation from another
+  connection getting the lock without waiting.
+- A locking scan on a transaction, closed with takeovers pending: the
+  stop sent only after their replies, in that order in the capture;
+  the taken-over rows' updates commit, and the rows not taken over are
+  unlocked.
+- The same scan with its transaction rolled back, then closed: the
+  stop waits for no takeover, and no row stays locked after the
+  rollback.
+- A timeout's close and a stopping executor's, at once.
+- Phase 8's close tests unchanged: `scan_closed_early_and_run_again`,
+  `scan_takeovers_a_batch_at_a_time_and_across_a_close` and
+  `scan_through_an_executor_closed_early_dropped_and_refused`.
+- Unit tests for when each close sends its stop, by lock and by
+  transaction state.
 
 ## Phase 11 — Hardening, and what early applications need (open)
 

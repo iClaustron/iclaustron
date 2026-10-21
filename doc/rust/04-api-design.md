@@ -297,6 +297,31 @@ while !conn.scan_done(scan) {
   reads; `partition`, to scan one partition by its id; `user_ref`,
   `callback` and `binding`, as for a query; `timeout_ms`, past which
   the scan is closed with `IC_ERROR_TIMEOUT`.
+- **`ScanArgs::continuous`** (phase 10; the author, 2026-10-21): the
+  continuous scan, four receivers for each fragment scanned at once,
+  so that a fragment goes on scanning while the API has its last
+  batch (chapter 05 §7.2, flag bit 2). Off by default: a scan uses
+  four times the receivers, and up to four times the batches in
+  flight, only where the application asks for it. For a committed
+  read only, a locking scan with it refused with
+  `IC_ERROR_NOT_SUPPORTED` before anything is sent. On a connection
+  and through an executor, for table and index scans, ordered runs
+  included: the merge follows each fragment's batches round its four
+  receivers in turn. `parallelism` still counts fragments, each of
+  them given four receivers. A batch's default bytes divide the
+  scan's total (parameter 800) over all the receivers, as the
+  reference does (the author, 2026-10-21): the batches in flight stay
+  within 800 with or without the continuous scan, each batch a
+  quarter of a plain scan's where 800 is what limits it. Rows, and an
+  explicit `batch_rows` or `batch_bytes`, stay per receiver. A
+  fragment's batch k is named back once its batch k − 2 has been
+  handed back, on a connection by `release_scan_batch` and through an
+  executor by the reader (the author, 2026-10-21; chapter 05 §7.2,
+  flag bit 2). The fragment's four receivers then hold one batch being
+  read, one waiting behind it, one the fragment is filling ahead, and
+  one cleared for the next: the application or the reader holds at
+  most two batches of each fragment, and memory stays within the four
+  receivers' batches.
 - **Batches** (`ScanBatchId`): each receiver, one per fragment scanned
   in parallel, delivers its batch when the whole of it has come, onto
   the ready list (`get_next_scan_batch`) or to the scan's callback,
@@ -323,9 +348,18 @@ while !conn.scan_done(scan) {
   would hold pages every thread of the process needs.
 - **The end**: a scan is done when every receiver has given its last
   batch and each has been handed back, or when it fails. `close_scan`
-  ends it at any time: it waits for the batches asked for, then stops
-  (chapter 05 §7.2). A done scan gives its error, none if it read to
-  the end; `free_scan` once it is not running.
+  ends it at any time. Phase 8 waits for the batches asked for, then
+  stops (chapter 05 §7.2). Phase 10 stops at once, without waiting for
+  them, and drops their rows as they come (the author, 2026-10-21),
+  with one exception: a locking scan on a transaction still going,
+  started or asked to commit, first waits until its pending takeovers
+  have been received, confirmed or failed, so that none loses the lock
+  it takes over. A committed read, a locking scan with no transaction,
+  and one whose transaction is rolling back or rolled back stop at
+  once. Every close takes this path: a timeout's, a failure's, a
+  reader's and a stopping executor's as well. A done scan gives its
+  error, none if it read to the end; `free_scan` once it is not
+  running.
 - **Errors** are the scan's: 274 and 266 for locks, 296 for a scan
   idle too long at the coordinator, 270 when a reading node fails
   (temporary: the scan is started again and its rows come again; in
@@ -408,12 +442,16 @@ while reader.next_row()? {
   2026-10-16). A locking scan's rows thus stay locked while the
   application reads them, as on a connection, and one rule serves
   every scan. A receiver has at most one batch with the reader, so
-  memory stays within the receivers times the batch bytes. A slow
+  memory stays within the receivers times the batch bytes. In a
+  continuous scan the batch handed back lets the fragment's batch two
+  on be named back, and a fragment has at most two batches with the
+  reader (`ScanArgs::continuous`, "Scans"). A slow
   reader stalls only its own receivers: the executor's loop goes on
   with everything else.
 - **Reading ahead** (the author, 2026-10-16): a committed read is made
   faster by the continuous scan, which keeps fetching a fragment's
-  rows ahead (chapter 05 §7.2, phase 10). Short of that, a flag of
+  rows ahead (`ScanArgs::continuous`, chapter 05 §7.2, phase 10).
+  Short of that, a flag of
   iClaustron's own, `ScanArgs::read_ahead`, lets a committed read's
   receiver go on as soon as its batch has moved to the reader, so a
   receiver has up to two batches out, one with the reader and one
@@ -422,7 +460,11 @@ while reader.next_row()? {
   with it is refused (`IC_ERROR_NOT_SUPPORTED`), since its locks would
   go before its rows were read. The flag is for scans through an
   executor, and refused on a connection, where the application already
-  holds each batch and hands it back itself.
+  holds each batch and hands it back itself. It is refused with
+  `ScanArgs::continuous` too (`IC_ERROR_NOT_SUPPORTED`; the author,
+  2026-10-21): the continuous scan reads ahead already, the reader
+  holding two batches of a fragment while it fills a third, so a scan
+  has one way to read ahead and stays within parameter 800.
 - **Waking**: the reader sleeps on a condition of its own while it has
   no batch. A buffer handed back wakes the executor through its inbox,
   on a list of its own, which neither the in-flight limit nor a full
@@ -526,7 +568,10 @@ conn.commit_transaction(tid)?;
 - **The batch waits for its takeovers.** Handing a batch back is
   always allowed. Its receiver asks for more, which releases the
   batch's locks, only once every takeover of the batch has completed,
-  confirmed or failed (chapter 05 §7.2). A close's stop waits likewise.
+  confirmed or failed (chapter 05 §7.2). A close's stop waits likewise
+  while the transaction goes on; once it is rolling back the stop
+  waits for nothing (phase 10; the author, 2026-10-21; "Scans", the
+  end).
   `next_row`, waiting for a batch, sends the takeovers defined first;
   a program reading a batch at a time sends them itself, as it sends
   any query.
@@ -678,7 +723,8 @@ while conn.next_row(scan)? {
   high_len)` and `ic_scan_reader_range_no(reader)`. `IC_SCAN_ARGS`
   gains `ordered` and `descending` at its end; it is new in 0.2, not
   yet released, so no shorter one is taken. `IC_ERROR_BAD_RANGE`
-  (7163).
+  (7163). Phase 10 adds `continuous` after `descending`, on the same
+  ground (the author, 2026-10-21).
 
 ### Conditions and assignments (phase 9.1; agreed with the author 2026-10-20)
 

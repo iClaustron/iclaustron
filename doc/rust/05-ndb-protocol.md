@@ -685,7 +685,7 @@ kept for the block; `src/ndbapi/ndb_cluster_connection.cpp:815-842`.
    `src/ndbapi/Ndb.cpp:435-611`, `:569-574`.
 3. RonDB fanout tables hash a base prefix and a detail suffix separately
    and combine `((base/fanout)*fanout) + (detail % fanout)`. Verify:
-   `src/ndbapi/Ndb.cpp:361-380`.
+   `src/ndbapi/Ndb.cpp:384-403`.
 4. Hash → fragment: for hash-map tables `hash_map[hash % hash_map_len]`;
    linear-hash and plain key-hash variants exist for old tables. Verify:
    `src/ndbapi/NdbDictionary.cpp:778-801`.
@@ -808,8 +808,16 @@ against the reference:
   side of every boundary between its paths, and MD5 by RFC 1321's own
   examples and the block boundaries. The XXH3 secret is the algorithm's
   standard 192 bytes.
-- Fanout tables (step 3) are refused for now; the fields to do them
-  (table properties 166, 167 and 168) are parsed.
+- Fanout tables (step 3) are refused until phase 10, which does them.
+  Only the hash changes, worked out in two steps instead of one; a key
+  operation is otherwise executed as on any table (the author,
+  2026-10-21). MySQL makes such a table with `COMMENT="NDB_TABLE=
+  PARTITION_HASH=1:1:4"`, base columns : detail columns : fanout
+  (`mysql-test/suite/ndb/t/ndb_partition_hash_fanout.test:3-42`),
+  which come in table properties 166, 167 and 168, parsed already. The
+  base columns are the primary key's first, in key order, the detail
+  columns the next (`src/ndbapi/Ndb.cpp:412-455`), and each part is
+  hashed as a distribution key is.
 - **Which nodes hold a fragment** comes with the description, in
   the replica map (table property 138): 16-bit values, big-endian, the replica
   count and the fragment count, then per fragment its log part and the
@@ -1331,7 +1339,74 @@ NTS = `src/ndbapi/NdbTransactionScan.cpp`, IF = `src/ndbapi/Ndbif.cpp`.
     partition scanned in parallel, so that a committed-read scan goes
     on after reporting rows to the API, which raises the scan rate.
     Committed reads only (else 2202), receivers a multiple of 4 (else
-    2201), coordinator:17498-17518. Phase 10.
+    2201), coordinator:17498-17518. Phase 10. How the four are used
+    (the author, 2026-10-20): the coordinator asks the fragment for its
+    first batch into the first receiver; once the fragment has reported
+    that batch to the coordinator, it goes on at once with the second
+    receiver, without waiting for the API, and so on round the four.
+    That request and its confirmation pass between data nodes only and
+    never reach the API, which needs no names for them. As the API
+    sees it, a fragment's batches come in its receivers in turn: the
+    first batch in the first receiver, the second in the second, the
+    fifth in the first again. Why four (the author, 2026-10-21): one
+    receiver whose batch is being merged, or read; the confirmed
+    batches waiting behind it; one the prefetch is filling; and one
+    kept cleared for the next prefetch.
+
+    What the API gives back is the fragment record, not a receiver
+    (confirmed by the author, 2026-10-21). The coordinator's fragment
+    record holds the four receiver ids and an index into them
+    (coordinator:17665-17670). Each `SCAN_CONF` entry names the
+    receiver at the index, then the record's pointer, which is the
+    same for the four (coordinator:20924-20927). Naming that pointer
+    in `SCAN_MORE_REQ`, once for each entry and only while its batch
+    is delivered (coordinator:19786-19795), moves the index on to the
+    next receiver (coordinator:19813-19818). The fragment runs one
+    batch ahead: once it has reported batch k it scans batch k + 1
+    into the next receiver at once, sending its rows to the API as it
+    goes (local ops:29182-29190). If it is done before k is named back
+    it stops and holds k + 1's confirmation (local ops:28892-28910);
+    when k is named back it reports k + 1 at once and goes on with
+    k + 2 (local ops:19028-19055). So naming back batch k lets batch
+    k + 2 come, in the receiver two on, and nothing in the data nodes
+    waits for that receiver to be free: the API names k back only once
+    the receiver is cleared, its batch k − 2 done with. Naming back
+    does not wait for the batch's rows to be used: a committed read
+    leaves no state in the data nodes for the rows it has delivered
+    (the author, 2026-10-20). Ours names batch k back once batch k − 2
+    of the fragment has been handed back (chapter 04), which gives the
+    four roles: k − 1 being read, k waiting behind it, k + 1 being
+    filled, and k + 2's receiver, k − 2's, cleared.
+
+    A fragment's four receivers are four in a row in section 0 (the
+    author, 2026-10-20): ids 0 to 3 are the first fragment scanned at
+    once, 4 to 7 the second, and so on. When the fragment has no more
+    rows, only the receiver whose batch is its last says done, with the
+    null pointer (a fragment that reaches its end while it is a batch
+    ahead waits to be named back, then reports that batch as its last;
+    local ops:26717-26724), and the API counts the other three as done
+    with it
+    and names none of them back; rows it still holds from them are
+    its own to use, as the data nodes hold nothing for them (the
+    author, 2026-10-20). A continuous scan is a committed read and
+    never a scan that locks (the author, 2026-10-20), so it has no
+    takeovers. Which scans set it is the API's choice. Ours is
+    `ScanArgs::continuous`, off by default (chapter 04; the author,
+    2026-10-21). The reference turns it on for a whole cluster
+    connection by the API node's parameter 899, `ContinousScan`, false
+    by default (`src/common/mgmcommon/ConfigInfo.cpp:2033-2042`, whose
+    text still says two receivers;
+    `src/ndbapi/ndb_cluster_connection.cpp:1234-1237`), for every
+    committed read but one whose options ask for a standard scan
+    (NSO:690-703, 1616-1621). It then multiplies the parallelism by
+    four, an ordered run's to four times the fragments (NSO:1623-1633),
+    and sizes each receiver's batch by that count, so the bytes of all
+    the receivers together stay within parameter 800 (NR:519-523,
+    NSO:3106). We size them the same way (the author, 2026-10-21), and
+    do not read 899: a scan's arguments alone decide. The reference
+    asks for it only from data nodes of 25.10.1 and later
+    (`include/ndb_version.h.in:1244-1255`); every 26.10 cluster has
+    it, so we check no version.
   - 6: pass queueing. An API never sets it; doing so is an error.
 
   A committed read sets
@@ -1376,7 +1451,9 @@ NTS = `src/ndbapi/NdbTransactionScan.cpp`, IF = `src/ndbapi/Ndbif.cpp`.
   a scan with no owner named has its own record stand as its owner, so
   the check passes. Every scan of the `scan_` group ran there.
 - **Receivers.** Receiver i serves fragment record i (coordinator:17624),
-  and min(receivers, fragments) are used (coordinator:17932). The
+  and min(receivers, fragments) are used (coordinator:17932). In a
+  continuous scan, receivers 4i to 4i + 3 serve fragment record i
+  (flag bit 2, above). The
   receiver id is word 0 of `ROW_DATA_REP` and of `SCAN_ROW_KEY_REP`,
   and is named per receiver in `SCAN_CONF` (IF:580-660, 842-866;
   NTS:146-151).
@@ -1410,6 +1487,9 @@ NTS = `src/ndbapi/NdbTransactionScan.cpp`, IF = `src/ndbapi/Ndbif.cpp`.
   close (coordinator:20059-20070). A fragment that ends with no rows
   while others remain is not reported: the coordinator starts the next
   fragment on the same receiver (coordinator:19278-19305, 19723-19761).
+  In a continuous scan the receiver with a fragment's last batch alone
+  says done, and its three companions are done with it (flag bit 2,
+  above).
 - **`SCAN_ROW_KEY_REP` (33)**, one per row when keys are asked for: the
   receiver id, the key length, a word of operation number << 8 | scan
   number | fragment << 20, the transaction id, then the key, inline up
@@ -1431,7 +1511,11 @@ NTS = `src/ndbapi/NdbTransactionScan.cpp`, IF = `src/ndbapi/Ndbif.cpp`.
   receiver its merge has emptied (NSO:4937-5036); an unordered scan
   names every receiver whose batch it has used, and those whose
   batches came meanwhile wait for the next round (NSO:2229, 2347-2395).
-  A receiver reported done (the null pointer) is never named. A
+  A receiver reported done (the null pointer) is never named. In a
+  continuous scan (flag bit 2, above) the pointer named is the
+  fragment record's, the same for its four receivers, named once for
+  each batch reported: ours names batch k once the fragment's batch
+  k − 2 is done with, whether or not k's rows have been used. A
   pointer named must be one whose batch the API holds, named once: in
   this tree the coordinator does not check it and stops the data node
   if it is wrong (coordinator:19727-19731); mended in
@@ -1446,7 +1530,28 @@ NTS = `src/ndbapi/NdbTransactionScan.cpp`, IF = `src/ndbapi/Ndbif.cpp`.
   the receivers held, then wait for the bare end of data (NSO:5076-5158).
   A stop at once, with batches on their way, should work too and is
   likely better, but waiting is the safer (the author, 2026-10-15);
-  it is left for phase 10.
+  it is left for phase 10. In a continuous scan a fragment that is a
+  batch ahead when the stop comes drops that batch (local
+  ops:18929-18930). Its rows already sent never have a confirmation,
+  and since they come straight from the fragment while the end of
+  data comes through the coordinator, some may reach the API after
+  it. They are dropped, as is any row that names no receiver of a
+  live run with that run's transaction id, and nothing more is waited
+  for (the author, 2026-10-21). Each run takes new receiver ids, whose
+  generation tells them from an earlier run's in the same slot
+  (`crates/ic_util/src/ptr_array.rs`), and a run under an id of its
+  own a new transaction id, so no later run takes them in. The same
+  holds for any batch on its way when a stop is sent at once.
+
+  Phase 10 sends the stop at once, without waiting for the batches
+  asked for (the author, 2026-10-21), for a committed read and for a
+  locking scan whose transaction is rolling back; a locking scan with
+  no transaction takes over nothing, and stops at once too. A locking
+  scan on a transaction still going first waits until its pending
+  takeovers have been received, then stops at once: the stop releases
+  the locks of the rows the scan holds, and a takeover must reach them
+  first. A `SCAN_CONF` the coordinator sent before the stop reached it
+  is let go of, its receivers named back no more.
 - **Batches.** A batch ends at the row count or the byte count, checked
   after a row is added, so one row may overshoot (local ops:46539-46545).
   The reference asks for bytes = min(parameter 801, parameter 800 /
@@ -1576,7 +1681,27 @@ NTS = `src/ndbapi/NdbTransactionScan.cpp`, IF = `src/ndbapi/Ndbif.cpp`.
 
   Pruning to the fanout's partitions is a pure optimisation and not in
   phase 8: a fanout table's scans cover every partition, which is
-  correct (the author, 2026-10-15).
+  correct (the author, 2026-10-15). Phase 10 does it (the author,
+  2026-10-21): when the base columns are fixed by an equality, the API
+  hashes them, and the scan covers only the fanout's fragments. In a
+  1:1:4 table an equality on the primary key's first column leaves 4
+  fragments, and the API sets up the scan for those 4 alone. It
+  combines with the continuous scan, four receivers for each.
+
+  Which fragments those are the coordinator works out, not the API (the
+  author was unsure; read from the tree, 2026-10-21, for the captures
+  to confirm). With bit 31 it takes word 11 as the first of the
+  fanout's hash values, scans that many fragments
+  (coordinator:17931-17948), and maps each hash value, word 11 plus
+  the fragment's place, through the hash map as it sends the fragment
+  its request (coordinator:18176-18183). It uses at most the fanout's
+  number of receivers (coordinator:17989), so the API sends that many,
+  or four times that many in a continuous scan. A whole distribution
+  key fixed, base and detail, places the run in one partition by the
+  full hash, which goes by its id with bits 26 and 30, as on any table:
+  the coordinator takes that as an exact fragment on a fanout table too
+  (coordinator:17949-17962). We never send bit 26 alone on a fanout
+  table, so its 2203 does not arise.
 
 ### 7.3 Asked of the author (2026-10-15)
 
@@ -1596,7 +1721,12 @@ said with each.
    in phase 8; bit 2 is the continuous scan, four receivers per
    partition, for phase 10; bit 6 is never set by an API (answered
    2026-10-15). How a partition's four receivers are used is for
-   phase 10 to ask.
+   phase 10 to ask: asked 2026-10-20, a fragment's batches come in its
+   four receivers in turn, the fifth in the first again, the fragment
+   going on to the next receiver as soon as a batch is reported (§7.2,
+   flag bit 2). Confirmed 2026-10-21: the API names back the fragment
+   record, once for each batch, and the fragment runs one batch ahead
+   of it; the four receivers' roles are recorded there.
 4. The batch's rows: flags bits 16–25 or word 10? Is 0 in the bits and
    the count in word 10 right? The coordinator takes the bits unless
    they are 0, then word 10 (coordinator:17525-17538). Word 9's bytes
@@ -1647,7 +1777,12 @@ said with each.
    holds (NSO:5076-5104, 5139-5158). May we stop at once? Waiting is
    safest; an immediate close should work and is likely desirable
    (answered 2026-10-15). Phase 8 waits; the immediate close is for
-   phase 10.
+   phase 10. Rows that come after the end of data are dropped by the
+   run's transaction id and receiver ids, with nothing more waited for
+   (answered 2026-10-21, for a continuous scan's batch ahead and for
+   any batch on its way; §7.2, `SCAN_MORE_REQ`). Phase 10 stops at
+   once, but a locking scan on a transaction still going first waits
+   for its pending takeovers (answered 2026-10-21).
 10. `SCAN_REF`'s close-owed word: 1 means the API sends `SCAN_MORE_REQ`
     with stop and waits as in 9; 0 means the scan is over and its record
     free? As read: yes. On 1 the reference sends stop naming one
