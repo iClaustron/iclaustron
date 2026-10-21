@@ -1428,8 +1428,12 @@ impl ApidConnection {
     }
   }
 
-  /// Receive only the reply to a request made by the running callback.
-  /// Everything else, including fragments, waits for the outer poll.
+  /// Receive only the reply to a request made by the running callback,
+  /// each of its fragments too: every fragment carries the whole data
+  /// of its signal, the request's number first, so it is claimed as the
+  /// whole reply would be. Everything else, other trains' fragments
+  /// among it, waits for the outer poll, which joins them in order.
+  /// Verify: chapter 05 §17.12.
   fn poll_for_reply(&mut self, request_id: u32, wait_ms: u32) {
     let mut pages = Vec::new();
     self.inbox.exchange(wait_ms, &mut pages);

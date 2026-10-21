@@ -10921,3 +10921,97 @@ fn scan_a_connection_freed_while_a_record_is_asked_for_gives_it_back() {
     round += 1;
   }
 }
+
+// ---- A description in fragments, bound inside a callback ----
+
+/// Columns of the `wide` table beside its key. With names this long its
+/// description is well over the 7 400 words a data node sends in one
+/// piece, so that it comes in fragments (chapter 05 §2.1): many of them
+/// from a debug data node, which sends pieces of 120 words.
+const IC_IT_WIDE_COLUMNS: u32 = 400;
+
+/// Make `wide`, whose description comes in fragments.
+fn setup_wide_table() -> Option<()> {
+  let mut columns = String::new();
+  let mut i: u32 = 0;
+  while i < IC_IT_WIDE_COLUMNS {
+    columns.push_str(&format!(
+      ", a_column_whose_name_is_long_enough_to_need_many_words_{:03} INT",
+      i
+    ));
+    i += 1;
+  }
+  let sql = format!(
+    "CREATE DATABASE IF NOT EXISTS {db};
+     DROP TABLE IF EXISTS {db}.wide;
+     CREATE TABLE {db}.wide (id INT NOT NULL PRIMARY KEY{columns})
+       ENGINE=NDB;",
+    db = IC_IT_DB,
+    columns = columns
+  );
+  mysql(&sql)?;
+  Some(())
+}
+
+/// What the callback of the test below found: -1 until it has run, 0
+/// for `wide` bound with every column, 1 for a wrong count, else the
+/// bind's error code.
+static WIDE_BOUND: std::sync::atomic::AtomicI32 =
+  std::sync::atomic::AtomicI32::new(-1);
+
+/// A query's callback that binds `wide`, waiting for its description
+/// inside the poll that runs it.
+fn bind_wide(conn: &mut ApidConnection, _query: QueryId, _user_ref: usize) {
+  use std::sync::atomic::Ordering;
+  let found = match conn.table_bind(IC_IT_DB, "wide") {
+    Ok(def) if def.num_fields() == IC_IT_WIDE_COLUMNS + 1 => 0,
+    Ok(_) => 1,
+    Err(e) => e.code,
+  };
+  WIDE_BOUND.store(found, Ordering::Release);
+}
+
+#[test]
+fn dict_a_description_in_fragments_is_bound_inside_a_callback() {
+  use std::sync::atomic::Ordering;
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_tables().is_none() || setup_wide_table().is_none() {
+    return;
+  }
+  // A committed read of a row that is not there completes all the same,
+  // and its callback binds `wide`, not bound yet by anyone in this
+  // process: the wait for its fragments is a callback's, which takes in
+  // only what answers its own request.
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let t = bind(&mut conn, "pk");
+  let qid = conn.create_query(&t.def, &t.rec, &t.rec).expect("a query");
+  let mut key = t.row();
+  t.put(&mut key, "id", "424242");
+  let tid = start_for(&mut conn, &t, &key);
+  conn
+    .query_mut(qid)
+    .expect("the query")
+    .key_row_mut()
+    .copy_from_slice(&key);
+  let args = ReadKeyArgs {
+    kind: ReadKind::Committed,
+    callback: Some(bind_wide),
+    ..ReadKeyArgs::default()
+  };
+  conn.read_key(qid, tid, &args).expect("define the read");
+  conn.commit_transaction(tid).expect("ask to commit");
+  assert_eq!(finish(&mut conn, tid), CommitState::Committed);
+  conn.close_transaction(tid).expect("close");
+  assert_eq!(
+    WIDE_BOUND.load(Ordering::Acquire),
+    0,
+    "-1: the callback did not run; 1: a column missing; else the error"
+  );
+  // Bound again outside: the description the callback fetched, cached.
+  let wide = conn.table_bind(IC_IT_DB, "wide").expect("bind again");
+  assert_eq!(wide.num_fields(), IC_IT_WIDE_COLUMNS + 1);
+  assert_eq!(conn.unexpected(), 0);
+}

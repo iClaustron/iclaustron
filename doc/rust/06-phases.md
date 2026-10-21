@@ -2096,9 +2096,6 @@ found. Known now, to weigh there:
 - a Rust stream over the scan reader (8.4);
 - chapter 10's open questions, most of them settled in fact (Q2, Q5,
   Q11, Q12);
-- a bind inside a callback fails for a table whose description comes in
-  more than one fragment, as the wait there holds the other fragments
-  back (`poll_for_reply`; found in the review of 2026-10-21);
 
 ### 11.1 The author's first review (2026-10-21)
 
@@ -2190,6 +2187,17 @@ held, two of them in part:
   `scan_a_connection_freed_while_a_record_is_asked_for_gives_it_back`
   counts, through `ndbinfo`, the records the freed connection's block
   still holds.
+- A bind inside a callback was listed as failing for a table whose
+  description comes in fragments, the callback's wait holding them
+  back. Read again, it does not: every fragment carries the whole data
+  of its signal, the request's number first (chapter 05 §2.1), so the
+  wait (`poll_for_reply`) claims each fragment of its reply and joins
+  them; only other trains' fragments wait for the outer poll. Its
+  comment read otherwise and now says what the code does. The
+  integration test
+  `dict_a_description_in_fragments_is_bound_inside_a_callback` binds,
+  in a query's callback, a table of 401 columns whose description is
+  well over a data node's 7 400 words, and passes (2026-10-22).
 
 ## Later — after the first version
 
