@@ -1931,7 +1931,8 @@ scan; the fanout pruning, which combines with it.
   in a continuous scan, which combines with it (the author,
   2026-10-21). A run whose ranges fix the whole distribution key goes
   to its one partition by the full hash, as on any table. We never
-  send the request that 2203 refuses.
+  send the request that 2204 refuses (2203 before the kernel's mend
+  of 2026-10-15, chapter 05 §7.2).
 - **Closing a scan at once**, with batches on their way: stop sent
   without first waiting for every batch asked for, as the coordinator
   allows; phase 8 waits, as the reference does (chapter 05 §7.2,
@@ -2091,9 +2092,6 @@ found. Known now, to weigh there:
 
 - scans whose coordinator stays up but never answers wait for the run's
   own `timeout_ms` or the coordinator's timers (8.4);
-- error 2203's two meanings, the fanout scan refusal and read rate
-  overload, which we class as an overload, temporary (chapter 05 §7.3,
-  for the author);
 - a Rust stream over the scan reader (8.4);
 - chapter 10's open questions, most of them settled in fact (Q2, Q5,
   Q11, Q12);

@@ -35,6 +35,8 @@ pub enum ErrorClass {
   Constraint,
   /// The schema is not what the request assumed.
   Schema,
+  /// A schema object of that name already exists.
+  ObjectExists,
   /// An error the application's own program raised.
   AppDefined,
   /// The cluster is out of space for good.
@@ -71,6 +73,7 @@ impl ErrorClass {
       | ErrorClass::NoData
       | ErrorClass::Constraint
       | ErrorClass::Schema
+      | ErrorClass::ObjectExists
       | ErrorClass::AppDefined
       | ErrorClass::NotImplemented => ErrorCategory::User,
       ErrorClass::Internal | ErrorClass::UnknownCode => ErrorCategory::Internal,
@@ -80,7 +83,9 @@ impl ErrorClass {
 
   /// The severity the C header reports for the class: temporary for
   /// the classes NDB calls temporary, and for an unknown outcome, since
-  /// the request may be tried again; permanent for the rest.
+  /// the request may be tried again; permanent for the rest, an object
+  /// that exists among them, as NDB has had it since 2026-10-21
+  /// (chapter 05 §17.1).
   pub fn severity(&self) -> ErrorSeverity {
     match self {
       ErrorClass::Success => ErrorSeverity::NoError,
@@ -368,6 +373,11 @@ const IC_NDB_ERRORS: &[ErrorEntry] = &[
     text: "A scan was asked for with no concurrency",
   },
   ErrorEntry {
+    code: 2204,
+    class: ErrorClass::Application,
+    text: "A scan of a fanout table was pruned to one partition by hash",
+  },
+  ErrorEntry {
     code: 4116,
     class: ErrorClass::Application,
     text: "The operation is missing its key",
@@ -424,7 +434,7 @@ const IC_NDB_ERRORS: &[ErrorEntry] = &[
   },
   ErrorEntry {
     code: 4244,
-    class: ErrorClass::Application,
+    class: ErrorClass::ObjectExists,
     text: "An index or table of that name already exists",
   },
   ErrorEntry {
@@ -638,6 +648,17 @@ mod tests {
     assert_eq!(class_of(6000).category(), ErrorCategory::User);
     assert_eq!(class_of(6000).severity(), ErrorSeverity::Error);
     assert_eq!(class_of(4350).category(), ErrorCategory::Internal);
+    // A read rate overload is tried again; a fanout table's scan pruned
+    // by a hash alone, 2203 too until the kernel gave it 2204, is
+    // refused for good (chapter 05 §7.2).
+    assert_eq!(class_of(2203).severity(), ErrorSeverity::Temporary);
+    assert_eq!(class_of(2204), ErrorClass::Application);
+    assert_eq!(class_of(2204).severity(), ErrorSeverity::Error);
+    // A name already taken is refused for good, as the reference's
+    // client has it since its mend (chapter 05 §17.1).
+    assert_eq!(class_of(4244), ErrorClass::ObjectExists);
+    assert_eq!(class_of(4244).category(), ErrorCategory::User);
+    assert_eq!(class_of(4244).severity(), ErrorSeverity::Error);
     assert_eq!(class_of(0).severity(), ErrorSeverity::NoError);
   }
 }

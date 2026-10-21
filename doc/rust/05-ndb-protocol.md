@@ -1704,12 +1704,16 @@ NTS = `src/ndbapi/NdbTransactionScan.cpp`, IF = `src/ndbapi/Ndbif.cpp`.
   The coordinator refuses these with 241:
   - bit 30 or 31 without bit 26;
   - bit 31 on a table without a fanout;
-  - bits 30 and 31 together (coordinator:17309-17334).
+  - bits 30 and 31 together (coordinator:17333-17358).
 
-  On a fanout table bit 26 alone is refused with 2203
-  (coordinator:17336-17352). That number also means read rate overload
-  (`include/kernel/signaldata/TcKeyRef.hpp:61`, two entries at
-  `src/ndbapi/ndberror.cpp:365, 580`). The reference prunes a range
+  On a fanout table bit 26 alone is refused with 2204
+  (coordinator:17360-17378), a permanent application error
+  (`src/ndbapi/ndberror.cpp:578`). Until 90a51a1a331 (2026-10-15) it
+  was 2203, which also means read rate overload
+  (`include/kernel/signaldata/TcKeyRef.hpp:61`,
+  `src/ndbapi/ndberror.cpp:365`), and the reference's client, which
+  takes a code's first entry, reported it as that: temporary. A tree
+  from before the mend still sends 2203. The reference prunes a range
   scan only when both bounds fix every distribution key column
   (NSO:1268-1300), and sends the key's hash, bit 26 alone. Ours names
   the partition by its id, bits 26 and 30, as for a table, which the
@@ -1741,7 +1745,8 @@ NTS = `src/ndbapi/NdbTransactionScan.cpp`, IF = `src/ndbapi/Ndbif.cpp`.
   full hash, which goes by its id with bits 26 and 30, as on any table:
   the coordinator takes that as an exact fragment on a fanout table too
   (coordinator:17949-17962). We never send bit 26 alone on a fanout
-  table, so its 2203 does not arise.
+  table, so its 2204 does not arise; our table classes 2203 as the
+  overload and 2204 as the refusal, as the kernel now does.
 
 ### 7.3 Asked of the author (2026-10-15)
 
@@ -1756,7 +1761,8 @@ said with each.
    30 is one partition, 31 the fanout, each needing flag bit 26 and
    never the two together, as the tree has it (answered 2026-10-15).
    The low half's 0xFFFF is for the captures to show. The double 2203
-   is the author's, in a session of its own.
+   was the author's to mend: the fanout refusal is 2204 since
+   90a51a1a331 (2026-10-15), §7.2.
 3. The flags' bits 0–7: may a plain scan leave them 0? Yes, all of them
    in phase 8; bit 2 is the continuous scan, four receivers per
    partition, for phase 10; bit 6 is never set by an API (answered
@@ -1875,9 +1881,10 @@ said with each.
     locked ordered scan cannot (answered 2026-10-15).
 
 For the author, in sessions of their own (raised 2026-10-15):
-- error 2203 has two meanings, the fanout scan refusal and read rate
+- error 2203 had two meanings, the fanout scan refusal and read rate
   overload (`include/kernel/signaldata/TcKeyRef.hpp:61`,
-  `src/ndbapi/ndberror.cpp:365, 580`);
+  `src/ndbapi/ndberror.cpp:365`): mended in `rondb_2604_main`,
+  90a51a1a331 (2026-10-15), the refusal now 2204;
 - ST:97-102 counts word 9 among the words whose high half is free;
 - the coordinator's check that every scan names a valid owning record
   (coordinator:18068-18070), which a scan naming none would fail:
@@ -3146,8 +3153,9 @@ the fuller account; this one is the index the code points into.
 
 `crates/ic_port/src/ndb_err.rs`
 
-- Every error code the data nodes and the reference's client report has a class: application, configuration, no data, constraint, schema, user defined, out of space, temporary resource, node recovery, overload, timeout, node stopping, temporary internal, unknown result, unknown code, internal or not implemented. `src/ndbapi/ndberror.cpp:115-1184`
-- Each class is permanent, temporary or of unknown outcome: the temporary resource, node recovery, overload, timeout, node stopping and temporary internal classes are temporary, unknown result and unknown code are of unknown outcome, the rest permanent. `src/ndbapi/ndberror.cpp:1213-1234`
+- Every error code the data nodes and the reference's client report has a class: application, configuration, no data, constraint, schema, schema object exists, user defined, out of space, temporary resource, node recovery, overload, timeout, node stopping, temporary internal, unknown result, unknown code, internal or not implemented. `src/ndbapi/ndberror.cpp:115-1184`
+- Each class is permanent, temporary or of unknown outcome: the temporary resource, node recovery, overload, timeout, node stopping and temporary internal classes are temporary, unknown result and unknown code are of unknown outcome, the rest permanent. `src/ndbapi/ndberror.cpp:1217-1238`
+- The schema object exists class (`src/ndbapi/ndberror.cpp:71`) has no entry in that table, so the reference's client reports its codes, 721, 746 and 4244, as of unknown outcome, one to try again (`src/ndbapi/ndberror.cpp:1290`; MySQL 8.4's table lacks it too). Ours takes it as permanent: a name taken stays taken until something drops it (the author, 2026-10-21). Mended on 26.10-main, 9021f71df44 (2026-10-21), where the class is now permanent too (`src/ndbapi/ndberror.cpp:1226` there); `rondb_2604_main` still lacks it.
 
 ### 17.2 Sockets and the management protocol (`ic_comm`, `ic_protocol`)
 
