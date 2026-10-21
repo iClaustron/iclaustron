@@ -17,9 +17,18 @@
 //! **The hash** is the table's: MD5 for a table made before RonDB
 //! 22.10.1, XXH3 otherwise, as `IC_TP_HASH_FUNCTION` says. What places the
 //! key is the second word of the MD5 digest, or the high half of the
-//! XXH3 value. A table with RonDB's fanout partitioning hashes a base
-//! part and a detail part apart and combines them; that is not done
-//! here yet, and such a table is refused.
+//! XXH3 value.
+//!
+//! **A fanout table** (RonDB's `PARTITION_HASH=base:detail:fanout`)
+//! is hashed in two steps (phase 10; the author, 2026-10-21): its
+//! primary key's columns in key order, the first `base` of them, table
+//! property 166, apart from the next `detail`, 167, each part as a
+//! distribution key's bytes are. The row is placed by the base's hash
+//! rounded down to a multiple of the fanout, 168, plus the detail's
+//! modulo the fanout, so that every row of one base is in the fanout's
+//! partitions from the base's own; a scan whose ranges fix the base
+//! names that first hash value and reads those partitions alone
+//! (chapter 05 §6.3, step 3, §7.2).
 //!
 //! **The partition** is the hash map's bucket at the hash modulo the
 //! map's length. The data nodes place a row the same way, and the
@@ -85,7 +94,7 @@ type KeyWalk<'a> = dyn Fn(&mut dyn FnMut(&[u8])) -> Result<(), IcError> + 'a;
 /// function and placed by its hash map: on the stack when they fit,
 /// walked again into a vector when they do not.
 fn partition_by(table: &TableDef, walk: &KeyWalk<'_>) -> Result<u32, IcError> {
-  // A fanout of one, the default, is no fanout at all.
+  // A fanout table is hashed in two parts (`fanout_hashes`).
   if table.info().fanout > 1 {
     return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
   }
@@ -109,6 +118,115 @@ fn partition_by(table: &TableDef, walk: &KeyWalk<'_>) -> Result<u32, IcError> {
   let mut bytes: Vec<u8> = Vec::with_capacity(at);
   walk(&mut |value: &[u8]| push_padded(&mut bytes, value))?;
   Ok(map.fragment_of(partition_hash(table, &bytes)))
+}
+
+/// The first `count` columns of the table's primary key, in key order,
+/// which is their attribute order, each column's part given to `take`
+/// (see `take_column`).
+fn primary_fields(
+  key_rec: &Record,
+  key_row: &[u8],
+  count: u32,
+  take: &mut dyn FnMut(&[u8]),
+) -> Result<(), IcError> {
+  if key_row.len() < key_rec.row_size() as usize {
+    return Err(IcError::new(err::IC_ERROR_RECORD_LAYOUT));
+  }
+  let table = key_rec.table();
+  let mut taken: u32 = 0;
+  for (place, attr) in table.info().attributes.iter().enumerate() {
+    if taken == count {
+      break;
+    }
+    if !attr.primary_key {
+      continue;
+    }
+    let field = match key_rec.position_of(attr.column_id) {
+      Some(position) => match key_rec.field(position) {
+        Some(field) => field,
+        None => return Err(IcError::new(err::IC_ERROR_KEY_RECORD)),
+      },
+      None => return Err(IcError::new(err::IC_ERROR_KEY_RECORD)),
+    };
+    let start = field.offset() as usize;
+    let size = field.size() as usize;
+    let collation = table.collation_at(place).map(|map| map.as_ref());
+    take_column(attr, collation, &key_row[start..start + size], take)?;
+    taken += 1;
+  }
+  Ok(())
+}
+
+/// A fanout table's key hashed in its two parts: the base, the first
+/// columns of its primary key as many as table property 166 says, and
+/// the detail, the next as many as 167 says, each column padded to a
+/// word. The base's hash, and the detail's when `detail` is wanted,
+/// else 0, when the row need hold the base alone. On the stack when the
+/// key fits, as `partition_by` does.
+fn fanout_hashes(
+  table: &TableDef,
+  key_rec: &Record,
+  key_row: &[u8],
+  detail: bool,
+) -> Result<(u32, u32), IcError> {
+  let info = table.info();
+  let base = info.fanout_base_keys;
+  let mut count = base;
+  if detail {
+    count += info.fanout_detail_keys;
+  }
+  let mut buf = [0u8; IC_KEY_ON_STACK];
+  let mut at: usize = 0;
+  let mut split: usize = 0;
+  let mut taken: u32 = 0;
+  primary_fields(key_rec, key_row, count, &mut |value: &[u8]| {
+    let padded = (value.len() + 3) & !3;
+    if at + padded <= buf.len() {
+      buf[at..at + value.len()].copy_from_slice(value);
+      buf[at + value.len()..at + padded].fill(0);
+    }
+    at += padded;
+    taken += 1;
+    if taken == base {
+      split = at;
+    }
+  })?;
+  if at <= buf.len() {
+    return Ok(two_hashes(table, &buf[..split], &buf[split..at], detail));
+  }
+  let mut bytes: Vec<u8> = Vec::with_capacity(at);
+  primary_fields(key_rec, key_row, count, &mut |value: &[u8]| {
+    push_padded(&mut bytes, value)
+  })?;
+  Ok(two_hashes(table, &bytes[..split], &bytes[split..], detail))
+}
+
+/// The hashes of a fanout key's two parts, the detail's 0 unless asked
+/// for.
+fn two_hashes(
+  table: &TableDef,
+  base: &[u8],
+  detail: &[u8],
+  with_detail: bool,
+) -> (u32, u32) {
+  let mut detail_hash: u32 = 0;
+  if with_detail {
+    detail_hash = partition_hash(table, detail);
+  }
+  (partition_hash(table, base), detail_hash)
+}
+
+/// The first of the fanout's hash values a base's rows are placed by:
+/// its hash rounded down to a multiple of the fanout.
+fn fanout_first(base_hash: u32, fanout: u32) -> u32 {
+  base_hash / fanout * fanout
+}
+
+/// The hash a fanout table's row is placed by: the base's first hash
+/// value plus the detail's hash modulo the fanout, wrapping as the data
+/// nodes' 32-bit sum does.
+fn fanout_value(base_hash: u32, detail_hash: u32, fanout: u32) -> u32 {
+  fanout_first(base_hash, fanout).wrapping_add(detail_hash % fanout)
 }
 
 /// Each distribution key column's part of the key, in attribute order,
@@ -226,15 +344,42 @@ pub fn partition_hash(table: &TableDef, key: &[u8]) -> u32 {
 }
 
 /// The partition the row with this key is in, or why it cannot be
-/// known: a table with no hash map, or with fanout partitioning, or a
-/// character key column whose collation is not known or cannot be
-/// placed.
+/// known: a table with no hash map, or a character key column whose
+/// collation is not known or cannot be placed. A fanout table's key is
+/// hashed in its two parts.
 pub fn partition_of(
   table: &TableDef,
   key_rec: &Record,
   key_row: &[u8],
 ) -> Result<u32, IcError> {
+  let fanout = table.info().fanout;
+  if fanout > 1 {
+    let map = match table.hash_map() {
+      Some(map) => map,
+      None => return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED)),
+    };
+    let (base, detail) = fanout_hashes(table, key_rec, key_row, true)?;
+    return Ok(map.fragment_of(fanout_value(base, detail, fanout)));
+  }
   partition_by(table, &|take| distribution_fields(key_rec, key_row, take))
+}
+
+/// For a fanout table, the first of the hash values that rows with this
+/// row's base columns are placed by, which a scan pruned to the
+/// fanout's partitions names (chapter 05 §7.2, word 5's bit 31); the
+/// row need hold the base columns alone. Refused for a table without a
+/// fanout (`IC_ERROR_NOT_SUPPORTED`), and as `partition_of` is.
+pub fn fanout_first_of(
+  table: &TableDef,
+  key_rec: &Record,
+  key_row: &[u8],
+) -> Result<u32, IcError> {
+  let fanout = table.info().fanout;
+  if fanout <= 1 || table.hash_map().is_none() {
+    return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
+  }
+  let (base, _) = fanout_hashes(table, key_rec, key_row, false)?;
+  Ok(fanout_first(base, fanout))
 }
 
 /// The partition of the index's own table that a unique key is in, or
@@ -426,6 +571,9 @@ mod tests {
   use ic_signals::table_props::IC_TP_COLUMN_NAME;
   use ic_signals::table_props::IC_TP_COLUMN_PRECISION;
   use ic_signals::table_props::IC_TP_COLUMN_TYPE;
+  use ic_signals::table_props::IC_TP_FANOUT;
+  use ic_signals::table_props::IC_TP_FANOUT_BASE_KEYS;
+  use ic_signals::table_props::IC_TP_FANOUT_DETAIL_KEYS;
   use ic_signals::table_props::IC_TP_HASH_FUNCTION;
   use ic_signals::table_props::IC_TP_TABLE_NAME;
   use ic_signals::table_props::IC_TYPE_INT;
@@ -438,11 +586,27 @@ mod tests {
   /// with `new_hash` the table hashes by XXH3. Its fanout is the
   /// default, one, which is no fanout.
   fn table(dkey_all: bool, new_hash: bool, charset: u32) -> Arc<TableDef> {
+    table_with_fanout(dkey_all, new_hash, charset, 1)
+  }
+
+  /// As `table`, with a fanout above one making it `a` the base and `b`
+  /// the detail: `PARTITION_HASH=1:1:fanout`.
+  fn table_with_fanout(
+    dkey_all: bool,
+    new_hash: bool,
+    charset: u32,
+    fanout: u32,
+  ) -> Arc<TableDef> {
     let mut w = PropertyWriter::new();
     w.add_string(IC_TP_TABLE_NAME, "db/def/t");
     w.add_u32(IC_TP_COLUMN_COUNT, 3);
     if new_hash {
       w.add_u32(IC_TP_HASH_FUNCTION, 1);
+    }
+    if fanout > 1 {
+      w.add_u32(IC_TP_FANOUT_BASE_KEYS, 1);
+      w.add_u32(IC_TP_FANOUT_DETAIL_KEYS, 1);
+      w.add_u32(IC_TP_FANOUT, fanout);
     }
     w.add_string(IC_TP_COLUMN_NAME, "a");
     w.add_u32(IC_TP_COLUMN_ID, 0);
@@ -723,5 +887,56 @@ mod tests {
     let want = t.hash_map().expect("map").fragment_of(hash);
     assert_eq!(partition_of(&t, &rec, &row).expect("partition"), want);
     assert!(want < 8);
+  }
+
+  #[test]
+  fn a_fanout_tables_key_is_hashed_in_its_base_and_its_detail() {
+    // PARTITION_HASH=1:1:4 over (a, b), whichever the distribution key
+    // flags say: a is the base, b the detail, each hashed apart.
+    for dkey_all in [false, true] {
+      let t = table_with_fanout(dkey_all, true, 0, 4);
+      let rec = Record::default_for(&t, None).expect("record");
+      let row = row_of(&rec, 7, b"hi");
+      let base = partition_hash(&t, &7u32.to_le_bytes());
+      let detail = partition_hash(&t, &[2, b'h', b'i', 0]);
+      let value = (base / 4 * 4).wrapping_add(detail % 4);
+      let want = t.hash_map().expect("map").fragment_of(value);
+      assert_eq!(partition_of(&t, &rec, &row).expect("placed"), want);
+      // A scan by the base alone names the first of its four values.
+      assert_eq!(fanout_first_of(&t, &rec, &row).expect("base"), base / 4 * 4);
+      // Rows of one base, whatever their detail, are in the base's four
+      // partitions: a run of four buckets of the map.
+      let first = base / 4 * 4;
+      let mut ours: Vec<u32> = Vec::new();
+      let mut k: u32 = 0;
+      while k < 4 {
+        ours.push(
+          t.hash_map()
+            .expect("map")
+            .fragment_of(first.wrapping_add(k)),
+        );
+        k += 1;
+      }
+      for detail_bytes in [&b""[..], b"x", b"hello", b"12345678"] {
+        let other = row_of(&rec, 7, detail_bytes);
+        let placed = partition_of(&t, &rec, &other).expect("placed");
+        assert!(ours.contains(&placed), "{:?} in {:?}", placed, ours);
+      }
+    }
+    // Without a fanout there is no first value to name.
+    let plain = table(true, true, 0);
+    let rec = Record::default_for(&plain, None).expect("record");
+    let e = fanout_first_of(&plain, &rec, &row_of(&rec, 7, b""))
+      .expect_err("no fanout");
+    assert_eq!(e.code, err::IC_ERROR_NOT_SUPPORTED);
+  }
+
+  #[test]
+  fn a_fanout_value_wraps_as_the_data_nodes_sum_does() {
+    assert_eq!(fanout_first(13, 4), 12);
+    assert_eq!(fanout_value(13, 7, 4), 15);
+    // 2^32 - 1 is a multiple of 3: the detail's part wraps past it.
+    assert_eq!(fanout_value(u32::MAX, 2, 3), 1);
+    assert_eq!(fanout_value(u32::MAX, 5, 3), 1);
   }
 }

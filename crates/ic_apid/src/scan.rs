@@ -444,6 +444,9 @@ pub struct Scan {
   node_id: u32,
   instance: u32,
   partition: Option<u32>,
+  /// On a fanout table, the first hash value of the base whose
+  /// partitions the run scans alone, its ranges fixing that base.
+  fanout_first: Option<u32>,
   batch_rows: u32,
   batch_bytes: u32,
   /// The run's record at its coordinator, while it has one.
@@ -528,6 +531,7 @@ impl Scan {
       node_id: 0,
       instance: IC_ANY_COORD_INSTANCE,
       partition: None,
+      fanout_first: None,
       batch_rows: 0,
       batch_bytes: 0,
       record: None,
@@ -611,6 +615,13 @@ impl Scan {
   fn pruned_partition(&self) -> Option<u32> {
     let index = self.index.as_ref()?;
     index.pending().pruned_partition()
+  }
+
+  /// On a fanout table, the first hash value of the base every range
+  /// added for the next run fixes, if they fix the same one.
+  fn pruned_fanout(&self) -> Option<u32> {
+    let index = self.index.as_ref()?;
+    index.pending().pruned_fanout()
   }
 
   /// The table it scans.
@@ -751,7 +762,7 @@ impl Scan {
       range: of_index,
       descending: self.descending,
       batch_rows: scans::batch_rows_field(self.batch_rows),
-      dist_key: self.partition.is_some(),
+      dist_key: self.partition.is_some() || self.fanout_first.is_some(),
       extended_conf: true,
       ..ScanFlags::default()
     };
@@ -1059,24 +1070,35 @@ impl ApidConnection {
     id: ScanId,
     args: &ScanArgs,
   ) -> Result<(), IcError> {
-    let (fragments, table, pruned) = match self.scans.get(id.0) {
-      Some(scan) => {
-        if scan.is_running() {
-          return Err(IcError::new(err::IC_ERROR_SCAN_ACTIVE));
+    let (mut fragments, table, pruned, fanout_pruned) =
+      match self.scans.get(id.0) {
+        Some(scan) => {
+          if scan.is_running() {
+            return Err(IcError::new(err::IC_ERROR_SCAN_ACTIVE));
+          }
+          scan.check_run(args)?;
+          (
+            scan.table.info().fragment_count,
+            Arc::clone(&scan.table),
+            scan.pruned_partition(),
+            scan.pruned_fanout(),
+          )
         }
-        scan.check_run(args)?;
-        (
-          scan.table.info().fragment_count,
-          Arc::clone(&scan.table),
-          scan.pruned_partition(),
-        )
-      }
-      None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
-    };
-    // A partition named wins over one the ranges fix.
+        None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
+      };
+    // A partition named wins over one the ranges fix, and either over
+    // the fanout's partitions for a base the ranges fix, which are as
+    // many as the fanout (phase 10).
     let mut partition = args.partition;
     if partition.is_none() {
       partition = pruned;
+    }
+    let mut fanout_first: Option<u32> = None;
+    if partition.is_none() {
+      fanout_first = fanout_pruned;
+    }
+    if fanout_first.is_some() {
+      fragments = fragments.min(table.info().fanout);
     }
     if args.read_ahead {
       // The application holds each batch and hands it back itself.
@@ -1112,6 +1134,11 @@ impl ApidConnection {
         let mut hint = TransactionHint::Any;
         if let Some(one) = partition {
           hint = TransactionHint::Partition(one);
+        }
+        // The fanout's partitions for a base start where its first hash
+        // value goes.
+        if let (Some(first), Some(map)) = (fanout_first, table.hash_map()) {
+          hint = TransactionHint::Partition(map.fragment_of(first));
         }
         let mut started = std::mem::take(&mut self.started_scratch);
         self.shared.started_nodes_into(&mut started);
@@ -1208,6 +1235,7 @@ impl ApidConnection {
       scan.node_id = node_id;
       scan.instance = instance;
       scan.partition = partition;
+      scan.fanout_first = fanout_first;
       scan.ordered = args.ordered;
       scan.descending = args.descending;
       scan.range_no = 0;
@@ -1269,6 +1297,9 @@ impl ApidConnection {
         if scan.partition.is_some() {
           word5 |= scans::IC_SCAN_WORD5_PARTITION_ID;
         }
+        if scan.fanout_first.is_some() {
+          word5 |= scans::IC_SCAN_WORD5_FANOUT;
+        }
         // A scan of an ordered index names the index, and reads the
         // range numbers first when it has several ranges.
         let mut table_id = scan.table.table_id();
@@ -1293,7 +1324,7 @@ impl ApidConnection {
           owner_ptr: scan.owner_ptr,
           batch_bytes: scan.batch_bytes,
           batch_rows: scan.batch_rows,
-          dist_key: scan.partition,
+          dist_key: scan.partition.or(scan.fanout_first),
         };
         let encoded = request.encode();
         words.clear();

@@ -808,7 +808,8 @@ against the reference:
   side of every boundary between its paths, and MD5 by RFC 1321's own
   examples and the block boundaries. The XXH3 secret is the algorithm's
   standard 192 bytes.
-- Fanout tables (step 3) are refused until phase 10, which does them.
+- Fanout tables (step 3) were refused until phase 10, which does them
+  (`hash::partition_of`, `hash::fanout_first_of`, 2026-10-21).
   Only the hash changes, worked out in two steps instead of one; a key
   operation is otherwise executed as on any table (the author,
   2026-10-21). MySQL makes such a table with `COMMENT="NDB_TABLE=
@@ -2010,6 +2011,22 @@ The continuous scan (phase 10, 2026-10-21), a capture of our own run of
   in the run of 384-row batches each of the 8 fragments, about 310
   rows, came in one batch that was its last, at place 0 of its four,
   and nothing was named back.
+
+Fanout tables (phase 10, 2026-10-21), a capture of our own run of
+`fanout_scans_by_the_base_read_the_fanouts_partitions` (kept as
+`~/captures/fanout.pcap`), its 33 runs over the 1:1:4, 2:1:4 and
+1:2:4 tables:
+
+- **A base fixed**: flag bit 26, word 5's bit 31, and word 11 the
+  base's first hash value, a multiple of 4 each time, with 4 receivers,
+  16 in a continuous scan. At most 4 fragment records reported. The
+  same base through two indexes, `a = 7` through the primary key's
+  and through `(v, a)`, named the same word 11, 0x57ae4480: the base is
+  hashed the same wherever its columns are.
+- **The whole key fixed**: bits 26 and 30, word 11 the partition's id,
+  one receiver, or four continuous, one entry.
+- **A base column left open**: word 5 plain, every fragment, 8
+  receivers or 32, each fragment reporting.
 
 ## 8. Dictionary
 

@@ -447,7 +447,10 @@ reads the whole index.
   the ranges were added (`IC_ERROR_BAD_RANGE`, 7163, as for a range
   that cannot be sent).
 - **One partition**: a run whose every range fixes the table's
-  distribution key reads that partition alone.
+  distribution key reads that partition alone. On a table made with
+  `COMMENT="NDB_TABLE=PARTITION_HASH=base:detail:fanout"`, ranges
+  that fix only the first `base` columns of the primary key, the same
+  in every range, read the fanout's partitions for that base alone.
 - **Through an executor**: a shape over the index
   (`ScanShape::new_index`, `ic_scan_shape_create_index`), and the
   ranges added to the reader (`add_range`, `ic_scan_reader_add_range`;

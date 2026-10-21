@@ -2026,6 +2026,30 @@ them, 1:1:4, 2:1:4, and 1:2:4 with `PARTITIONS 8`:
   without the fanout, where the same equality prunes nothing, are
   scanned beside it, and both times recorded.
 
+Met 2026-10-21: built, and every test above passes, the `scan_index`
+group unchanged. The capture (chapter 05 §7.4,
+`~/captures/fanout.pcap`) shows bit 31 and the base's first hash
+value in word 11 for every run whose ranges fix a base, the same value
+for one base through two indexes, bit 30 for the whole key, and every
+fragment when a base column is open. Timed in a release build
+(`fanout_a_scan_by_its_base_skips_the_other_partitions`), 100 000 rows
+in 32 partitions, scans of one value of the base, 100 rows each:
+
+| | Fanout table, 4 partitions | Plain table, 32 partitions | |
+|---|---|---|---|
+| 300 scans one at a time | 17 ms | 23 ms | 26% less time |
+| 1 600 scans, 16 at a time | 28 ms, 57 142 a second | 99 ms, 16 161 a second | 72% less time |
+
+One at a time a scan's time is mostly its round trips, and a plain
+scan's fragments are read side by side, so the gain is modest; many at
+once the data nodes' threads limit, and the fanout table's scans do an
+eighth of the work. The first timing, which ran the fanout table first
+and once, showed no gain: its runs also filled the record pools.
+
+Phase 10 is complete (2026-10-21): the continuous scan, the fanout
+pruning, and closing a scan at once, each with its exit met. Phase 11
+follows.
+
 Exit for closing a scan at once (agreed with the author, 2026-10-21):
 
 - A committed read closed with every receiver's batch on its way, on a

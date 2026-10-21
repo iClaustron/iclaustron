@@ -53,6 +53,12 @@ pub const IC_SCAN_WORD5_PLAIN: u32 = 0x0000_FFFF;
 /// In word 5: the scan covers one partition, the distribution key word
 /// being its id. Needs the distribution key flag.
 pub const IC_SCAN_WORD5_PARTITION_ID: u32 = 1 << 30;
+/// In word 5: the scan covers a fanout table's partitions for one base,
+/// the distribution key word being the first of the fanout's hash
+/// values, the coordinator scanning the fanout's number of them. Needs
+/// the distribution key flag, and a table with a fanout.
+/// Verify: chapter 05 §7.2, "Pruning".
+pub const IC_SCAN_WORD5_FANOUT: u32 = 1 << 31;
 /// Word 8 of a scan with no owning transaction: a committed read's.
 /// Verify: chapter 05 §7.2.
 pub const IC_SCAN_NO_OWNER: u32 = 0xFFFF_FFFF;
@@ -163,7 +169,8 @@ pub struct ScanReq {
   /// Its version.
   pub table_version: u32,
   /// Word 5: [`IC_SCAN_WORD5_PLAIN`], with [`IC_SCAN_WORD5_PARTITION_ID`]
-  /// for a scan of one partition by its id.
+  /// for a scan of one partition by its id, or [`IC_SCAN_WORD5_FANOUT`]
+  /// for one of a fanout table's partitions for one base.
   pub word5: u32,
   /// The transaction id, low word.
   pub trans_id_lo: u32,

@@ -22,7 +22,12 @@
 //! alone, as the reference prunes. The partition is worked out from the
 //! low bound's row as a key's is ([`hash::partition_of`]); one that
 //! cannot be worked out, as for a character column whose collation was
-//! not described, leaves the run unpruned.
+//! not described, leaves the run unpruned. On a fanout table the whole
+//! primary key places a row, and a run whose ranges fix only its base
+//! columns, all with the same base, scans the fanout's partitions for
+//! that base ([`hash::fanout_first_of`]; phase 10). The base columns
+//! are found wherever they are in the index, not only first, as the
+//! reference has them.
 //!
 //! **Two parts**: an [`IndexShape`], what the ranges and the order are
 //! made with, which never changes and which a connection's scan and a
@@ -89,6 +94,10 @@ pub(crate) struct RangeSet {
   /// Every range is in `partition`.
   pub(crate) pruned: bool,
   pub(crate) partition: u32,
+  /// On a fanout table: every range's base columns are fixed, with the
+  /// same base, whose first hash value is `first`.
+  pub(crate) in_fanout: bool,
+  pub(crate) first: u32,
 }
 
 impl RangeSet {
@@ -96,6 +105,16 @@ impl RangeSet {
   pub(crate) fn pruned_partition(&self) -> Option<u32> {
     if self.count > 0 && self.pruned {
       return Some(self.partition);
+    }
+    None
+  }
+
+  /// On a fanout table, the first hash value of the base every range
+  /// fixes, if they all fix the same one and are not in one partition:
+  /// the run then scans the fanout's partitions for it.
+  pub(crate) fn pruned_fanout(&self) -> Option<u32> {
+    if self.count > 0 && self.in_fanout && !self.pruned {
+      return Some(self.first);
     }
     None
   }
@@ -116,6 +135,8 @@ impl RangeSet {
     self.rising = other.rising;
     self.pruned = other.pruned;
     self.partition = other.partition;
+    self.in_fanout = other.in_fanout;
+    self.first = other.first;
   }
 
   /// Empty, its buffer kept.
@@ -127,22 +148,35 @@ impl RangeSet {
     self.rising = true;
     self.pruned = false;
     self.partition = 0;
+    self.in_fanout = false;
+    self.first = 0;
   }
 
-  /// Count a range that has been encoded, with its number and the
-  /// partition it is in if it is in one.
-  fn note(&mut self, range_no: u32, partition: Option<u32>) {
+  /// Count a range that has been encoded, with its number, the
+  /// partition it is in if it is in one, and on a fanout table the first
+  /// hash value of its base if it fixes one.
+  fn note(
+    &mut self,
+    range_no: u32,
+    partition: Option<u32>,
+    first: Option<u32>,
+  ) {
     if self.count == 0 {
       self.first_no = range_no;
       self.rising = true;
       self.pruned = partition.is_some();
       self.partition = partition.unwrap_or(0);
+      self.in_fanout = first.is_some();
+      self.first = first.unwrap_or(0);
     } else {
       if range_no <= self.last_no {
         self.rising = false;
       }
       if partition != Some(self.partition) {
         self.pruned = false;
+      }
+      if first != Some(self.first) {
+        self.in_fanout = false;
       }
     }
     self.last_no = range_no;
@@ -160,9 +194,13 @@ pub(crate) struct IndexShape {
   /// The index's columns, in its order.
   columns: Vec<BoundColumn>,
   /// The fewest leading columns of the index that hold every
-  /// distribution key column of the table; 0 if the index lacks one,
-  /// and then no range is pruned.
+  /// distribution key column of the table, or on a fanout table every
+  /// primary key column; 0 if the index lacks one, and then no range is
+  /// pruned to one partition.
   dist_prefix: u32,
+  /// On a fanout table, the fewest leading columns of the index that
+  /// hold every base column; 0 if it lacks one, or for any other table.
+  base_prefix: u32,
   /// The order of the index's columns in the scan's rows, or why an
   /// ordered run cannot be had.
   pub(crate) order: Result<IndexOrder, IcError>,
@@ -204,18 +242,45 @@ impl IndexShape {
         index_column: column.column_id,
       });
     }
+    // A fanout table's rows are placed by their whole primary key, in
+    // two parts, the first of them the base.
+    let info = table.info();
+    let fanout = info.fanout > 1;
     let mut dist_prefix: u32 = 0;
-    for attr in &table.info().attributes {
-      if !attr.distribution_key {
+    let mut base_prefix: u32 = 0;
+    let mut whole = true;
+    let mut base = fanout;
+    let mut key_column: u32 = 0;
+    for attr in &info.attributes {
+      let mut in_key = attr.distribution_key;
+      if fanout {
+        in_key = attr.primary_key;
+      }
+      if !in_key {
         continue;
       }
+      let in_base = fanout && key_column < info.fanout_base_keys;
+      key_column += 1;
       match place_of(&columns, attr.column_id) {
-        Some(place) => dist_prefix = dist_prefix.max(place + 1),
+        Some(place) => {
+          dist_prefix = dist_prefix.max(place + 1);
+          if in_base {
+            base_prefix = base_prefix.max(place + 1);
+          }
+        }
         None => {
-          dist_prefix = 0;
-          break;
+          whole = false;
+          if in_base {
+            base = false;
+          }
         }
       }
+    }
+    if !whole {
+      dist_prefix = 0;
+    }
+    if !base {
+      base_prefix = 0;
     }
     let mut read_part_ranged: Vec<u32> =
       Vec::with_capacity(1 + read_part.len());
@@ -227,6 +292,7 @@ impl IndexShape {
       key_rec: key_rec.clone(),
       columns,
       dist_prefix,
+      base_prefix,
       order: IndexOrder::new(index, rec),
       read_part_ranged,
     })
@@ -287,8 +353,34 @@ impl IndexShape {
       return Err(e);
     }
     let partition = self.partition_of_range(range, low, high);
-    set.note(range.range_no, partition);
+    let first = self.fanout_first_of_range(range, low, high);
+    set.note(range.range_no, partition, first);
     Ok(())
+  }
+
+  /// On a fanout table, the first hash value of the base every row of
+  /// the range has, if its bounds fix the base columns, the same in both,
+  /// and it can be worked out.
+  fn fanout_first_of_range(
+    &self,
+    range: &ScanRange,
+    low: &[u8],
+    high: &[u8],
+  ) -> Option<u32> {
+    let fixed = self.base_prefix > 0
+      && range.low_columns >= self.base_prefix
+      && range.high_columns >= self.base_prefix;
+    if !fixed {
+      return None;
+    }
+    let same =
+      same_values(&self.key_rec, &self.columns, low, high, self.base_prefix);
+    match same {
+      Ok(true) => {
+        hash::fanout_first_of(self.index.table(), &self.key_rec, low).ok()
+      }
+      _ => None,
+    }
   }
 
   /// The partition every row of the range is in, if its bounds fix the
@@ -393,7 +485,7 @@ impl IndexScan {
     scans::open_range_into(&mut self.run.bounds);
     // An open range of number 0 always fits.
     let _ = scans::finish_range(&mut self.run.bounds, 0, 0);
-    self.run.note(0, None);
+    self.run.note(0, None, None);
   }
 }
 
@@ -489,7 +581,7 @@ mod tests {
     let mut set = RangeSet::default();
     set.clear();
     for (range_no, partition) in numbers {
-      set.note(*range_no, *partition);
+      set.note(*range_no, *partition, None);
     }
     set
   }
@@ -524,5 +616,44 @@ mod tests {
     assert_eq!(set.count, 0);
     assert!(set.bounds.is_empty());
     assert_eq!(set.bounds.capacity(), capacity);
+  }
+
+  #[test]
+  fn ranges_of_one_base_scan_the_fanouts_partitions() {
+    // Every range fixing the same base, none the whole key: the
+    // fanout's partitions for it.
+    let mut set = RangeSet::default();
+    set.clear();
+    set.note(0, None, Some(12));
+    set.note(1, None, Some(12));
+    assert_eq!(set.pruned_fanout(), Some(12));
+    assert_eq!(set.pruned_partition(), None);
+    // Each in one partition, the same: that partition, not the fanout's.
+    set.clear();
+    set.note(0, Some(5), Some(12));
+    set.note(1, Some(5), Some(12));
+    assert_eq!(set.pruned_partition(), Some(5));
+    assert_eq!(set.pruned_fanout(), None);
+    // Two partitions of one base: its fanout's partitions.
+    set.clear();
+    set.note(0, Some(5), Some(12));
+    set.note(1, Some(6), Some(12));
+    assert_eq!(set.pruned_partition(), None);
+    assert_eq!(set.pruned_fanout(), Some(12));
+    // A second base, or a range with its base open: every partition.
+    set.clear();
+    set.note(0, None, Some(12));
+    set.note(1, None, Some(16));
+    assert_eq!(set.pruned_fanout(), None);
+    set.clear();
+    set.note(0, None, Some(12));
+    set.note(1, None, None);
+    assert_eq!(set.pruned_fanout(), None);
+    // Copied with the rest.
+    set.clear();
+    set.note(0, None, Some(8));
+    let mut copy = RangeSet::default();
+    copy.copy_from(&set);
+    assert_eq!(copy.pruned_fanout(), Some(8));
   }
 }

@@ -675,7 +675,21 @@ while conn.next_row(scan)? {
   partition cannot be worked out here, such as one with a character
   column whose collation could not be described, is not pruned.
   `ScanArgs::partition` names one partition by its id, and wins.
-  `Scan::parallelism` gives the receivers a run had, one when pruned.
+  `Scan::parallelism` gives the fragments a run scanned at once, one
+  when pruned, and `Scan::receivers` its receivers, four times as many
+  in a continuous scan.
+- **A fanout table** (phase 10; the author, 2026-10-21): its whole
+  primary key places a row, hashed in two steps (chapter 05 §6.3, step
+  3), so a run whose ranges fix every key column is pruned to one
+  partition as above. A run whose ranges fix only the base columns,
+  each the same in both bounds and all ranges the same base, scans the
+  fanout's partitions for that base alone: the request names the
+  base's first hash value with word 5's bit 31, and the coordinator
+  picks the partitions, as many as the fanout, with that many
+  receivers, or four times as many in a continuous scan. The base
+  columns are taken wherever they are in the index; a range that
+  leaves one open reads every partition. Key operations on such a
+  table go to the row's partition, as on any table.
 - **Takeovers** as from a table scan (8.5): an index scan's rows come
   with the table's keys.
 - **Through an executor** (phase 8.7b, 2026-10-17):

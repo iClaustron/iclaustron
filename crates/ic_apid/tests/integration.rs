@@ -9999,3 +9999,677 @@ fn continuous_a_scan_of_a_million_rows_on_and_off() {
   // The data nodes' memory back for the other groups.
   mysql(&format!("DROP TABLE IF EXISTS {}.big", db));
 }
+
+// ---- Fanout tables (chapter 06, phase 10) ----
+
+/// A fanout table of the group: its name, its key's columns in key
+/// order, how many of them are the base, and how a row's key and id are
+/// made from its number m, 0 up, in SQL.
+struct FanTable {
+  name: &'static str,
+  key: &'static [&'static str],
+  base: usize,
+  rows: i64,
+}
+
+/// The group's tables: 1:1:4 over two integers, with an index whose
+/// base column is not first; 2:1:4 with a character column in its
+/// base; 1:2:4 over 8 partitions with a character column in its
+/// detail.
+const IC_IT_FAN_TABLES: [FanTable; 3] = [
+  FanTable {
+    name: "fan_ii",
+    key: &["a", "b"],
+    base: 1,
+    rows: 1000,
+  },
+  FanTable {
+    name: "fan_ci",
+    key: &["a", "b", "c"],
+    base: 2,
+    rows: 1000,
+  },
+  FanTable {
+    name: "fan_ic",
+    key: &["a", "b", "c"],
+    base: 1,
+    rows: 1000,
+  },
+];
+
+/// Fill `table` afresh with `rows` rows from `select`, an SQL row of
+/// m, the row's number from 0, 1 000 rows a statement.
+fn fill_fan_rows(table: &str, rows: i64, select: &str) -> Option<()> {
+  let mut base: i64 = 0;
+  while base < rows {
+    let count = (rows - base).min(1000);
+    let row = select.replace("{m}", &format!("(n + {} - 1)", base));
+    mysql(&format!(
+      "INSERT INTO {db}.{table}
+         WITH RECURSIVE seq (n) AS
+           (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < {count})
+         SELECT {row} FROM seq;",
+      db = IC_IT_DB,
+      table = table,
+      count = count,
+      row = row
+    ))?;
+    base += count;
+  }
+  Some(())
+}
+
+/// Make the group's three fanout tables afresh, as the tree's own test
+/// makes them (`COMMENT="NDB_TABLE=PARTITION_HASH=base:detail:fanout"`),
+/// each row with an id, its number plus one.
+fn setup_fan_tables() -> Option<()> {
+  let sql = format!(
+    "CREATE DATABASE IF NOT EXISTS {db};
+     DROP TABLE IF EXISTS {db}.fan_ii, {db}.fan_ci, {db}.fan_ic;
+     CREATE TABLE {db}.fan_ii (
+       a INT NOT NULL, b INT NOT NULL, id INT NOT NULL, v INT NOT NULL,
+       PRIMARY KEY (a, b), KEY ix_va (v, a)
+     ) ENGINE=NDB COMMENT=\"NDB_TABLE=PARTITION_HASH=1:1:4\";
+     CREATE TABLE {db}.fan_ci (
+       a VARCHAR(8) CHARACTER SET latin1 NOT NULL, b INT NOT NULL,
+       c INT NOT NULL, id INT NOT NULL,
+       PRIMARY KEY (a, b, c)
+     ) ENGINE=NDB COMMENT=\"NDB_TABLE=PARTITION_HASH=2:1:4\";
+     CREATE TABLE {db}.fan_ic (
+       a INT NOT NULL, b INT NOT NULL,
+       c CHAR(4) CHARACTER SET latin1 NOT NULL, id INT NOT NULL,
+       PRIMARY KEY (a, b, c)
+     ) ENGINE=NDB COMMENT=\"NDB_TABLE=PARTITION_HASH=1:2:4\"
+       PARTITION BY KEY () PARTITIONS 8;",
+    db = IC_IT_DB
+  );
+  mysql(&sql)?;
+  fill_fan_rows(
+    "fan_ii",
+    1000,
+    "{m} DIV 20, {m} MOD 20, {m} + 1, ({m} DIV 20) MOD 5",
+  )?;
+  fill_fan_rows(
+    "fan_ci",
+    1000,
+    "CONCAT('k', {m} DIV 100), ({m} DIV 10) MOD 10, {m} MOD 10, {m} + 1",
+  )?;
+  fill_fan_rows(
+    "fan_ic",
+    1000,
+    "{m} DIV 50, ({m} DIV 5) MOD 10, \
+     ELT(1 + {m} MOD 5, 'x', 'y', 'z', 'w', 'q'), {m} + 1",
+  )
+}
+
+/// The key of row m of a group table, column by column in key order, as
+/// `setup_fan_tables` makes it.
+fn fan_key(table: &str, m: i64) -> Vec<String> {
+  let letters = ["x", "y", "z", "w", "q"];
+  match table {
+    "fan_ii" => vec![(m / 20).to_string(), (m % 20).to_string()],
+    "fan_ci" => vec![
+      format!("k{}", m / 100),
+      ((m / 10) % 10).to_string(),
+      (m % 10).to_string(),
+    ],
+    _ => vec![
+      (m / 50).to_string(),
+      ((m / 5) % 10).to_string(),
+      letters[(m % 5) as usize].to_string(),
+    ],
+  }
+}
+
+#[test]
+fn fanout_tables_are_placed_where_the_data_nodes_place_them() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_fan_tables().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("connection");
+  for fan in &IC_IT_FAN_TABLES {
+    let t = bind(&mut conn, fan.name);
+    let info = t.def.info();
+    assert_eq!(info.fanout, 4, "{}", fan.name);
+    assert_eq!(info.fanout_base_keys as usize, fan.base, "{}", fan.name);
+    assert_eq!(
+      info.fanout_detail_keys as usize,
+      fan.key.len() - fan.base,
+      "{}",
+      fan.name
+    );
+    // Every row where the data nodes put it, and every row of one base
+    // in at most the fanout's partitions.
+    let mut of_base: HashMap<String, Vec<u32>> = HashMap::new();
+    let mut m: i64 = 0;
+    while m < fan.rows {
+      let key = fan_key(fan.name, m);
+      let mut row = t.row();
+      let mut k: usize = 0;
+      while k < key.len() {
+        t.put(&mut row, fan.key[k], &key[k]);
+        k += 1;
+      }
+      let ours = ic_apid::hash::partition_of(&t.def, &t.rec, &row)
+        .expect("a fanout key is placed");
+      let theirs = key_op::read_partition(&mut conn, &t.rec, &row)
+        .expect("read the row's partition");
+      assert_eq!(theirs, Some(ours), "{} row {}: {:?}", fan.name, m, key);
+      assert_eq!(
+        conn.hint_for_key(&t.def, &t.rec, &row),
+        TransactionHint::Partition(ours),
+        "{} row {}",
+        fan.name,
+        m
+      );
+      let base = key[..fan.base].join("/");
+      let partitions = of_base.entry(base).or_default();
+      if !partitions.contains(&ours) {
+        partitions.push(ours);
+      }
+      m += 1;
+    }
+    for (base, partitions) in &of_base {
+      assert!(
+        partitions.len() <= 4,
+        "{} base {}: {:?}",
+        fan.name,
+        base,
+        partitions
+      );
+    }
+    println!(
+      "{}: {} rows placed, {} bases",
+      fan.name,
+      fan.rows,
+      of_base.len()
+    );
+  }
+  assert_eq!(conn.unexpected(), 0);
+}
+
+#[test]
+fn fanout_key_operations_do_what_mysql_does() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_fan_tables().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("connection");
+  for fan in &IC_IT_FAN_TABLES {
+    let t = bind(&mut conn, fan.name);
+    // Twenty rows of a base no row has yet, written, read, updated and
+    // deleted by key, each through a transaction hinted to its
+    // partition.
+    let mut keys: Vec<Vec<String>> = Vec::new();
+    let mut k: i64 = 0;
+    while k < 20 {
+      let mut key = fan_key(fan.name, k);
+      key[0] = match fan.name {
+        "fan_ci" => "new".to_string(),
+        _ => "7777".to_string(),
+      };
+      keys.push(key);
+      k += 1;
+    }
+    let mut id: i64 = 100_000;
+    for key in &keys {
+      let mut row = t.row();
+      let mut c: usize = 0;
+      while c < key.len() {
+        t.put(&mut row, fan.key[c], &key[c]);
+        c += 1;
+      }
+      t.put(&mut row, "id", &id.to_string());
+      if fan.name == "fan_ii" {
+        t.put(&mut row, "v", "1");
+      }
+      key_op::write_key(
+        &mut conn,
+        key_ops::IC_OP_INSERT,
+        &t.rec,
+        &row,
+        &t.rec,
+        &row,
+      )
+      .expect("insert by key");
+      id += 1;
+    }
+    let first = match fan.name {
+      "fan_ci" => "'new'".to_string(),
+      _ => "7777".to_string(),
+    };
+    let count = |filter: &str| {
+      count_of(&format!(
+        "SELECT COUNT(*) FROM {}.{} WHERE a = {}{}",
+        IC_IT_DB, fan.name, first, filter
+      ))
+    };
+    assert_eq!(count(""), 20, "{}: inserted", fan.name);
+    // Updated: each id plus a million.
+    for key in &keys {
+      let mut row = t.row();
+      let mut c: usize = 0;
+      while c < key.len() {
+        t.put(&mut row, fan.key[c], &key[c]);
+        c += 1;
+      }
+      let mut found = t.row();
+      assert!(
+        key_op::read_committed(&mut conn, &t.rec, &row, &t.rec, &mut found)
+          .expect("read by key"),
+        "{}: {:?} is there",
+        fan.name,
+        key
+      );
+      let was: i64 = t.get(&found, "id").parse().expect("an id");
+      t.put(&mut found, "id", &(was + 1_000_000).to_string());
+      key_op::write_key(
+        &mut conn,
+        key_ops::IC_OP_UPDATE,
+        &t.rec,
+        &found,
+        &t.rec,
+        &found,
+      )
+      .expect("update by key");
+    }
+    assert_eq!(count(" AND id > 1000000"), 20, "{}: updated", fan.name);
+    for key in &keys {
+      let mut row = t.row();
+      let mut c: usize = 0;
+      while c < key.len() {
+        t.put(&mut row, fan.key[c], &key[c]);
+        c += 1;
+      }
+      key_op::write_key(
+        &mut conn,
+        key_ops::IC_OP_DELETE,
+        &t.rec,
+        &row,
+        &t.rec,
+        &row,
+      )
+      .expect("delete by key");
+    }
+    assert_eq!(count(""), 0, "{}: deleted", fan.name);
+  }
+  assert_eq!(conn.unexpected(), 0);
+}
+
+/// One case of a fanout scan: the index, its columns, the bound's
+/// values, MySQL's condition, and how many partitions the run reads:
+/// 4, the fanout's, 1, or 0 for every one.
+struct FanScan {
+  table: &'static str,
+  index: &'static str,
+  columns: &'static [&'static str],
+  values: &'static [&'static str],
+  filter: &'static str,
+  order: &'static str,
+  partitions: u32,
+}
+
+const IC_IT_FAN_SCANS: [FanScan; 8] = [
+  // The base fixed: the fanout's four partitions.
+  FanScan {
+    table: "fan_ii",
+    index: "PRIMARY",
+    columns: &["a"],
+    values: &["7"],
+    filter: "a = 7",
+    order: "a, b",
+    partitions: 4,
+  },
+  // The base's column second in its index, the first fixed too.
+  FanScan {
+    table: "fan_ii",
+    index: "ix_va",
+    columns: &["v", "a"],
+    values: &["2", "7"],
+    filter: "v = 2 AND a = 7",
+    order: "v, a",
+    partitions: 4,
+  },
+  // The index's first column alone, the base open: every partition.
+  FanScan {
+    table: "fan_ii",
+    index: "ix_va",
+    columns: &["v"],
+    values: &["2"],
+    filter: "v = 2",
+    order: "v, a",
+    partitions: 0,
+  },
+  // The whole key: one partition.
+  FanScan {
+    table: "fan_ii",
+    index: "PRIMARY",
+    columns: &["a", "b"],
+    values: &["7", "3"],
+    filter: "a = 7 AND b = 3",
+    order: "a, b",
+    partitions: 1,
+  },
+  // A base of two columns, the first of them characters.
+  FanScan {
+    table: "fan_ci",
+    index: "PRIMARY",
+    columns: &["a", "b"],
+    values: &["k3", "4"],
+    filter: "a = 'k3' AND b = 4",
+    order: "a, b, c",
+    partitions: 4,
+  },
+  // Half of that base: every partition.
+  FanScan {
+    table: "fan_ci",
+    index: "PRIMARY",
+    columns: &["a"],
+    values: &["k3"],
+    filter: "a = 'k3'",
+    order: "a, b, c",
+    partitions: 0,
+  },
+  // A base of one column, the detail two, over 8 partitions.
+  FanScan {
+    table: "fan_ic",
+    index: "PRIMARY",
+    columns: &["a"],
+    values: &["5"],
+    filter: "a = 5",
+    order: "a, b, c",
+    partitions: 4,
+  },
+  FanScan {
+    table: "fan_ic",
+    index: "PRIMARY",
+    columns: &["a", "b", "c"],
+    values: &["5", "2", "z"],
+    filter: "a = 5 AND b = 2 AND c = 'z'",
+    order: "a, b, c",
+    partitions: 1,
+  },
+];
+
+#[test]
+fn fanout_scans_by_the_base_read_the_fanouts_partitions() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_fan_tables().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("connection");
+  let mut faults: Vec<String> = Vec::new();
+  for case in &IC_IT_FAN_SCANS {
+    let t = bind(&mut conn, case.table);
+    let fragments = t.def.info().fragment_count;
+    let index = conn
+      .index_bind(IC_IT_DB, case.index, case.table)
+      .expect("bind the ordered index");
+    // The key record over the index's columns, as many as it has.
+    let all: Vec<&str> = match case.index {
+      "ix_va" => vec!["v", "a"],
+      _ => match case.table {
+        "fan_ii" => vec!["a", "b"],
+        _ => vec!["a", "b", "c"],
+      },
+    };
+    let key_rec = record_over(&t, &all);
+    let scan = conn
+      .create_index_scan(&index, &key_rec, &t.rec)
+      .expect("create the index scan");
+    let mut values: Vec<Option<&str>> = Vec::new();
+    for value in case.values {
+      values.push(Some(*value));
+    }
+    let bound = bound_row(&t, &key_rec, &all, &values);
+    let width = case.columns.len() as u32;
+    let ranks = mysql_ranks(case.table, &rank_by(case.order), case.filter);
+    let mut expected = fragments;
+    if case.partitions > 0 {
+      expected = case.partitions.min(fragments);
+    }
+    for (ordered, continuous) in
+      [(false, false), (true, false), (false, true), (true, true)]
+    {
+      conn
+        .add_scan_range(scan, &ab(width, true, width, true), &bound, &bound)
+        .expect("add the range");
+      let args = ScanArgs {
+        ordered,
+        continuous,
+        batch_rows: 4,
+        timeout_ms: IC_IT_SCAN_WAIT_MS as u32,
+        ..ScanArgs::default()
+      };
+      let (rows, error) = index_rows(&mut conn, &t, scan, &args);
+      let what = format!(
+        "{} {} ordered {} continuous {}",
+        case.table, case.filter, ordered, continuous
+      );
+      if let Some(e) = error {
+        faults.push(format!("{}: error {} {}", what, e.code, e.message()));
+        continue;
+      }
+      for fault in order_faults(&rows, &ranks, ordered, false) {
+        faults.push(format!("{}: {}", what, fault));
+      }
+      let run = conn.scan(scan).expect("the scan");
+      if run.parallelism() != expected {
+        faults.push(format!(
+          "{}: {} partitions, not {}",
+          what,
+          run.parallelism(),
+          expected
+        ));
+      }
+      let mut receivers = expected;
+      if continuous {
+        receivers *= 4;
+      }
+      if run.receivers() != receivers {
+        faults.push(format!("{}: {} receivers", what, run.receivers()));
+      }
+    }
+    conn.free_scan(scan).expect("free the scan");
+  }
+  assert!(faults.is_empty(), "{}", first_faults(faults));
+  // Through an executor, the reader's ranges going with its run.
+  let executor = executor_with(&cluster, 400, 4000);
+  let submitter = executor.submitter();
+  let t = bind_through(&submitter, "fan_ii");
+  let shape = index_shape(&submitter, &t, "fan_ii", "PRIMARY", &["a", "b"]);
+  let key_rec = record_over(&t, &["a", "b"]);
+  let mut reader = ScanReader::new(&shape);
+  let bound = bound_row(&t, &key_rec, &["a", "b"], &[Some("7")]);
+  let ranks = mysql_ranks("fan_ii", &rank_by("a, b"), "a = 7");
+  reader
+    .add_range(&ab(1, true, 1, true), &bound, &bound)
+    .expect("add the range");
+  let args = ScanArgs {
+    ordered: true,
+    batch_rows: 4,
+    timeout_ms: IC_IT_SCAN_WAIT_MS as u32,
+    ..ScanArgs::default()
+  };
+  submitter.scan(&mut reader, &args).expect("submit");
+  let (rows, error) = reader_rows(&mut reader, &t);
+  assert!(error.is_none(), "{:?}", error);
+  let faults = order_faults(&rows, &ranks, true, false);
+  assert!(faults.is_empty(), "{}", first_faults(faults));
+  assert_eq!(conn.unexpected(), 0);
+}
+
+#[test]
+fn fanout_a_scan_by_its_base_skips_the_other_partitions() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  // The same 100 000 rows in a fanout table and in a plain one, each of
+  // 32 partitions: an equality on a is the fanout table's base, and
+  // fixes nothing of the plain one's distribution key, (a, b).
+  let sql = format!(
+    "CREATE DATABASE IF NOT EXISTS {db};
+     DROP TABLE IF EXISTS {db}.fan_big, {db}.fan_plain;
+     CREATE TABLE {db}.fan_big (
+       a INT NOT NULL, b INT NOT NULL, id INT NOT NULL,
+       PRIMARY KEY (a, b)
+     ) ENGINE=NDB COMMENT=\"NDB_TABLE=PARTITION_HASH=1:1:4\"
+       PARTITION BY KEY () PARTITIONS 32;
+     CREATE TABLE {db}.fan_plain (
+       a INT NOT NULL, b INT NOT NULL, id INT NOT NULL,
+       PRIMARY KEY (a, b)
+     ) ENGINE=NDB PARTITION BY KEY () PARTITIONS 32;",
+    db = IC_IT_DB
+  );
+  if mysql(&sql).is_none() {
+    return;
+  }
+  let rows: i64 = 100_000;
+  for table in ["fan_big", "fan_plain"] {
+    fill_fan_rows(table, rows, "{m} DIV 100, {m} MOD 100, {m} + 1")
+      .expect("fill the table");
+  }
+  let tables = ["fan_big", "fan_plain"];
+  // One at a time: a scan's time is mostly its round trips, and the
+  // partitions it reads are read side by side, so the fanout's four
+  // save little of it. The tables in turn, three times, the best of
+  // each kept: the first runs also fill the record pools.
+  let mut conn = cluster.global.create_connection().expect("connection");
+  let mut scans: Vec<(Table, Record, ScanId)> = Vec::new();
+  for table in tables {
+    let t = bind(&mut conn, table);
+    let index = conn
+      .index_bind(IC_IT_DB, "PRIMARY", table)
+      .expect("bind the primary key's ordered index");
+    let key_rec = record_over(&t, &["a", "b"]);
+    let scan = conn
+      .create_index_scan(&index, &key_rec, &t.rec)
+      .expect("create the index scan");
+    scans.push((t, key_rec, scan));
+  }
+  let mut best: [u64; 2] = [u64::MAX; 2];
+  let mut partitions: [u32; 2] = [0; 2];
+  let mut round: u32 = 0;
+  while round < 3 {
+    let mut k: usize = 0;
+    while k < scans.len() {
+      let (t, key_rec, scan) = &scans[k];
+      let start = time::gethrtime();
+      let mut a: i64 = 0;
+      while a < 300 {
+        let text = (a * 3).to_string();
+        let bound = bound_row(t, key_rec, &["a", "b"], &[Some(text.as_str())]);
+        conn
+          .add_scan_range(*scan, &ab(1, true, 1, true), &bound, &bound)
+          .expect("add the range");
+        let args = ScanArgs {
+          timeout_ms: IC_IT_SCAN_WAIT_MS as u32,
+          ..ScanArgs::default()
+        };
+        let (found, error) = index_rows(&mut conn, t, *scan, &args);
+        assert!(error.is_none(), "{} a = {}: {:?}", tables[k], text, error);
+        assert_eq!(found.len(), 100, "{} a = {}", tables[k], text);
+        partitions[k] = conn.scan(*scan).expect("the scan").parallelism();
+        a += 1;
+      }
+      best[k] = best[k].min(time::millis_elapsed(start, time::gethrtime()));
+      k += 1;
+    }
+    round += 1;
+  }
+  for k in [0usize, 1] {
+    println!(
+      "{}: 300 scans one at a time, {} partitions each, in {} ms",
+      tables[k], partitions[k], best[k]
+    );
+  }
+  for (_, _, scan) in &scans {
+    conn.free_scan(*scan).expect("free the scan");
+  }
+  // Many at once, through an executor: 16 threads of 100 scans each.
+  // Now the data nodes' threads limit, and a scan of four partitions
+  // asks an eighth of a plain one's work of them.
+  let executor = executor_with(&cluster, 400, 4000);
+  let submitter = executor.submitter();
+  let mut shapes: Vec<(Table, Record, Arc<ScanShape>)> = Vec::new();
+  for table in tables {
+    let t = bind_through(&submitter, table);
+    let shape = index_shape(&submitter, &t, table, "PRIMARY", &["a", "b"]);
+    let key_rec = record_over(&t, &["a", "b"]);
+    shapes.push((t, key_rec, shape));
+  }
+  let mut many: [u64; 2] = [u64::MAX; 2];
+  let mut round: u32 = 0;
+  while round < 2 {
+    let mut k: usize = 0;
+    while k < shapes.len() {
+      let (t, key_rec, shape) = &shapes[k];
+      let start = time::gethrtime();
+      std::thread::scope(|scope| {
+        let mut handles = Vec::new();
+        let mut thread: i64 = 0;
+        while thread < 16 {
+          let mine = executor.submitter();
+          let first = thread * 100;
+          handles.push(scope.spawn(move || {
+            let mut reader = ScanReader::new(shape);
+            let mut i: i64 = 0;
+            while i < 100 {
+              let text = ((first + i) % 1000).to_string();
+              let bound =
+                bound_row(t, key_rec, &["a", "b"], &[Some(text.as_str())]);
+              reader
+                .add_range(&ab(1, true, 1, true), &bound, &bound)
+                .expect("add the range");
+              let args = ScanArgs {
+                timeout_ms: IC_IT_SCAN_WAIT_MS as u32,
+                ..ScanArgs::default()
+              };
+              mine.scan(&mut reader, &args).expect("submit");
+              let (found, error) = reader_rows(&mut reader, t);
+              assert!(error.is_none(), "a = {}: {:?}", text, error);
+              assert_eq!(found.len(), 100, "a = {}", text);
+              i += 1;
+            }
+          }));
+          thread += 1;
+        }
+        for handle in handles {
+          handle.join().expect("a scanning thread");
+        }
+      });
+      many[k] = many[k].min(time::millis_elapsed(start, time::gethrtime()));
+      k += 1;
+    }
+    round += 1;
+  }
+  for k in [0usize, 1] {
+    println!(
+      "{}: 1 600 scans, 16 at a time, in {} ms: {} scans a second",
+      tables[k],
+      many[k],
+      1600 * 1000 / many[k].max(1)
+    );
+  }
+  let faster = 100 - (many[0] * 100 / many[1].max(1)).min(100);
+  println!(
+    "many at once, the fanout table's scans take {}% less time",
+    faster
+  );
+  assert_eq!(conn.unexpected(), 0);
+  mysql(&format!(
+    "DROP TABLE IF EXISTS {db}.fan_big, {db}.fan_plain",
+    db = IC_IT_DB
+  ));
+}
