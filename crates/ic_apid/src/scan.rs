@@ -39,6 +39,17 @@
 //! more only once every takeover of the batch is done, confirmed or
 //! failed, since asking releases the batch's locks (chapter 05 §7.2).
 //!
+//! **A continuous scan** (phase 10) gives each fragment scanned at once
+//! four receivers, four in a row, and the fragment goes on into the
+//! next as soon as it has reported a batch, its rows coming before their
+//! entry (chapter 05 §7.2, flag bit 2). Each entry names the fragment's
+//! record, the same for the four, and the run names it back once for
+//! each batch: batch k once the fragment's batch k − 2 has been handed
+//! back, which lets batch k + 2 come into that receiver (the author,
+//! 2026-10-21). The fragment's last batch alone says done, and its
+//! other receivers give no more. An ordered run's merge reads each
+//! fragment's receivers in turn. Committed reads only.
+//!
 //! **A scan of an ordered index** (phase 8.7) reads the ranges added
 //! before its run ([`index_scan`](crate::index_scan)), and an ordered
 //! run merges its receivers' rows in the index's order: every fragment
@@ -223,6 +234,11 @@ pub struct ScanArgs {
   /// a locking scan, and on a connection, where the application hands
   /// each batch back itself.
   pub read_ahead: bool,
+  /// For a committed read: the continuous scan, four receivers for each
+  /// fragment scanned at once, so that a fragment goes on scanning while
+  /// the application has its batches (chapter 04, "Scans"). Refused for
+  /// a locking scan and with `read_ahead`.
+  pub continuous: bool,
   /// Anything, given back to the callback.
   pub user_ref: usize,
   /// Called with each batch as it completes, in place of the ready
@@ -294,6 +310,10 @@ pub(crate) enum ReceiverState {
   Asked,
   /// The batch is complete and with the application.
   Ready,
+  /// A continuous scan's receiver whose batch has been handed back, and
+  /// which waits to be asked again: its fragment's next batch but one is
+  /// let come into it only then (chapter 04, "Scans").
+  Free,
   /// Its batch is held at the coordinator, its rows dropped: the run is
   /// closing.
   Held,
@@ -344,6 +364,17 @@ pub(crate) struct Receiver {
   /// Takeovers of rows of the batch not yet done; the receiver asks for
   /// more only once there are none.
   takeovers: u32,
+  /// A continuous scan: the batch has come, and its fragment record is
+  /// still to be named back for it, which waits until the receiver two
+  /// on is free.
+  owed: bool,
+  /// A continuous scan: its fragment record is to be named back for the
+  /// batch with the next send, whether or not the batch has been handed
+  /// back meanwhile.
+  name_back: bool,
+  /// A continuous scan: its fragment gives no more, its last batch
+  /// reported by another of its four receivers.
+  group_over: bool,
   /// For an ordered run's merge: the row `head_at`, unpacked, with its
   /// order key and range number; `IC_NO_HEAD` when none is.
   head_at: u32,
@@ -445,6 +476,11 @@ pub struct Scan {
   descending: bool,
   /// The run reads each row's range number.
   reads_range_no: bool,
+  /// The run is a continuous scan, four receivers a fragment.
+  continuous: bool,
+  /// An ordered continuous run: for each fragment, the place among its
+  /// four receivers of the one whose batch the merge reads next.
+  turns: Vec<u32>,
   /// The range number of the row last read.
   range_no: u32,
   /// The program that filters the rows, if any, and its inputs.
@@ -508,6 +544,8 @@ impl Scan {
       ordered: false,
       descending: false,
       reads_range_no: false,
+      continuous: false,
+      turns: Vec::new(),
       range_no: 0,
       program: None,
       inputs: [0; IC_PROGRAM_INPUTS as usize],
@@ -620,10 +658,29 @@ impl Scan {
     self.rows_read
   }
 
-  /// Fragments the last run scanned at once, a receiver each: one for a
-  /// run of one partition.
+  /// Fragments the last run scanned at once: one for a run of one
+  /// partition.
   pub fn parallelism(&self) -> u32 {
+    self.used / self.per_fragment()
+  }
+
+  /// Receivers of the last run: one for each fragment scanned at once,
+  /// or four in a continuous scan.
+  pub fn receivers(&self) -> u32 {
     self.used
+  }
+
+  /// True if the last run was a continuous scan.
+  pub fn is_continuous(&self) -> bool {
+    self.continuous
+  }
+
+  /// Receivers for each fragment the last run scanned at once.
+  pub(crate) fn per_fragment(&self) -> u32 {
+    if self.continuous {
+      return scans::IC_SCAN_CONTINUOUS_RECEIVERS;
+    }
+    1
   }
 
   /// The transaction its rows may be taken over into.
@@ -679,7 +736,7 @@ impl Scan {
   }
 
   /// The flags of the run's request (chapter 05 §7.2): committed reads
-  /// set 11; shared locks 10, and 12 for keys when the rows may be taken
+  /// set 11, and 2 too for a continuous scan; shared locks 10, and 12 for keys when the rows may be taken
   /// over; exclusive locks 8, 10 and 12, as the data node requires keys
   /// with them. Every table scan goes in storage order, as the
   /// reference's do; a scan of an ordered index sets 15 instead, and 14
@@ -688,6 +745,7 @@ impl Scan {
   fn flags(&self) -> ScanFlags {
     let of_index = self.index.is_some();
     let mut flags = ScanFlags {
+      continuous: self.continuous,
       no_disk: !self.reads_disk(),
       storage_order: !of_index,
       range: of_index,
@@ -727,12 +785,12 @@ pub(crate) fn check_scan_record(
 }
 
 /// The rows and bytes a receiver's batch may hold: the run's own, or
-/// the configuration's, the bytes kept within the total for every
-/// receiver together, and the rows within what the lock allows
-/// (chapter 05 §7.2).
+/// the configuration's, the bytes kept within the total for all
+/// `receivers` of the run together, four times as many in a continuous
+/// scan, and the rows within what the lock allows (chapter 05 §7.2).
 fn batch_size(
   args: &ScanArgs,
-  parallelism: u32,
+  receivers: u32,
   config_rows: u32,
   config_bytes: u32,
   config_total: u32,
@@ -749,7 +807,7 @@ fn batch_size(
   let mut bytes = args.batch_bytes;
   if bytes == 0 {
     bytes = config_bytes;
-    let share = config_total / parallelism.max(1);
+    let share = config_total / receivers.max(1);
     if share > 0 && share < bytes {
       bytes = share;
     }
@@ -1024,6 +1082,10 @@ impl ApidConnection {
       // The application holds each batch and hands it back itself.
       return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
     }
+    if args.continuous && args.lock != ScanLock::Committed {
+      // Committed reads only (the author, 2026-10-20).
+      return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
+    }
     // Where the run goes, and under which id: the transaction's
     // coordinator and id when its rows may be taken over, else a node
     // chosen as for a transaction and an id of its own.
@@ -1060,9 +1122,16 @@ impl ApidConnection {
       }
     };
     let parallelism = parallelism_of(args, fragments, partition.is_some());
+    // A continuous scan's fragments have four receivers each, four in a
+    // row, and the configuration's bytes are shared among them all.
+    let mut per_fragment: u32 = 1;
+    if args.continuous {
+      per_fragment = scans::IC_SCAN_CONTINUOUS_RECEIVERS;
+    }
+    let receivers = parallelism * per_fragment;
     let (batch_rows, batch_bytes) = batch_size(
       args,
-      parallelism,
+      receivers,
       self.shared.scan_batch_rows,
       self.shared.scan_batch_bytes,
       self.shared.scan_batch_bytes_total,
@@ -1072,7 +1141,7 @@ impl ApidConnection {
     let mut ids = std::mem::take(&mut self.scan_receiver_ids);
     ids.clear();
     let mut place: u32 = 0;
-    while place < parallelism {
+    while place < receivers {
       let slot = ReceiverSlot { scan: id, place };
       let ptr = match self.receivers.insert(slot) {
         Ok(ptr) => ptr,
@@ -1097,7 +1166,7 @@ impl ApidConnection {
         ic_port::time::gethrtime() + args.timeout_ms as u64 * 1_000_000;
     }
     if let Some(scan) = self.scans.get_mut(id.0) {
-      while (scan.receivers.len() as u32) < parallelism {
+      while (scan.receivers.len() as u32) < receivers {
         scan.receivers.push(Receiver::default());
       }
       let mut k: usize = 0;
@@ -1109,10 +1178,24 @@ impl ApidConnection {
         receiver.last = false;
         receiver.unsent = false;
         receiver.takeovers = 0;
+        receiver.owed = false;
+        receiver.name_back = false;
+        receiver.group_over = false;
+        // A fragment's first batch comes in its first receiver, and it
+        // goes on at once into its second; the other two wait their
+        // turn.
         receiver.state = ReceiverState::Asked;
+        if k as u32 % per_fragment >= 2 {
+          receiver.state = ReceiverState::Free;
+        }
         k += 1;
       }
-      scan.used = parallelism;
+      scan.used = receivers;
+      scan.continuous = args.continuous;
+      scan.turns.clear();
+      if args.continuous && args.ordered {
+        scan.turns.resize(parallelism as usize, 0);
+      }
       scan.state = ScanState::Starting;
       scan.error = None;
       scan.user_ref = args.user_ref;
@@ -1428,7 +1511,9 @@ impl ApidConnection {
   }
 
   /// Hand a batch back: its receiver is asked for more with the next
-  /// send, or gives no more if that was its last. A batch of a run that
+  /// send, or gives no more if that was its last. In a continuous scan
+  /// it waits instead for its fragment's next batch but one, and the
+  /// batch two before that may be named back now. A batch of a run that
   /// is closing is let go of, and one of a run that has ended is passed
   /// over.
   pub fn release_scan_batch(
@@ -1442,27 +1527,35 @@ impl ApidConnection {
       _ => return Ok(()),
     };
     let mut ask = false;
+    let at = slot.place as usize;
     let over = match self.scans.get_mut(batch.scan.0) {
       Some(scan) => {
         let closing = scan.state == ScanState::Closing;
-        let receiver = &mut scan.receivers[slot.place as usize];
+        let receiver = &mut scan.receivers[at];
         if receiver.id != batch.receiver
           || receiver.state != ReceiverState::Ready
         {
           return Ok(());
         }
         receiver.clear_batch();
-        if receiver.last {
+        let mut named = false;
+        if receiver.last || receiver.group_over {
           receiver.state = ReceiverState::Done;
         } else if closing {
           receiver.state = ReceiverState::Held;
+        } else if scan.continuous {
+          // Free for its fragment's next batch but one: the batch two
+          // back may be named back now, which lets that one come here.
+          receiver.state = ReceiverState::Free;
+          named = name_back_if_free(&mut scan.receivers, two_on(at));
         } else {
           receiver.state = ReceiverState::Asked;
           receiver.unsent = true;
-          if !scan.queued {
-            scan.queued = true;
-            ask = true;
-          }
+          named = true;
+        }
+        if named && !scan.queued {
+          scan.queued = true;
+          ask = true;
         }
         scan.coord_done && scan.all_done()
       }
@@ -1685,6 +1778,13 @@ impl ApidConnection {
 
   /// Hand back every batch of an ordered run whose rows are all read.
   fn hand_back_read_batches(&mut self, id: ScanId) -> Result<(), IcError> {
+    let continuous = match self.scans.get(id.0) {
+      Some(scan) => scan.continuous,
+      None => return Ok(()),
+    };
+    if continuous {
+      return self.hand_back_read_turns(id);
+    }
     let mut place: usize = 0;
     loop {
       let batch = match self.scans.get(id.0) {
@@ -1713,10 +1813,49 @@ impl ApidConnection {
     }
   }
 
+  /// An ordered continuous run: hand back each fragment's batch whose
+  /// rows are all read, the merge going on to the next of its four
+  /// receivers, in which the fragment's next batch comes.
+  fn hand_back_read_turns(&mut self, id: ScanId) -> Result<(), IcError> {
+    let four = scans::IC_SCAN_CONTINUOUS_RECEIVERS;
+    let mut fragment: usize = 0;
+    loop {
+      let batch = match self.scans.get_mut(id.0) {
+        Some(scan) => {
+          if fragment >= scan.turns.len() {
+            return Ok(());
+          }
+          let turn = scan.turns[fragment];
+          let receiver =
+            &scan.receivers[fragment * four as usize + turn as usize];
+          let used_up =
+            receiver.state == ReceiverState::Ready && !receiver.has_row();
+          let receiver_id = receiver.id;
+          if used_up {
+            scan.turns[fragment] = (turn + 1) % four;
+            Some(ScanBatchId {
+              scan: id,
+              receiver: receiver_id,
+            })
+          } else {
+            None
+          }
+        }
+        None => return Ok(()),
+      };
+      match batch {
+        // The same fragment again: its next batch may be empty.
+        Some(read) => self.release_scan_batch(read)?,
+        None => fragment += 1,
+      }
+    }
+  }
+
   /// The place of the receiver whose next row comes first, once every
   /// receiver of the run has a row or has ended; none while one waits
-  /// for its batch, or when every one has ended. Each receiver's next
-  /// row is unpacked once, with its order key.
+  /// for its batch, or when every one has ended. In a continuous run a
+  /// fragment's receiver is the one whose turn it is. Each receiver's
+  /// next row is unpacked once, with its order key.
   fn first_merged(&mut self, id: ScanId) -> Result<Option<u32>, IcError> {
     let scan = match self.scans.get_mut(id.0) {
       Some(scan) => scan,
@@ -1733,16 +1872,23 @@ impl ApidConnection {
       Some(index) => index.run.first_no,
       None => 0,
     };
+    let mut heads = scan.used as usize;
+    if scan.continuous {
+      heads = scan.turns.len();
+    }
     let mut first: Option<u32> = None;
-    let mut place: usize = 0;
-    while place < scan.used as usize {
+    let mut k: usize = 0;
+    while k < heads {
+      let mut place = k;
+      if scan.continuous {
+        let four = scans::IC_SCAN_CONTINUOUS_RECEIVERS as usize;
+        place = k * four + scan.turns[k] as usize;
+      }
+      k += 1;
       let receiver = &mut scan.receivers[place];
       match receiver.state {
         ReceiverState::Ready => {}
-        ReceiverState::Done => {
-          place += 1;
-          continue;
-        }
+        ReceiverState::Done => continue,
         // Its batch is still coming.
         _ => return Ok(None),
       }
@@ -1761,7 +1907,6 @@ impl ApidConnection {
       if before {
         first = Some(place as u32);
       }
-      place += 1;
     }
     Ok(first)
   }
@@ -2079,8 +2224,10 @@ impl ApidConnection {
           while place < scan.used as usize {
             let receiver = &mut scan.receivers[place];
             // One whose takeovers are not all done waits for them.
-            if receiver.unsent && receiver.takeovers == 0 {
+            let asked = receiver.unsent || receiver.name_back;
+            if asked && receiver.takeovers == 0 {
               receiver.unsent = false;
+              receiver.name_back = false;
               ptrs.push(receiver.coord_ptr);
             }
             place += 1;
@@ -2484,21 +2631,25 @@ impl ApidConnection {
   }
 
   /// Complete a receiver's batch if all of it has come: delivered, or
-  /// held if the run is closing.
+  /// held if the run is closing. In a continuous scan its fragment
+  /// record is named back for it once the receiver two on is free, and
+  /// a fragment's last batch ends its other receivers.
   fn check_batch(&mut self, id: ScanId, place: u32) {
-    let closing = match self.scans.get_mut(id.0) {
+    let at = place as usize;
+    let (closing, ask) = match self.scans.get_mut(id.0) {
       Some(scan) => {
         let is_closing = scan.state == ScanState::Closing;
-        let receiver = &mut scan.receivers[place as usize];
+        let receiver = &mut scan.receivers[at];
         let complete = receiver.state == ReceiverState::Asked
           && receiver.confirmed
           && receiver.words >= receiver.conf_words;
         if !complete {
           return;
         }
+        let over = receiver.last || receiver.group_over;
         if is_closing {
           receiver.clear_batch();
-          if receiver.last {
+          if over {
             receiver.state = ReceiverState::Done;
           } else {
             receiver.state = ReceiverState::Held;
@@ -2511,10 +2662,25 @@ impl ApidConnection {
           }
           receiver.state = ReceiverState::Ready;
         }
-        is_closing
+        let mut ask = false;
+        if scan.continuous && !is_closing {
+          if scan.receivers[at].last {
+            end_fragment(&mut scan.receivers, at);
+          } else if !over {
+            scan.receivers[at].owed = true;
+            if name_back_if_free(&mut scan.receivers, at) && !scan.queued {
+              scan.queued = true;
+              ask = true;
+            }
+          }
+        }
+        (is_closing, ask)
       }
       None => return,
     };
+    if ask {
+      self.scans_to_send.push(id);
+    }
     if closing {
       self.close_when_settled(id);
       return;
@@ -2742,18 +2908,21 @@ fn stop_waits(takeovers_pending: bool, rolls_back: Option<bool>) -> bool {
   takeovers_pending && rolls_back == Some(false)
 }
 
-/// Let go of a closing run's batches: those with the application and
-/// those handed back but not yet asked for again are held at the
-/// coordinator until the stop.
+/// Let go of a closing run's batches: those with the application, those
+/// handed back but not yet asked for again, and a continuous scan's
+/// receivers waiting their turn are held at the coordinator until the
+/// stop.
 fn hold_batches(scan: &mut Scan) {
   let mut place: usize = 0;
   while place < scan.used as usize {
     let receiver = &mut scan.receivers[place];
     let asked_unsent =
       receiver.state == ReceiverState::Asked && receiver.unsent;
-    if receiver.state == ReceiverState::Ready || asked_unsent {
+    let waiting = receiver.state == ReceiverState::Ready
+      || receiver.state == ReceiverState::Free;
+    if waiting || asked_unsent {
       receiver.clear_batch();
-      if receiver.last {
+      if receiver.last || receiver.group_over {
         receiver.state = ReceiverState::Done;
       } else {
         receiver.state = ReceiverState::Held;
@@ -2762,6 +2931,55 @@ fn hold_batches(scan: &mut Scan) {
     place += 1;
   }
   scan.queued = false;
+}
+
+/// The place, in a continuous run, of the receiver two on from `place`
+/// among its fragment's four; the one two on from that is `place` again.
+fn two_on(place: usize) -> usize {
+  let four = scans::IC_SCAN_CONTINUOUS_RECEIVERS as usize;
+  place - place % four + (place + 2) % four
+}
+
+/// A continuous run: name back the fragment record for the batch at
+/// `place`, if that is owed and the receiver two on is free, and let
+/// that receiver take the fragment's batch after next, which naming
+/// back lets come (chapter 04, "Scans"). So a batch is named back once
+/// the batch two before it has been handed back. True if the name goes
+/// with the next send.
+fn name_back_if_free(receivers: &mut [Receiver], place: usize) -> bool {
+  let next = two_on(place);
+  if !receivers[place].owed || receivers[next].state != ReceiverState::Free {
+    return false;
+  }
+  receivers[place].owed = false;
+  receivers[place].name_back = true;
+  receivers[next].clear_batch();
+  receivers[next].state = ReceiverState::Asked;
+  true
+}
+
+/// A continuous run's fragment has given its last batch, at `place`:
+/// its other three receivers give no more (the author, 2026-10-20).
+/// Those with no batch, or whose batch has been handed back, are done
+/// at once; one holding a batch is done once it is handed back, and one
+/// whose batch is still coming completes it first.
+fn end_fragment(receivers: &mut [Receiver], place: usize) {
+  let four = scans::IC_SCAN_CONTINUOUS_RECEIVERS as usize;
+  let first = place - place % four;
+  let mut at = first;
+  while at < first + four {
+    let receiver = &mut receivers[at];
+    receiver.owed = false;
+    if at != place {
+      receiver.group_over = true;
+      let empty = receiver.state == ReceiverState::Asked && !receiver.confirmed;
+      if empty || receiver.state == ReceiverState::Free {
+        receiver.clear_batch();
+        receiver.state = ReceiverState::Done;
+      }
+    }
+    at += 1;
+  }
 }
 
 #[cfg(test)]
@@ -2818,6 +3036,13 @@ mod tests {
     assert_eq!(batch_size(&own, 64, 256, 32768, 524288).1, 1 << 20);
     // At least one row.
     assert_eq!(batch_size(&committed, 8, 0, 32768, 524288).0, 1);
+    // A continuous scan of 16 fragments: 64 receivers, the total shared
+    // among them all, the rows as configured.
+    let continuous = ScanArgs {
+      continuous: true,
+      ..ScanArgs::default()
+    };
+    assert_eq!(batch_size(&continuous, 64, 384, 32768, 524288), (384, 8192));
   }
 
   #[test]
@@ -2922,5 +3147,82 @@ mod tests {
     // One whose transaction rolls back, or is gone, waits for nothing.
     assert!(!stop_waits(true, Some(true)));
     assert!(!stop_waits(false, Some(true)));
+  }
+
+  /// The four receivers of one fragment of a continuous run, as a run
+  /// starts them: the first two asked, the other two waiting their turn.
+  fn four_starting() -> Vec<Receiver> {
+    let mut four: Vec<Receiver> = Vec::new();
+    while four.len() < 4 {
+      let mut receiver = Receiver::default();
+      if four.len() >= 2 {
+        receiver.state = ReceiverState::Free;
+      }
+      four.push(receiver);
+    }
+    four
+  }
+
+  /// A batch come into the receiver at `place`, its naming back owed.
+  fn come(receivers: &mut [Receiver], place: usize) {
+    receivers[place].state = ReceiverState::Ready;
+    receivers[place].owed = true;
+  }
+
+  #[test]
+  fn a_batch_is_named_back_once_the_batch_two_before_it_is_handed_back() {
+    assert_eq!(two_on(0), 2);
+    assert_eq!(two_on(3), 1);
+    assert_eq!(two_on(5), 7);
+    assert_eq!(two_on(6), 4);
+    let mut four = four_starting();
+    // The first two batches are named back as they come: the receivers
+    // two on have had none.
+    come(&mut four, 0);
+    assert!(name_back_if_free(&mut four, 0));
+    assert!(four[0].name_back && !four[0].owed);
+    assert_eq!(four[2].state, ReceiverState::Asked);
+    come(&mut four, 1);
+    assert!(name_back_if_free(&mut four, 1));
+    assert_eq!(four[3].state, ReceiverState::Asked);
+    // The third waits while the first is with the application...
+    come(&mut four, 2);
+    assert!(!name_back_if_free(&mut four, 2));
+    assert!(four[2].owed && !four[2].name_back);
+    // ...and goes once that is handed back, the first receiver then
+    // taking the fragment's fifth batch.
+    four[0].state = ReceiverState::Free;
+    assert!(name_back_if_free(&mut four, two_on(0)));
+    assert!(four[2].name_back);
+    assert_eq!(four[0].state, ReceiverState::Asked);
+    // Nothing owed, nothing named.
+    assert!(!name_back_if_free(&mut four, 1));
+  }
+
+  #[test]
+  fn a_fragments_last_batch_ends_its_other_three_receivers() {
+    // The last batch in the second receiver; the first's batch with the
+    // application, the third asked with nothing come, the fourth's
+    // handed back.
+    let mut four = four_starting();
+    four[0].state = ReceiverState::Ready;
+    four[1].state = ReceiverState::Ready;
+    four[1].last = true;
+    four[2].state = ReceiverState::Asked;
+    four[3].state = ReceiverState::Free;
+    end_fragment(&mut four, 1);
+    assert_eq!(four[0].state, ReceiverState::Ready);
+    assert!(four[0].group_over);
+    assert_eq!(four[2].state, ReceiverState::Done);
+    assert_eq!(four[3].state, ReceiverState::Done);
+    assert_eq!(four[1].state, ReceiverState::Ready);
+    assert!(!four[1].group_over);
+    // One whose batch is still coming, its entry come, completes it.
+    let mut coming = four_starting();
+    coming[2].state = ReceiverState::Asked;
+    coming[2].confirmed = true;
+    end_fragment(&mut coming, 1);
+    assert_eq!(coming[2].state, ReceiverState::Asked);
+    assert!(coming[2].group_over);
   }
 }

@@ -45,7 +45,9 @@
 //! receiver has a batch with a row or has ended, as a connection's
 //! merge does. The batches stay where they are moved to; with
 //! `read_ahead` a receiver's next batch may come before its last is
-//! read, and waits.
+//! read, and waits. In a continuous scan (phase 10) a fragment's
+//! batches come in its four receivers in turn, and the merge takes them
+//! from each in that order, a head for each fragment.
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -213,7 +215,8 @@ pub(crate) struct FeedBatch {
   pub(crate) row_ends: Vec<u32>,
   /// Its receiver's place in the run.
   pub(crate) place: u32,
-  /// It is its receiver's last batch.
+  /// It is its receiver's last batch: in a continuous scan, its
+  /// fragment's, the receiver's three companions giving no more either.
   pub(crate) last: bool,
 }
 
@@ -254,6 +257,9 @@ pub(crate) struct FeedState {
   pub(crate) reader_waiting: bool,
   /// The receivers of the run, once it runs: what an ordered run merges.
   pub(crate) receivers: u32,
+  /// Receivers for each fragment of the run, once it runs: four in a
+  /// continuous scan, whose fragments' batches come in theirs in turn.
+  pub(crate) per_fragment: u32,
   /// For a scan of an ordered index: the run's ranges, until the
   /// executor takes them as it starts the run; then an emptied set the
   /// executor leaves for the reader's next. Kept here, not in the run's
@@ -399,9 +405,11 @@ pub struct ScanReader {
   /// `descending`.
   ordered: bool,
   descending: bool,
-  /// An ordered run's receivers, as far as the reader knows them, and
-  /// what each has with the reader.
+  /// An ordered run's fragments, as far as the reader knows them, and
+  /// what each has with the reader; and the receivers for each, four in
+  /// a continuous scan.
   receivers: usize,
+  per_fragment: usize,
   heads: Vec<MergeHead>,
   /// Batches that came while their receiver's last was being read.
   early: Vec<FeedBatch>,
@@ -410,13 +418,17 @@ pub struct ScanReader {
 /// No row of a receiver's batch is unpacked for the merge.
 const IC_NO_HEAD: usize = usize::MAX;
 
-/// One receiver's part in a reader's merge: the batch being read, and
-/// its next row unpacked, with its order key and range number.
+/// One fragment's part in a reader's merge: the batch being read, and
+/// its next row unpacked, with its order key and range number. A
+/// fragment has a receiver, or four in a continuous scan.
 struct MergeHead {
   batch: Option<FeedBatch>,
   next_row: usize,
-  /// Its last batch has been read: the receiver gives no more.
+  /// Its last batch has been read: the fragment gives no more.
   ended: bool,
+  /// In a continuous run: the place, among the fragment's four
+  /// receivers, of the one its next batch comes in.
+  turn: usize,
   /// The row of the batch that `row`, `key` and `range` are of;
   /// `IC_NO_HEAD` when none is.
   head_at: usize,
@@ -431,6 +443,7 @@ impl MergeHead {
       batch: None,
       next_row: 0,
       ended: false,
+      turn: 0,
       head_at: IC_NO_HEAD,
       row: Vec::new(),
       key: Vec::new(),
@@ -482,6 +495,7 @@ impl ScanReader {
       ordered: false,
       descending: false,
       receivers: 0,
+      per_fragment: 1,
       heads: Vec::new(),
       early: Vec::new(),
     }
@@ -705,15 +719,16 @@ impl ScanReader {
     }
   }
 
-  /// Take the batches that came, each to its receiver, and learn how
-  /// many receivers the run has. False if the reader has moved on from
+  /// Take the batches that came, each to its fragment, and learn how
+  /// many fragments the run has. False if the reader has moved on from
   /// the run.
   fn collect_batches(&mut self) -> bool {
     let mut state = self.feed.state.lock();
     if state.run != self.run {
       return false;
     }
-    self.receivers = state.receivers as usize;
+    self.per_fragment = (state.per_fragment as usize).max(1);
+    self.receivers = state.receivers as usize / self.per_fragment;
     while self.heads.len() < self.receivers {
       self.heads.push(MergeHead::new());
     }
@@ -723,30 +738,35 @@ impl ScanReader {
         state.spare.push(batch);
         continue;
       }
-      place_batch(&mut self.heads, &mut self.early, batch);
+      place_batch(&mut self.heads, &mut self.early, batch, self.per_fragment);
     }
     true
   }
 
-  /// Hand back each batch whose rows are all read, its receiver ended if
-  /// it was the last, and give the receiver its next if it came early.
+  /// Hand back each batch whose rows are all read, its fragment ended if
+  /// it was the last, and give the fragment its next if it came early,
+  /// in the receiver whose turn it is.
   fn hand_back_read(&mut self) {
-    let mut place: usize = 0;
-    while place < self.heads.len() {
-      let used_up =
-        self.heads[place].batch.is_some() && !self.heads[place].has_row();
+    let per = self.per_fragment;
+    let mut at: usize = 0;
+    while at < self.heads.len() {
+      let used_up = self.heads[at].batch.is_some() && !self.heads[at].has_row();
       if !used_up {
-        place += 1;
+        at += 1;
         continue;
       }
-      if let Some(used) = self.heads[place].batch.take() {
-        self.heads[place].ended = used.last;
+      if let Some(used) = self.heads[at].batch.take() {
+        self.heads[at].ended = used.last;
+        if !used.last {
+          self.heads[at].turn = (self.heads[at].turn + 1) % per;
+        }
         self.hand_back(used);
       }
-      if let Some(next) = take_early(&mut self.early, place as u32) {
-        place_batch(&mut self.heads, &mut self.early, next);
+      let next_place = at * per + self.heads[at].turn;
+      if let Some(next) = take_early(&mut self.early, next_place as u32) {
+        place_batch(&mut self.heads, &mut self.early, next, per);
       }
-      // The same place again: the batch given it may be empty.
+      // The same fragment again: the batch given it may be empty.
     }
   }
 
@@ -850,9 +870,9 @@ impl ScanReader {
   }
 
   /// End the run before it reads to the end, and wait for the executor
-  /// to finish it, so that the reader can run again. The batches asked
-  /// for are waited for and the coordinator told to stop, as on a
-  /// connection; the rows not read are dropped.
+  /// to finish it, so that the reader can run again. The coordinator is
+  /// told to stop at once, as on a connection, and the rows not read are
+  /// dropped.
   pub fn close(&mut self) {
     if !self.started {
       return;
@@ -929,6 +949,7 @@ impl ScanReader {
     self.ordered = args.ordered;
     self.descending = args.descending;
     self.receivers = 0;
+    self.per_fragment = 1;
     self.inbox = Some(Arc::clone(inbox));
     Ok(ScanWork {
       feed: Arc::clone(&self.feed),
@@ -952,19 +973,23 @@ impl ScanReader {
   }
 }
 
-/// A batch to its receiver's place in the merge, or to wait with the
-/// early ones if the receiver has one already.
+/// A batch to its fragment's place in the merge, `per` receivers to a
+/// fragment, or to wait with the early ones if the fragment has one
+/// already, or in a continuous run if its receiver's turn has not come.
 fn place_batch(
   heads: &mut Vec<MergeHead>,
   early: &mut Vec<FeedBatch>,
   batch: FeedBatch,
+  per: usize,
 ) {
   let place = batch.place as usize;
-  while heads.len() <= place {
+  let fragment = place / per;
+  while heads.len() <= fragment {
     heads.push(MergeHead::new());
   }
-  let head = &mut heads[place];
-  if head.batch.is_some() || head.ended {
+  let head = &mut heads[fragment];
+  let in_turn = place == fragment * per + head.turn;
+  if head.batch.is_some() || head.ended || !in_turn {
     early.push(batch);
     return;
   }
@@ -999,6 +1024,7 @@ fn spare_merge(
       spare.push(batch);
     }
     head.ended = false;
+    head.turn = 0;
     head.next_row = 0;
     head.head_at = IC_NO_HEAD;
   }
@@ -1120,13 +1146,13 @@ mod tests {
   fn batches_go_to_their_receivers_and_wait_their_turn() {
     let mut heads: Vec<MergeHead> = Vec::new();
     let mut early: Vec<FeedBatch> = Vec::new();
-    place_batch(&mut heads, &mut early, of_place(2, &[7], false));
+    place_batch(&mut heads, &mut early, of_place(2, &[7], false), 1);
     assert_eq!(heads.len(), 3, "room up to its place");
     assert!(heads[2].has_row());
     assert!(!heads[0].has_row() && !heads[1].has_row());
     // A second for the same receiver waits, behind any before it.
-    place_batch(&mut heads, &mut early, of_place(2, &[8], true));
-    place_batch(&mut heads, &mut early, of_place(2, &[9], true));
+    place_batch(&mut heads, &mut early, of_place(2, &[8], true), 1);
+    place_batch(&mut heads, &mut early, of_place(2, &[9], true), 1);
     assert_eq!(early.len(), 2);
     assert!(take_early(&mut early, 1).is_none());
     let next = take_early(&mut early, 2).expect("the next of place 2");
@@ -1134,7 +1160,7 @@ mod tests {
     assert!(next.last);
     // An ended receiver takes none.
     heads[0].ended = true;
-    place_batch(&mut heads, &mut early, of_place(0, &[5], false));
+    place_batch(&mut heads, &mut early, of_place(0, &[5], false), 1);
     assert!(heads[0].batch.is_none());
     // Made ready for another run, every batch a spare.
     let mut spare: Vec<FeedBatch> = Vec::new();
@@ -1143,6 +1169,38 @@ mod tests {
     assert!(!heads[0].ended);
     assert!(heads[2].batch.is_none());
     assert!(early.is_empty());
+  }
+
+  #[test]
+  fn a_continuous_fragments_batches_are_taken_in_their_turn() {
+    // Fragment 1's receivers are places 4 to 7. Its second batch, in
+    // place 5, comes before its first, in place 4: it waits.
+    let mut heads: Vec<MergeHead> = Vec::new();
+    let mut early: Vec<FeedBatch> = Vec::new();
+    place_batch(&mut heads, &mut early, of_place(5, &[2], false), 4);
+    assert_eq!(heads.len(), 2, "a head for each fragment");
+    assert!(heads[1].batch.is_none());
+    assert_eq!(early.len(), 1);
+    place_batch(&mut heads, &mut early, of_place(4, &[1], false), 4);
+    assert!(heads[1].has_row());
+    // The first read and its turn passed on: the second is in turn.
+    heads[1].batch = None;
+    heads[1].turn = 1;
+    let next = take_early(&mut early, 5).expect("the second batch");
+    place_batch(&mut heads, &mut early, next, 4);
+    assert!(heads[1].has_row());
+    // Round the four: the fifth batch is in place 4 again.
+    heads[1].batch = None;
+    heads[1].turn = 3;
+    place_batch(&mut heads, &mut early, of_place(4, &[5], false), 4);
+    assert!(heads[1].batch.is_none(), "place 7's turn, not 4's");
+    heads[1].turn = 0;
+    let fifth = take_early(&mut early, 4).expect("the fifth batch");
+    place_batch(&mut heads, &mut early, fifth, 4);
+    assert_eq!(
+      heads[1].batch.as_ref().map(|b| b.rows.clone()),
+      Some(vec![5])
+    );
   }
 
   #[test]

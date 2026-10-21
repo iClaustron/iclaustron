@@ -1957,8 +1957,9 @@ Exit for the continuous scan (agreed with the author, 2026-10-21):
   again.
 - A scan closed with fragments a batch ahead, and run again at once,
   reads every row once, none of them from the run closed.
-- A slow reader through an executor holds at most two batches of each
-  fragment, and the other scans go on.
+- A slow reader through an executor holds at most three batches of
+  each fragment, and the other scans go on (three, not two: corrected
+  as built, 2026-10-21).
 - `continuous` with a locking scan, and with `read_ahead`, refused with
   `IC_ERROR_NOT_SUPPORTED`.
 - The million-row scan counts what MySQL counts with it on, and is
@@ -1972,6 +1973,30 @@ Exit for the continuous scan (agreed with the author, 2026-10-21):
   the dissector, showing flag bit 2, four receivers per fragment and
   `SCAN_MORE_REQ` naming fragment records; unit tests for the k − 2
   rule, the batch sizes and the merge round the four receivers.
+
+Met 2026-10-21: built, and every test above passes, with phase 8's
+scan tests unchanged. The capture (chapter 05 §7.4,
+`~/captures/continuous.pcap`) shows each fragment record's batches
+strictly in turn round its four receivers, one name back for each
+batch but the last. The million rows, best of three, the rows counted
+alone (`continuous_a_scan_of_a_million_rows_on_and_off`):
+
+| Build | Case | Off | On | Faster |
+|---|---|---|---|---|
+| release | every row, every fragment at once | 65 ms | 44 ms | 33% |
+| release | every row, one fragment at a time | 281 ms | 157 ms | 45% |
+| release | every row, through an executor | 75 ms | 45 ms | 40% |
+| release | one row in a hundred | 22 ms | 22 ms | 0% |
+| debug | every row, every fragment at once | 403 ms | 401 ms | 1% |
+| debug | every row, one fragment at a time | 647 ms | 428 ms | 34% |
+
+What was looked into: the first timing turned each row's column into
+text and parsed it, and in a debug build that per-row work made the
+client the bottleneck, so a batch was always waiting and there was
+nothing for the continuous scan to save (2%). Counted alone, and in a
+release build, every case that returns every row is a third or more
+faster; with a filter that passes few rows the scan's time is spent in
+the data nodes, and the two are the same, as the author expected.
 
 Exit for the fanout pruning (agreed with the author, 2026-10-21), an
 integration group `fanout` on tables made as the tree's own test makes

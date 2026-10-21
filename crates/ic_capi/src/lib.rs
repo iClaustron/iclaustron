@@ -687,6 +687,10 @@ pub struct IcScanArgs {
   pub ordered: bool,
   /// For a scan of an ordered index: each range from its high end.
   pub descending: bool,
+  /// For a committed read: the continuous scan, four receivers for each
+  /// fragment scanned at once, which goes on scanning while the program
+  /// has its batches. Not with `read_ahead`.
+  pub continuous: bool,
 }
 
 /// One range of a scan of an ordered index (`IC_SCAN_RANGE`), its bounds
@@ -3193,6 +3197,7 @@ unsafe fn scan_args_from_c(args: *const IcScanArgs) -> Result<ScanArgs, i32> {
     read_ahead: given.read_ahead,
     ordered: given.ordered,
     descending: given.descending,
+    continuous: given.continuous,
     user_ref: given.user_ref as usize,
     ..ScanArgs::default()
   };
@@ -3211,7 +3216,7 @@ unsafe fn scan_args_from_c(args: *const IcScanArgs) -> Result<ScanArgs, i32> {
 
 /// Fill `args`, `size` bytes, with the defaults: a committed read of
 /// every fragment, batches as the configuration says, no transaction,
-/// no partition, no limit, no callback, in no order.
+/// no partition, no limit, no callback, in no order, not continuous.
 ///
 /// Leaves `args` as it is when `size` is smaller than this header's
 /// `IC_SCAN_ARGS`.
@@ -3238,6 +3243,7 @@ pub unsafe extern "C" fn ic_scan_args_init(args: *mut IcScanArgs, size: usize) {
     user_ref: std::ptr::null_mut(),
     ordered: false,
     descending: false,
+    continuous: false,
   };
   // SAFETY: the caller's promise; the struct fits.
   unsafe { args.write(value) };
@@ -3473,7 +3479,8 @@ pub unsafe extern "C" fn ic_apid_scan_free(
 ///
 /// Errors: `IC_ERROR_SCAN_ACTIVE` while a run is not over;
 /// `IC_ERROR_NOT_SUPPORTED` for an unknown lock, for `read_ahead`, which
-/// is for executors, and for a committed read given a transaction;
+/// is for executors, for a committed read given a transaction, and for
+/// `continuous` with a lock;
 /// `IC_ERROR_TRANSACTION_ACTIVE` for a transaction not started or not
 /// open; `IC_ERROR_INCONSISTENT_DATA` for `args` not filled by
 /// `ic_scan_args_init`.
@@ -5242,9 +5249,10 @@ pub unsafe extern "C" fn ic_scan_reader_free(reader: *mut IcScanReader) {
 ///
 /// Errors: `IC_ERROR_SCAN_ACTIVE` while the reader's last run is not
 /// over; `IC_ERROR_NOT_SUPPORTED` for a transaction or a callback in
-/// `args`, for `read_ahead` with a lock, and on the executor's own
-/// thread; `IC_ERROR_EXECUTOR_STOPPED`; `IC_ERROR_INCONSISTENT_DATA` for
-/// `args` not filled by `ic_scan_args_init`.
+/// `args`, for `read_ahead` or `continuous` with a lock, for the two
+/// together, and on the executor's own thread;
+/// `IC_ERROR_EXECUTOR_STOPPED`; `IC_ERROR_INCONSISTENT_DATA` for `args`
+/// not filled by `ic_scan_args_init`.
 ///
 /// # Safety
 ///
@@ -6935,6 +6943,7 @@ mod tests {
     assert_eq!(args.trans, IC_NO_TRANS);
     assert_eq!(args.partition, IC_NO_PARTITION);
     assert!(!args.read_ahead);
+    assert!(!args.continuous);
     assert!(args.callback.is_none());
     // SAFETY: filled by the init above.
     let crossed = unsafe { scan_args_from_c(&args) };
@@ -6943,6 +6952,11 @@ mod tests {
     assert_eq!(rust.lock, ScanLock::Committed);
     assert!(rust.trans.is_none() && rust.partition.is_none());
     assert!(rust.callback.is_none());
+    args.continuous = true;
+    // SAFETY: as above.
+    let crossed = unsafe { scan_args_from_c(&args) };
+    assert!(crossed.unwrap_or_default().continuous);
+    args.continuous = false;
     args.lock = IC_SCAN_LOCK_EXCLUSIVE;
     args.partition = 3;
     args.trans = 7;

@@ -1082,6 +1082,12 @@ typedef struct {
    For a scan of an ordered index: each range from its high end.
    */
   bool descending;
+  /*
+   For a committed read: the continuous scan, four receivers for each
+   fragment scanned at once, which goes on scanning while the program
+   has its batches. Not with `read_ahead`.
+   */
+  bool continuous;
 } IC_SCAN_ARGS;
 
 /*
@@ -2188,7 +2194,7 @@ int32_t ic_apid_conn_write(IC_APID_CONNECTION *conn,
 /*
  Fill `args`, `size` bytes, with the defaults: a committed read of
  every fragment, batches as the configuration says, no transaction,
- no partition, no limit, no callback, in no order.
+ no partition, no limit, no callback, in no order, not continuous.
 
  Leaves `args` as it is when `size` is smaller than this header's
  `IC_SCAN_ARGS`.
@@ -2313,7 +2319,8 @@ int32_t ic_apid_scan_free(IC_APID_CONNECTION *conn, IC_SCAN_ID scan);
 
  Errors: `IC_ERROR_SCAN_ACTIVE` while a run is not over;
  `IC_ERROR_NOT_SUPPORTED` for an unknown lock, for `read_ahead`, which
- is for executors, and for a committed read given a transaction;
+ is for executors, for a committed read given a transaction, and for
+ `continuous` with a lock;
  `IC_ERROR_TRANSACTION_ACTIVE` for a transaction not started or not
  open; `IC_ERROR_INCONSISTENT_DATA` for `args` not filled by
  `ic_scan_args_init`.
@@ -3102,9 +3109,10 @@ void ic_scan_reader_free(IC_SCAN_READER *reader);
 
  Errors: `IC_ERROR_SCAN_ACTIVE` while the reader's last run is not
  over; `IC_ERROR_NOT_SUPPORTED` for a transaction or a callback in
- `args`, for `read_ahead` with a lock, and on the executor's own
- thread; `IC_ERROR_EXECUTOR_STOPPED`; `IC_ERROR_INCONSISTENT_DATA` for
- `args` not filled by `ic_scan_args_init`.
+ `args`, for `read_ahead` or `continuous` with a lock, for the two
+ together, and on the executor's own thread;
+ `IC_ERROR_EXECUTOR_STOPPED`; `IC_ERROR_INCONSISTENT_DATA` for `args`
+ not filled by `ic_scan_args_init`.
 
  # Safety
 

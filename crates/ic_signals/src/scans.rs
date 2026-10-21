@@ -64,8 +64,13 @@ pub const IC_SCAN_MAX_LOCKED_ROWS: u32 = 992;
 /// Rows a batch of a committed-read scan may hold.
 /// Verify: chapter 05 §7.2.
 pub const IC_SCAN_MAX_COMMITTED_ROWS: u32 = 4000;
+/// Receivers a continuous scan gives each fragment scanned at once,
+/// four in a row in section 0; the receivers must be a multiple of it.
+/// Verify: chapter 05 §7.2, flag bit 2.
+pub const IC_SCAN_CONTINUOUS_RECEIVERS: u32 = 4;
 
 // Request flags, as bit positions in word 2.
+const IC_SCAN_CONTINUOUS_SHIFT: u32 = 2;
 const IC_SCAN_EXCLUSIVE_SHIFT: u32 = 8;
 const IC_SCAN_NO_DISK_SHIFT: u32 = 9;
 const IC_SCAN_HOLD_LOCK_SHIFT: u32 = 10;
@@ -79,10 +84,15 @@ const IC_SCAN_BATCH_ROWS_MASK: u32 = 0x3FF;
 const IC_SCAN_DIST_KEY_SHIFT: u32 = 26;
 const IC_SCAN_EXTENDED_CONF_SHIFT: u32 = 29;
 
-/// What a scan asks for, before it is made into the flags word. Bits
-/// 0 to 7, RonDB's extensions, stay 0 (chapter 05 §7.2).
+/// What a scan asks for, before it is made into the flags word. Of
+/// bits 0 to 7, RonDB's extensions, only bit 2 is set, for the
+/// continuous scan (chapter 05 §7.2).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ScanFlags {
+  /// The continuous scan: four receivers for each fragment scanned at
+  /// once, which goes on scanning after it has reported a batch. For
+  /// committed reads only.
+  pub continuous: bool,
   /// Exclusive locks; set with `hold_lock` and `keys`.
   pub exclusive: bool,
   /// The rows are in memory only, so the disk need not be read.
@@ -113,6 +123,7 @@ impl ScanFlags {
   /// The flags word, word 2.
   pub fn flags_word(&self) -> u32 {
     let mut info: u32 = 0;
+    info |= (self.continuous as u32) << IC_SCAN_CONTINUOUS_SHIFT;
     info |= (self.exclusive as u32) << IC_SCAN_EXCLUSIVE_SHIFT;
     info |= (self.no_disk as u32) << IC_SCAN_NO_DISK_SHIFT;
     info |= (self.hold_lock as u32) << IC_SCAN_HOLD_LOCK_SHIFT;
@@ -738,6 +749,12 @@ mod tests {
       ..ScanFlags::default()
     };
     assert_eq!(ours.flags_word(), (1 << 29) | (1 << 26));
+    let continuous = ScanFlags {
+      continuous: true,
+      committed: true,
+      ..ScanFlags::default()
+    };
+    assert_eq!(continuous.flags_word(), (1 << 11) | (1 << 2));
   }
 
   #[test]

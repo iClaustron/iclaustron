@@ -1159,6 +1159,158 @@ fn c_api_scan_on_a_connection_and_through_an_executor() {
   }
 }
 
+/// Read a connection's scan row by row: how many rows, and the sum of
+/// their ids.
+///
+/// # Safety
+///
+/// `conn`, `scan` and `rec` are alive; the scan's run has been started.
+unsafe fn read_all(
+  conn: *mut IcApidConnection,
+  scan: IcScanId,
+  rec: *const IcRecord,
+  id: u32,
+) -> (u64, u64) {
+  let mut rows: u64 = 0;
+  let mut ids: u64 = 0;
+  let mut more = true;
+  let mut len: usize = 0;
+  // SAFETY: the caller's promise.
+  unsafe {
+    loop {
+      let ret = ic_apid_conn_next_row(conn, scan, &mut more);
+      assert_eq!(ret, 0, "next row: {}", message(ret));
+      if !more {
+        break;
+      }
+      let row = ic_apid_scan_row(conn, scan, &mut len);
+      ids += get(rec, row, len, id).parse::<u64>().expect("an id");
+      rows += 1;
+    }
+  }
+  (rows, ids)
+}
+
+#[test]
+fn c_api_continuous_scan_on_a_connection_and_through_an_executor() {
+  let global = match connect() {
+    Some(global) => global,
+    None => return,
+  };
+  if setup_capi_scan_table().is_none() {
+    // SAFETY: the handle connect made.
+    unsafe { ic_apid_global_free(global) };
+    return;
+  }
+  let db = cs(IC_IT_DB);
+  let table_name = cs("capi_scan");
+  // SAFETY: every handle below is used while alive and freed once;
+  // every pointer is to a local or a row the library gave.
+  unsafe {
+    let mut conn: *mut IcApidConnection = std::ptr::null_mut();
+    assert_eq!(ic_apid_global_create_connection(global, &mut conn), 0);
+    let mut table: *mut IcTableDef = std::ptr::null_mut();
+    let ret = ic_apid_conn_table_bind(
+      conn,
+      db.as_ptr(),
+      table_name.as_ptr(),
+      &mut table,
+    );
+    assert_eq!(ret, 0, "bind: {}", message(ret));
+    let id = field(table, "id");
+    let mut rec: *mut IcRecord = std::ptr::null_mut();
+    assert_eq!(
+      ic_record_create_default(table, std::ptr::null(), 0, &mut rec),
+      0
+    );
+    let mut scan: IcScanId = 0;
+    assert_eq!(ic_apid_scan_create(conn, table, rec, &mut scan), 0);
+    let mut args = std::mem::MaybeUninit::<IcScanArgs>::uninit();
+    ic_scan_args_init(args.as_mut_ptr(), std::mem::size_of::<IcScanArgs>());
+    let mut args = args.assume_init();
+    assert!(!args.continuous, "off by default");
+    // Small batches, so that each fragment's batches go round its four
+    // receivers more than once.
+    args.continuous = true;
+    args.batch_rows = 5;
+    args.timeout_ms = 30_000;
+    let mut run: u32 = 0;
+    while run < 2 {
+      assert_eq!(ic_apid_conn_start_scan(conn, scan, &args), 0);
+      let (rows, ids) = read_all(conn, scan, rec, id);
+      assert_eq!(rows, IC_IT_CAPI_SCAN_ROWS);
+      assert_eq!(ids, id_sum());
+      assert_eq!(ic_apid_scan_error(conn, scan), 0);
+      run += 1;
+    }
+    // For committed reads only.
+    args.lock = IC_SCAN_LOCK_SHARED;
+    assert_eq!(
+      ic_apid_conn_start_scan(conn, scan, &args),
+      IC_ERROR_NOT_SUPPORTED
+    );
+    args.lock = IC_SCAN_LOCK_COMMITTED;
+    assert_eq!(ic_apid_scan_free(conn, scan), 0);
+
+    // Through an executor, with a reader.
+    let mut options = std::mem::MaybeUninit::<IcExecutorOptions>::uninit();
+    ic_executor_options_init(
+      options.as_mut_ptr(),
+      std::mem::size_of::<IcExecutorOptions>(),
+    );
+    let options = options.assume_init();
+    let mut executor: *mut IcApidExecutor = std::ptr::null_mut();
+    let ret = ic_apid_executor_start(global, &options, &mut executor);
+    assert_eq!(ret, 0, "start: {}", message(ret));
+    let mut submitter: *mut IcApidSubmitter = std::ptr::null_mut();
+    assert_eq!(ic_apid_executor_submitter(executor, &mut submitter), 0);
+    let mut shape: *mut IcScanShape = std::ptr::null_mut();
+    assert_eq!(ic_scan_shape_create(table, rec, &mut shape), 0);
+    let mut reader: *mut IcScanReader = std::ptr::null_mut();
+    assert_eq!(ic_scan_reader_create(shape, &mut reader), 0);
+    let ret = ic_apid_submitter_scan(submitter, reader, &args);
+    assert_eq!(ret, 0, "scan: {}", message(ret));
+    let mut more = true;
+    let mut rows: u64 = 0;
+    let mut ids: u64 = 0;
+    let mut len: usize = 0;
+    loop {
+      let ret = ic_scan_reader_next_row(reader, &mut more);
+      assert_eq!(ret, 0, "next row: {}", message(ret));
+      if !more {
+        break;
+      }
+      let row = ic_scan_reader_row(reader, &mut len);
+      ids += get(rec, row, len, id).parse::<u64>().expect("an id");
+      rows += 1;
+    }
+    assert_eq!(rows, IC_IT_CAPI_SCAN_ROWS);
+    assert_eq!(ids, id_sum());
+    assert_eq!(ic_scan_reader_error(reader), 0);
+    // Not with read_ahead, nor with a lock.
+    args.read_ahead = true;
+    assert_eq!(
+      ic_apid_submitter_scan(submitter, reader, &args),
+      IC_ERROR_NOT_SUPPORTED
+    );
+    args.read_ahead = false;
+    args.lock = IC_SCAN_LOCK_EXCLUSIVE;
+    assert_eq!(
+      ic_apid_submitter_scan(submitter, reader, &args),
+      IC_ERROR_NOT_SUPPORTED
+    );
+
+    ic_scan_reader_free(reader);
+    ic_scan_shape_free(shape);
+    ic_apid_submitter_free(submitter);
+    ic_apid_executor_free(executor);
+    ic_record_free(rec);
+    ic_table_def_free(table);
+    ic_apid_conn_free(conn);
+    ic_apid_global_free(global);
+  }
+}
+
 /// Rows in the `capi_range` table, and how many share each value of a.
 const IC_IT_CAPI_RANGE_ROWS: u64 = 300;
 const IC_IT_CAPI_RANGE_EACH: u64 = 10;

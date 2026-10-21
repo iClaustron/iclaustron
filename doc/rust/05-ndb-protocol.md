@@ -1376,7 +1376,9 @@ NTS = `src/ndbapi/NdbTransactionScan.cpp`, IF = `src/ndbapi/Ndbif.cpp`.
     (the author, 2026-10-20). Ours names batch k back once batch k − 2
     of the fragment has been handed back (chapter 04), which gives the
     four roles: k − 1 being read, k waiting behind it, k + 1 being
-    filled, and k + 2's receiver, k − 2's, cleared.
+    filled, and k + 2's receiver, k − 2's, cleared. A slower reader
+    still holds k − 2: then k − 1 and k wait behind it, k + 1 is
+    filled, and the fragment waits until k − 2 is handed back.
 
     A fragment's four receivers are four in a row in section 0 (the
     author, 2026-10-20): ids 0 to 3 are the first fragment scanned at
@@ -1979,6 +1981,35 @@ Closing at once (phase 10, 2026-10-21), a capture of our own runs of
   since the batch's receiver waited for its takeover. Reads of the
   rows the scan had held and not taken over, by another transaction
   without waiting, each found its row free before the commit.
+
+The continuous scan (phase 10, 2026-10-21), a capture of our own run of
+`continuous_scan_reads_every_row_on_a_connection` (kept as
+`~/captures/continuous.pcap`), 2 500 rows over 8 fragments:
+
+- **The request.** Flag bit 2 set (the extensions byte 0x04) on every
+  continuous run, and not on the plain one after them. With every
+  fragment at once, section 0 held 32 receivers, four for each, and the
+  batch bytes were 16 384, parameter 800 over the 32; with one or two
+  fragments at once, 4 or 8 receivers, the bytes stayed at parameter
+  801's 32 768.
+- **A fragment's batches go round its four receivers.** In the run of
+  7-row batches over every fragment, 363 batches came, each fragment
+  record's strictly in turn from its first receiver, round and round
+  (41 to 48 batches a record). Every entry of a record carried the same
+  coordinator pointer, its fragment record; each of the 355 batches not
+  last was named back once, by that pointer, and the 8 last, with the
+  null pointer, were not.
+- **One record, the table's fragments one after another.** With one
+  fragment at once in batches of 100, the 30 batches went round the
+  four receivers seven and a half times, the record going on from one
+  fragment of the table to the next without a break in the turn: a
+  fragment's short last batch, 25 rows, was followed by the next
+  fragment's first in the next receiver. The last batch, 81 rows, came
+  in the record's second receiver with the null pointer.
+- **A fragment whose rows fit one batch** ends in its first receiver:
+  in the run of 384-row batches each of the 8 fragments, about 310
+  rows, came in one batch that was its last, at place 0 of its four,
+  and nothing was named back.
 
 ## 8. Dictionary
 

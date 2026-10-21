@@ -319,9 +319,11 @@ while !conn.scan_done(scan) {
   executor by the reader (the author, 2026-10-21; chapter 05 §7.2,
   flag bit 2). The fragment's four receivers then hold one batch being
   read, one waiting behind it, one the fragment is filling ahead, and
-  one cleared for the next: the application or the reader holds at
-  most two batches of each fragment, and memory stays within the four
-  receivers' batches.
+  one cleared for the next. A slower application holds a second batch
+  waiting, three of the fragment in all, and the fragment then waits
+  with the fourth once it is filled, so memory stays within the four
+  receivers' batches (corrected 2026-10-21, as built: two was miscounted
+  when the rule was agreed).
 - **Batches** (`ScanBatchId`): each receiver, one per fragment scanned
   in parallel, delivers its batch when the whole of it has come, onto
   the ready list (`get_next_scan_batch`) or to the scan's callback,
@@ -444,7 +446,7 @@ while reader.next_row()? {
   every scan. A receiver has at most one batch with the reader, so
   memory stays within the receivers times the batch bytes. In a
   continuous scan the batch handed back lets the fragment's batch two
-  on be named back, and a fragment has at most two batches with the
+  on be named back, and a fragment has at most three batches with the
   reader (`ScanArgs::continuous`, "Scans"). A slow
   reader stalls only its own receivers: the executor's loop goes on
   with everything else.
@@ -463,8 +465,8 @@ while reader.next_row()? {
   holds each batch and hands it back itself. It is refused with
   `ScanArgs::continuous` too (`IC_ERROR_NOT_SUPPORTED`; the author,
   2026-10-21): the continuous scan reads ahead already, the reader
-  holding two batches of a fragment while it fills a third, so a scan
-  has one way to read ahead and stays within parameter 800.
+  holding up to three batches of a fragment while it fills a fourth,
+  so a scan has one way to read ahead and stays within parameter 800.
 - **Waking**: the reader sleeps on a condition of its own while it has
   no batch. A buffer handed back wakes the executor through its inbox,
   on a list of its own, which neither the in-flight limit nor a full

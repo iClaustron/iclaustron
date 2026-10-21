@@ -1122,7 +1122,8 @@ impl Submitter {
   /// connection's scan; `trans` and `callback` are refused with
   /// `IC_ERROR_NOT_SUPPORTED`, as an executor's scan is in no
   /// transaction of the application's and its batches go to the
-  /// reader, and so is `read_ahead` for a locking scan. `ordered` and
+  /// reader, and so are `read_ahead` and `continuous` for a locking
+  /// scan, and the two together. `ordered` and
   /// `descending` are for a shape over an ordered index, as on a
   /// connection, the reader merging an ordered run. `timeout_ms`
   /// counts from now. A reader whose run is not over is refused with
@@ -1138,9 +1139,11 @@ impl Submitter {
       return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
     }
     let locking = args.lock != ScanLock::Committed;
+    let ahead = args.read_ahead || args.continuous;
     if args.trans.is_some()
       || args.callback.is_some()
-      || (args.read_ahead && locking)
+      || (ahead && locking)
+      || (args.read_ahead && args.continuous)
     {
       return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
     }
@@ -1838,9 +1841,9 @@ impl Runner {
       return;
     }
     self.shared.scans.fetch_add(1, Ordering::Relaxed);
-    let receivers = match self.conn.scan(scan) {
-      Some(running) => running.parallelism(),
-      None => 0,
+    let (receivers, per_fragment) = match self.conn.scan(scan) {
+      Some(running) => (running.receivers(), running.per_fragment()),
+      None => (0, 1),
     };
     // From here the reader may nudge. A close asked for meanwhile is
     // seen now, as it found no flight to nudge.
@@ -1849,6 +1852,7 @@ impl Runner {
       if state.run == work.run && !state.done {
         state.flight = Some(flight as u32);
         state.receivers = receivers;
+        state.per_fragment = per_fragment;
         state.closing
       } else {
         true

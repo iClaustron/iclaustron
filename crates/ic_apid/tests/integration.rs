@@ -6535,12 +6535,14 @@ fn scan_index_pruned_to_one_partition() {
 
 /// Check an ordered scan of each index `ix_<column>` of `table`, its key
 /// record over the column, both ways, against MySQL's `ORDER BY` of the
-/// column. The faults found, by column.
+/// column, a continuous scan if `continuous`. The faults found, by
+/// column.
 fn ordered_faults(
   conn: &mut ApidConnection,
   t: &Table,
   table: &str,
   columns: &[&str],
+  continuous: bool,
 ) -> Vec<String> {
   let mut faults: Vec<String> = Vec::new();
   for column in columns {
@@ -6561,6 +6563,7 @@ fn ordered_faults(
       let args = ScanArgs {
         ordered: true,
         descending,
+        continuous,
         batch_rows: 3,
         timeout_ms: IC_IT_SCAN_WAIT_MS as u32,
         ..ScanArgs::default()
@@ -6645,7 +6648,7 @@ fn scan_index_ordered_by_every_type() {
   }
   let mut conn = cluster.global.create_connection().expect("connection");
   let t = bind(&mut conn, "ordt");
-  let faults = ordered_faults(&mut conn, &t, "ordt", &columns);
+  let faults = ordered_faults(&mut conn, &t, "ordt", &columns, false);
   assert!(faults.is_empty(), "{}", first_faults(faults));
   assert_eq!(conn.unexpected(), 0);
 }
@@ -6794,7 +6797,7 @@ fn scan_index_ordered_by_each_latin1_collation() {
   };
   let mut conn = cluster.global.create_connection().expect("connection");
   let t = bind(&mut conn, "ordl");
-  let faults = ordered_faults(&mut conn, &t, "ordl", &names);
+  let faults = ordered_faults(&mut conn, &t, "ordl", &names, false);
   assert!(faults.is_empty(), "{}", first_faults(faults));
   // A range in a collation's order: from 'ae' up to but not 'b' in
   // latin1_german2_ci, where 'ä' is 'ae'.
@@ -6898,7 +6901,7 @@ fn scan_index_ordered_by_unicode_collations() {
   }
   let mut conn = cluster.global.create_connection().expect("connection");
   let t = bind(&mut conn, "ordu");
-  let faults = ordered_faults(&mut conn, &t, "ordu", &names);
+  let faults = ordered_faults(&mut conn, &t, "ordu", &names, false);
   assert!(faults.is_empty(), "{}", first_faults(faults));
   assert_eq!(conn.unexpected(), 0);
 }
@@ -7331,12 +7334,13 @@ const IC_IT_BIG_BATCH: i64 = 250;
 /// Threads that fill it.
 const IC_IT_BIG_WRITERS: i64 = 16;
 
-#[test]
-fn exit_a_scan_of_a_million_rows_counts_what_mysql_counts() {
-  let cluster = match cluster() {
-    Some(cluster) => cluster,
-    None => return,
-  };
+/// Make the `big` table afresh, id and val, and fill it with
+/// `IC_IT_BIG_ROWS` rows through `submitter`, sixteen threads a
+/// transaction of 250 writes at a time; a million rows of two integers
+/// take about 60 MB a data node (doc/dev-cluster.md). The table, and
+/// its rows and the sum of val as MySQL counts them; `None` without a
+/// MySQL client.
+fn fill_big_table(submitter: &Submitter) -> Option<(Table, i64, i64)> {
   let sql = format!(
     "CREATE DATABASE IF NOT EXISTS {db};
      DROP TABLE IF EXISTS {db}.big;
@@ -7346,15 +7350,8 @@ fn exit_a_scan_of_a_million_rows_counts_what_mysql_counts() {
      ) ENGINE=NDB;",
     db = IC_IT_DB
   );
-  if mysql(&sql).is_none() {
-    return;
-  }
-  // Filled through an executor by sixteen threads, a transaction of
-  // 250 writes at a time; a million rows of two integers take about
-  // 60 MB a data node (doc/dev-cluster.md).
-  let executor = executor_with(&cluster, 400, 4000);
-  let submitter = executor.submitter();
-  let t = bind_through(&submitter, "big");
+  mysql(&sql)?;
+  let t = bind_through(submitter, "big");
   let shape = OpShape::new(&t.def, &t.rec, &t.rec).expect("a shape");
   let start = time::gethrtime();
   let batches = IC_IT_BIG_ROWS / IC_IT_BIG_BATCH;
@@ -7403,6 +7400,22 @@ fn exit_a_scan_of_a_million_rows_counts_what_mysql_counts() {
   let counted = count_of(&format!("SELECT COUNT(*) FROM {}.big", db));
   let summed = count_of(&format!("SELECT SUM(val) FROM {}.big", db));
   assert_eq!(counted, IC_IT_BIG_ROWS, "what MySQL counts");
+  Some((t, counted, summed))
+}
+
+#[test]
+fn exit_a_scan_of_a_million_rows_counts_what_mysql_counts() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  let executor = executor_with(&cluster, 400, 4000);
+  let submitter = executor.submitter();
+  let (t, counted, summed) = match fill_big_table(&submitter) {
+    Some(filled) => filled,
+    None => return,
+  };
+  let db = IC_IT_DB;
 
   // Parallel over every fragment, on a connection, row by row.
   let mut conn = cluster.global.create_connection().expect("connection");
@@ -9543,4 +9556,446 @@ fn auto_increment_a_table_without_a_primary_key_works_by_its_hidden_key() {
   .expect("a MySQL client");
   assert_eq!(count_where("ai_nopk", "b = 'v'"), 19);
   assert_eq!(count_where("ai_nopk", "1 = 1"), 25);
+}
+
+// ---- The continuous scan (chapter 06, phase 10) ----
+
+/// A continuous committed read in batches of `batch_rows`, 0 for the
+/// configuration's, closed by its deadline if it hangs.
+fn continuous(batch_rows: u32) -> ScanArgs {
+  ScanArgs {
+    continuous: true,
+    batch_rows,
+    timeout_ms: IC_IT_SCAN_WAIT_MS as u32,
+    ..ScanArgs::default()
+  }
+}
+
+#[test]
+fn continuous_scan_reads_every_row_on_a_connection() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_scan_table().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("connection");
+  let t = bind(&mut conn, "scan");
+  let scan = conn.create_scan(&t.def, &t.rec).expect("create the scan");
+  // Every fragment at once, and one or two at a time in small batches,
+  // so that each fragment's batches go round its four receivers many
+  // times, the fifth, the ninth and later in its first again, and a
+  // receiver's four go on from one fragment of the table to the next.
+  for (parallelism, batch_rows) in [(0u32, 0u32), (1, 100), (2, 100), (0, 7)] {
+    let args = ScanArgs {
+      parallelism,
+      ..continuous(batch_rows)
+    };
+    let (ids, batches, error) = scan_ids(&mut conn, &t, scan, &args);
+    let what = format!("parallelism {}, {} rows", parallelism, batch_rows);
+    assert!(error.is_none(), "{}: {:?}", what, error);
+    assert!(every_row_once(&ids), "{}: {} rows", what, ids.len());
+    let run = conn.scan(scan).expect("the scan");
+    assert!(run.is_continuous(), "{}", what);
+    assert_eq!(run.receivers(), 4 * run.parallelism(), "{}", what);
+    if batch_rows == 100 {
+      // At most 100 rows a batch: at least 25 batches, more than four
+      // for each set of four receivers.
+      assert!(batches >= 25, "{}: {} batches", what, batches);
+    }
+    println!("{}: {} batches", what, batches);
+  }
+  // Row by row, as next_row reads it.
+  conn.start_scan(scan, &continuous(50)).expect("start");
+  let mut ids: Vec<i64> = Vec::new();
+  while conn.next_row(scan).expect("a row") {
+    ids.push(t.get(conn.scan_row(scan), "id").parse().expect("an id"));
+  }
+  assert!(every_row_once(&ids), "row by row: {} rows", ids.len());
+  // Off by default.
+  let (ids, _, error) = scan_ids(&mut conn, &t, scan, &ScanArgs::default());
+  assert!(error.is_none(), "{:?}", error);
+  assert!(every_row_once(&ids), "{} rows", ids.len());
+  assert!(!conn.scan(scan).expect("the scan").is_continuous());
+  assert_eq!(conn.unexpected(), 0);
+  conn.free_scan(scan).expect("free the scan");
+}
+
+#[test]
+fn continuous_scan_through_an_executor() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_scan_table().is_none() || setup_rng_table().is_none() {
+    return;
+  }
+  let executor = executor_with(&cluster, 400, 4000);
+  let submitter = executor.submitter();
+  let (t, shape) = scan_through(&submitter);
+  let mut reader = ScanReader::new(&shape);
+  for batch_rows in [100u32, 0] {
+    // The same reader, run after run.
+    let mut run: u32 = 0;
+    while run < 2 {
+      submitter
+        .scan(&mut reader, &continuous(batch_rows))
+        .expect("submit the scan");
+      let (ids, error) = reader_ids(&mut reader, &t);
+      assert!(error.is_none(), "{} rows: {:?}", batch_rows, error);
+      assert!(every_row_once(&ids), "{}: {} rows", batch_rows, ids.len());
+      run += 1;
+    }
+  }
+  // An index's ranges, unordered and ordered both ways, in small
+  // batches.
+  let rng = bind_through(&submitter, "rng");
+  let columns = ["a", "b"];
+  let ab_shape = index_shape(&submitter, &rng, "rng", "ix_ab", &columns);
+  let key_rec = record_over(&rng, &columns);
+  let mut index_reader = ScanReader::new(&ab_shape);
+  let mut faults: Vec<String> = Vec::new();
+  for case in &IC_IT_AB_RANGES {
+    let ranks = mysql_ranks("rng", &rank_by("a, b"), case.filter);
+    let low = bound_row(&rng, &key_rec, &columns, case.low);
+    let high = bound_row(&rng, &key_rec, &columns, case.high);
+    for (ordered, descending) in [(false, false), (true, false), (true, true)] {
+      index_reader
+        .add_range(&case.range, &low, &high)
+        .expect("add the range");
+      let args = ScanArgs {
+        ordered,
+        descending,
+        ..continuous(5)
+      };
+      submitter
+        .scan(&mut index_reader, &args)
+        .expect("submit the scan");
+      let (rows, error) = reader_rows(&mut index_reader, &rng);
+      let what =
+        format!("{} ordered {} desc {}", case.filter, ordered, descending);
+      if let Some(e) = error {
+        faults.push(format!("{}: error {} {}", what, e.code, e.message()));
+        continue;
+      }
+      for fault in order_faults(&rows, &ranks, ordered, descending) {
+        faults.push(format!("{}: {}", what, fault));
+      }
+    }
+  }
+  assert!(faults.is_empty(), "{}", first_faults(faults));
+}
+
+#[test]
+fn continuous_scan_ordered_by_each_latin1_collation() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  let names = match setup_latin1_table() {
+    Some(names) => names,
+    None => return,
+  };
+  // On a connection: the merge reads each fragment's four receivers in
+  // turn, in batches of three rows.
+  let mut conn = cluster.global.create_connection().expect("connection");
+  let t = bind(&mut conn, "ordl");
+  let faults = ordered_faults(&mut conn, &t, "ordl", &names, true);
+  assert!(faults.is_empty(), "{}", first_faults(faults));
+  assert_eq!(conn.unexpected(), 0);
+  // Through an executor, the reader merging.
+  let executor = executor_with(&cluster, 400, 4000);
+  let submitter = executor.submitter();
+  let t = bind_through(&submitter, "ordl");
+  let mut faults: Vec<String> = Vec::new();
+  for column in &names {
+    let name = format!("ix_{}", column);
+    let shape = index_shape(&submitter, &t, "ordl", &name, &[*column]);
+    let mut reader = ScanReader::new(&shape);
+    let ranks = mysql_ranks("ordl", &rank_by(column), "TRUE");
+    for descending in [false, true] {
+      let args = ScanArgs {
+        ordered: true,
+        descending,
+        ..continuous(3)
+      };
+      submitter.scan(&mut reader, &args).expect("submit the scan");
+      let (rows, error) = reader_rows(&mut reader, &t);
+      let what = format!("executor {} desc {}", column, descending);
+      if let Some(e) = error {
+        faults.push(format!("{}: error {} {}", what, e.code, e.message()));
+        continue;
+      }
+      for fault in order_faults(&rows, &ranks, true, descending) {
+        faults.push(format!("{}: {}", what, fault));
+      }
+    }
+  }
+  assert!(faults.is_empty(), "{}", first_faults(faults));
+}
+
+#[test]
+fn continuous_scan_closed_with_fragments_a_batch_ahead() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_scan_table().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("connection");
+  let t = bind(&mut conn, "scan");
+  let scan = conn.create_scan(&t.def, &t.rec).expect("create the scan");
+  let mut run: u32 = 0;
+  while run < 3 {
+    conn.start_scan(scan, &continuous(50)).expect("start");
+    let _ = conn.send_queries(true);
+    // A batch taken and kept, while each fragment goes on into its
+    // next receiver; then the close.
+    let batch = first_batch(&mut conn);
+    let start = time::gethrtime();
+    while time::millis_elapsed(start, time::gethrtime()) < 20 {
+      conn.poll(5);
+    }
+    conn.close_scan(scan).expect("close");
+    until_done(&mut conn, scan);
+    let closed = conn.scan(scan).expect("the scan");
+    assert!(closed.error().is_none(), "{:?}", closed.error());
+    conn
+      .release_scan_batch(batch)
+      .expect("a stale batch is passed over");
+    // Run again at once: every row once, none of the closed run's.
+    let (ids, _, error) = scan_ids(&mut conn, &t, scan, &continuous(50));
+    assert!(error.is_none(), "{:?}", error);
+    assert!(every_row_once(&ids), "{} rows", ids.len());
+    run += 1;
+  }
+  println!(
+    "signals of closed runs dropped as late: {}",
+    conn.late_scan_signals()
+  );
+  assert_eq!(conn.unexpected(), 0);
+}
+
+#[test]
+fn continuous_scan_a_slow_reader_stalls_only_its_own_scan() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_scan_table().is_none() {
+    return;
+  }
+  // Two scans at a time for six readers: four wait their turn.
+  let options = ExecutorOptions {
+    scans: 2,
+    ..ExecutorOptions::default()
+  };
+  let executor = Executor::start(&cluster.global, &options).expect("executor");
+  let submitter = executor.submitter();
+  let (t, shape) = scan_through(&submitter);
+  // A reader that reads one row and then holds its batch for a while;
+  // its fragments fill their other receivers and then wait.
+  let mut slow = ScanReader::new(&shape);
+  submitter
+    .scan(&mut slow, &continuous(100))
+    .expect("submit the slow one");
+  assert!(slow.next_row().expect("a row"));
+  let held = time::gethrtime();
+  std::thread::scope(|scope| {
+    let mut handles = Vec::new();
+    let mut k: u32 = 0;
+    while k < 5 {
+      let mine = executor.submitter();
+      let (t, shape) = (&t, &shape);
+      handles.push(scope.spawn(move || {
+        let mut reader = ScanReader::new(shape);
+        mine.scan(&mut reader, &continuous(100)).expect("submit");
+        let (ids, error) = reader_ids(&mut reader, t);
+        assert!(error.is_none(), "{:?}", error);
+        assert!(every_row_once(&ids), "{} rows", ids.len());
+      }));
+      k += 1;
+    }
+    for handle in handles {
+      handle.join().expect("a reader thread");
+    }
+  });
+  let others = time::millis_elapsed(held, time::gethrtime());
+  println!("five continuous scans while one was held: {} ms", others);
+  // The slow one goes on where it stopped.
+  let (ids, error) = reader_ids(&mut slow, &t);
+  assert!(error.is_none(), "{:?}", error);
+  assert_eq!(ids.len() as i64, IC_IT_SCAN_ROWS - 1);
+  assert_eq!(executor.stats().scans, 6);
+}
+
+#[test]
+fn continuous_scan_refusals() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_scan_table().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("connection");
+  let t = bind(&mut conn, "scan");
+  let scan = conn.create_scan(&t.def, &t.rec).expect("create the scan");
+  // Committed reads only, never a scan that locks.
+  for lock in [ScanLock::Shared, ScanLock::Exclusive] {
+    let args = ScanArgs {
+      lock,
+      ..continuous(0)
+    };
+    let e = conn.start_scan(scan, &args).expect_err("a locking scan");
+    assert_eq!(e.code, err::IC_ERROR_NOT_SUPPORTED, "{:?}", lock);
+    assert_eq!(conn.scan(scan).expect("the scan").state(), ScanState::Idle);
+  }
+  // Through an executor: not with a lock, nor with read_ahead.
+  let executor = executor_with(&cluster, 400, 4000);
+  let submitter = executor.submitter();
+  let (_, shape) = scan_through(&submitter);
+  let mut reader = ScanReader::new(&shape);
+  let locked = ScanArgs {
+    lock: ScanLock::Shared,
+    ..continuous(0)
+  };
+  let ahead = ScanArgs {
+    read_ahead: true,
+    ..continuous(0)
+  };
+  for args in [locked, ahead] {
+    let e = submitter.scan(&mut reader, &args).expect_err("refused");
+    assert_eq!(e.code, err::IC_ERROR_NOT_SUPPORTED);
+    assert!(reader.is_done(), "a refused run never began");
+  }
+}
+
+/// A scan of the million rows, the continuous scan `on` or off, with
+/// time enough.
+fn million(on: bool) -> ScanArgs {
+  ScanArgs {
+    continuous: on,
+    timeout_ms: 300_000,
+    ..ScanArgs::default()
+  }
+}
+
+/// Print how much faster a scan was with the continuous scan on, from
+/// the best times `[off, on]`; where every row is returned, a gain short
+/// of 10% is to be looked into (chapter 06, phase 10's exit).
+fn report_gain(what: &str, best: [u64; 2], every_row: bool) {
+  let off = best[0].max(1);
+  let faster = 100 - (best[1] * 100 / off).min(100);
+  println!(
+    "{}: continuous off {} ms, on {} ms: {}% faster",
+    what, best[0], best[1], faster
+  );
+  if every_row && faster < 10 {
+    println!("  less than 10% faster: to be looked into");
+  }
+}
+
+#[test]
+fn continuous_a_scan_of_a_million_rows_on_and_off() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  let executor = executor_with(&cluster, 400, 4000);
+  let submitter = executor.submitter();
+  let (t, counted, summed) = match fill_big_table(&submitter) {
+    Some(filled) => filled,
+    None => return,
+  };
+  let db = IC_IT_DB;
+  // A filter that passes one row in a hundred, val below 10.
+  let val = t.def.field_id("val").expect("val");
+  let mut b = ProgramBuilder::new(&t.def);
+  let column = b.column(val);
+  let limit = b.input(0);
+  let below = b.compare(Cmp::Lt, column, limit);
+  let few = b.finish(Some(below)).expect("the filter");
+  let passed =
+    count_of(&format!("SELECT COUNT(*) FROM {}.big WHERE val < 10", db));
+  let mut conn = cluster.global.create_connection().expect("connection");
+  let scan = conn.create_scan(&t.def, &t.rec).expect("create the scan");
+  conn.set_scan_input(scan, 0, 10).expect("the bound");
+  // Right first, untimed: a continuous run counts and sums what MySQL
+  // does.
+  conn
+    .start_scan(scan, &million(true))
+    .expect("start the scan");
+  let mut rows: i64 = 0;
+  let mut sum: i64 = 0;
+  while conn.next_row(scan).expect("a row") {
+    rows += 1;
+    sum += t
+      .get(conn.scan_row(scan), "val")
+      .parse::<i64>()
+      .expect("val");
+  }
+  assert_eq!(rows, counted, "the scan counts what MySQL counts");
+  assert_eq!(sum, summed, "and sums what it sums");
+  // Then timed, the rows counted alone: the text of a row's column took
+  // most of the time otherwise, and a client busy with its rows never
+  // waits for a batch, which is what the continuous scan saves. Each
+  // case off and on, three times, the best of each kept.
+  let cases: [(&str, u32, bool, i64); 3] = [
+    ("every row, every fragment at once", 0, false, counted),
+    ("every row, one fragment at a time", 1, false, counted),
+    ("one row in a hundred", 0, true, passed),
+  ];
+  for (what, parallelism, filtered, expected) in cases {
+    let program = if filtered { Some(&few) } else { None };
+    conn.set_scan_program(scan, program).expect("the program");
+    let mut best: [u64; 2] = [u64::MAX; 2];
+    let mut round: u32 = 0;
+    while round < 3 {
+      for on in [false, true] {
+        let args = ScanArgs {
+          parallelism,
+          ..million(on)
+        };
+        let start = time::gethrtime();
+        conn.start_scan(scan, &args).expect("start the scan");
+        let mut rows: i64 = 0;
+        while conn.next_row(scan).expect("a row") {
+          rows += 1;
+        }
+        let took = time::millis_elapsed(start, time::gethrtime());
+        assert_eq!(rows, expected, "{}", what);
+        let k = on as usize;
+        best[k] = best[k].min(took);
+      }
+      round += 1;
+    }
+    report_gain(what, best, !filtered);
+  }
+  // Through an executor, off and on.
+  let scan_shape = ScanShape::new(&t.def, &t.rec).expect("a scan shape");
+  let mut reader = ScanReader::new(&scan_shape);
+  let mut best: [u64; 2] = [u64::MAX; 2];
+  let mut round: u32 = 0;
+  while round < 3 {
+    for on in [false, true] {
+      let start = time::gethrtime();
+      submitter.scan(&mut reader, &million(on)).expect("submit");
+      let mut through: i64 = 0;
+      while reader.next_row().expect("a row") {
+        through += 1;
+      }
+      let took = time::millis_elapsed(start, time::gethrtime());
+      assert_eq!(through, counted, "through an executor too");
+      let k = on as usize;
+      best[k] = best[k].min(took);
+    }
+    round += 1;
+  }
+  report_gain("every row, through an executor", best, true);
+  assert_eq!(conn.unexpected(), 0);
+  // The data nodes' memory back for the other groups.
+  mysql(&format!("DROP TABLE IF EXISTS {}.big", db));
 }
