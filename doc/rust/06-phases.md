@@ -541,8 +541,9 @@ would have no suffix gets `_ORD` for an order, to which nothing comes
 back, or `_REP` for a report. Constants are `IC_SIG_<NAME>`, Rust types
 CamelCase (`KeyOpReq`), blocks `IC_BLOCK_<NAME>`.
 
-The names, by number, drafted and applied on 2026-10-08 (Q11: the
-author may still change any of them, which is one more rename):
+The names, by number, drafted and applied on 2026-10-08 (Q11, settled
+2026-10-22: they stand; the author may still change any of them, which
+is one more rename):
 
 | Group | Number → our name |
 |---|---|
@@ -749,7 +750,7 @@ From reading the reference (chapter 05 §6.8), most important first:
    offline index silently finds nothing.
 7. A 241 or 284 on an index operation invalidates the index in the
    cache, as one on a table does.
-8. Our rules, unless the author objects (Q12): an update through an
+8. Our rules (Q12, settled 2026-10-22): an update through an
    index whose attribute record holds an indexed column is refused (the
    reference takes indexed columns from the key row, so it cannot change
    them either); a write through an index stays refused (the reference
@@ -2091,10 +2092,7 @@ ended are counted by `late_scan_signals`, apart from `unexpected`.
 After phase 10 the work stops (the author, 2026-10-20): to harden the
 code, and to find out, with early applications, whether anything more
 is needed for a first version. What it holds is gathered as it is
-found. Known now, to weigh there:
-
-- chapter 10's open questions, most of them settled in fact (Q2, Q5,
-  Q11, Q12).
+found; the list known at its start is worked through in §11.3.
 
 ### 11.1 The author's first review (2026-10-21)
 
@@ -2224,6 +2222,14 @@ held, two of them in part:
   reader's `next_row` loop already; a stream alone would give async
   code scans but no futures for key operations, and the ecosystem's
   `Stream` trait is a crate beyond std and libc. No code changes.
+- Chapter 10's open questions Q2, Q5, Q11 and Q12 were settled in
+  fact, and are recorded there as decided (2026-10-22): the
+  TLS-capable socket auth line only, with no fallback to the legacy
+  one; 26.10.0 announced in both version words, which every 26.10
+  cluster since phase 3 has accepted, as it has the line; the names of
+  §6.1 as they stand; and the refusals of §6.5, item 8. Q6, the
+  languages for smoke bindings, stays open with the bindings, which
+  are later. No code changes.
 
 ## Later — after the first version
 
@@ -2266,7 +2272,7 @@ Rust stream over the scan reader, with the Rust futures over executors
 | Risk | Mitigation |
 |---|---|
 | iClaustron's protocol knowledge is NDB 7.2.9; anything not re-verified against 26.10 is suspect | every protocol constant is backed by a chapter 05 section, checked against 26.10; Phase 3 signal tracing shows mismatches immediately |
-| Legacy vs TLS-capable socket auth (Q2) | test both on day one of Phase 3 |
+| Legacy vs TLS-capable socket auth (Q2) | settled: only the TLS-capable line is sent, and every 26.10 cluster accepts it (chapter 10) |
 | The rename (6.1) changes something on the wire | a pure rename: a capture taken before replays byte for byte after; every test passes unchanged |
 | A RonDB name creeps back in | `cargo xtask names` reads the names from a RonDB tree at check time; review checklist item |
 | character-set weights wrong | the end-to-end check against the partitions the data nodes report (8.6); a wrong weight costs a hop, never a wrong answer, until the ordered merge of phase 8, whose exit compares with MySQL's `ORDER BY` |

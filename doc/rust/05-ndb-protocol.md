@@ -81,9 +81,10 @@ Two dialects exist on the client side:
   TLS-capable server.
 
 Decision: send the TLS-capable form with `TLS disabled` in 0.1, accept
-`ok` and `Cleartext ok`. **Open question Q2**: confirm on a live 26.10
-node whether the legacy form is still accepted, so the fallback can be
-dropped or kept.
+`ok` and `Cleartext ok`. Settled (chapter 10, Q2, 2026-10-22): it is
+the only form we send, and every 26.10 cluster since phase 3 has
+accepted it. No fallback to the legacy form was written, so whether a
+26.10 node still accepts that form does not matter to us.
 
 ### 1.2 Node id hello
 
@@ -384,7 +385,8 @@ Version announced: `get nodeid` and `HEARTBEAT_REQ` carry an NDB version
 word `(major << 16) | (minor << 8) | build`; for RonDB 26.10.0 that is
 `0x1A0A00`, plus a MySQL version word. The data node checks API/DB
 compatibility and answers `HEARTBEAT_REF` on mismatch. We announce
-26.10.0 (Q5).
+26.10.0 in both words, which every 26.10 cluster since phase 3 has
+accepted (chapter 10, Q5, settled 2026-10-22).
 
 - `HEARTBEAT_REQ` (signal 3) from the API's `NODE_WATCH` block to
   `MEMBERSHIP` every `min(max interval, heartbeat check interval / 2)`;
@@ -2696,7 +2698,7 @@ be treated as a hypothesis. Known differences the port must apply:
 
 | Area | 7.2.9 as coded in iClaustron | RonDB 26.10 |
 |---|---|---|
-| Socket auth | `ndbd` / `ndbd passwd` → `ok` | TLS-capable line `ndbd TLS disabled` + empty line → `ok`/`Cleartext ok` (legacy possibly still accepted, Q2) |
+| Socket auth | `ndbd` / `ndbd passwd` → `ok` | TLS-capable line `ndbd TLS disabled` + empty line → `ok`/`Cleartext ok` (the only form we send; chapter 10, Q2) |
 | Node id hello | `"<nodeid> 1"` (2 integers) | `"<nodeid> 1 <remote nodeid> 0"` (4 integers), max 23 chars; reply `"<nodeid> 1"` |
 | Byte order | swap on receive | no swap; reject mismatch |
 | Signals | private signal numbers for a patched kernel | the stock signal numbers (§3–8) |

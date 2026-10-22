@@ -69,6 +69,15 @@
 |---|---|
 | AUTO_INCREMENT prefetch (was Q13) | 4096 values a refill by default (`GlobalOptions::auto_increment_prefetch`), a size per table beside it, and blocks of consecutive values per call (chapter 04, "AUTO_INCREMENT") |
 
+## Decided (2026-10-22), settled in fact in phase 11
+
+| Topic | Decision |
+|---|---|
+| Socket auth (was Q2) | only the TLS-capable line goes, `ndbd TLS disabled` and an empty line, with `ok` and `Cleartext ok` taken and `TLS required` refused (`ic_apid::handshake`); every 26.10 cluster since phase 3 has accepted it. No fallback to the legacy `ndbd` / `ndbd passwd` was written, so whether a 26.10 data node still takes it does not matter to us (chapter 05 §1.1) |
+| Version announced (was Q5) | RonDB 26.10.0, `0x1A0A00`, in both the NDB and the MySQL version words, in `get nodeid` and `HEARTBEAT_REQ` (`IC_NDB_VERSION`, `IC_MYSQL_VERSION`); every 26.10 cluster since phase 3 has accepted it (chapter 05 §4) |
+| Signal and block names (was Q11) | the names of chapter 06 §6.1 stand: applied on 2026-10-09 and unchanged since, through the author's two reviews (chapter 06 §11.1, §11.2). A change the author makes later is one more rename, which, like the first, leaves the wire as it was |
+| Writes through a unique index (was Q12) | as recommended, since phase 6.5 (chapter 06 §6.5, item 8): an update through an index whose attribute record holds an indexed column is refused with `IC_ERROR_INDEXED_COLUMN_UPDATE`, since the row is found by those columns, and an insert or a write through an index with `IC_ERROR_NOT_SUPPORTED`; the integration test `uk_refusals_before_sending` checks all three |
+
 ## Still open
 
 The recommendation is the default and the plan proceeds on it unless
@@ -76,8 +85,4 @@ you object.
 
 | # | Question | Recommendation / how to resolve |
 |---|---|---|
-| Q2 | Does a 26.10 data node accept the legacy `ndbd`/`ndbd passwd` socket auth, or only the `ndbd TLS ...` line? | Test on day one of Phase 3; implement the TLS-capable line first. |
-| Q5 | Which version does the API announce in `get nodeid` and `HEARTBEAT_REQ`: RonDB 26.10.0 exactly, or the running management server's version? | **Recommendation:** announce 26.10.0 (`0x1A0A00`) and our own MySQL version field as the same; confirm the compatibility check on a live node. |
 | Q6 | Which non-C/C++ languages get a smoke-test binding (later since 2026-10-20; phase 10 from 2026-10-08, phase 7 before)? | Suggest Python (`ctypes`) and Java (Panama) as the two that matter to RonDB users; Go and Node if cheap. |
-| Q11 | The names of signals and blocks. | The first draft is in chapter 06 §6.1; the author reviews it before the rename. |
-| Q12 | Writes through a unique index. | **Recommendation:** refuse an update through an index whose attribute record holds an indexed column, and keep refusing a write through an index (chapter 06 §6.5, item 8). |
