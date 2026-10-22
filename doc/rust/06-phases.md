@@ -1391,7 +1391,8 @@ failure.
   readers closed early, dropped and refused; a slow reader), and the C
   ABI's test. While one reader held a batch, five other readers on the
   same executor each read the whole table, in 7 ms together.
-- Left for later: a Rust stream over the reader; scans whose
+- Left for later: a Rust stream over the reader (kept for later with
+  the Rust futures over executors: phase 11, §11.3); scans whose
   coordinator stays up but never answers still wait for the run's own
   `timeout_ms` or the coordinator's timers (from 8.3; ended with 4012
   in phase 11, §11.3).
@@ -2092,9 +2093,8 @@ code, and to find out, with early applications, whether anything more
 is needed for a first version. What it holds is gathered as it is
 found. Known now, to weigh there:
 
-- a Rust stream over the scan reader (8.4);
 - chapter 10's open questions, most of them settled in fact (Q2, Q5,
-  Q11, Q12);
+  Q11, Q12).
 
 ### 11.1 The author's first review (2026-10-21)
 
@@ -2218,6 +2218,12 @@ held, two of them in part:
   that stops loses its link to missed heartbeats within seconds, long
   before six minutes, and the scan fails that way; only a bug in a
   coordinator that stays up leaves it waiting that long.
+- A Rust stream over the scan reader (8.4) is weighed and kept for
+  later, with the Rust futures over executors (the author, 2026-10-22;
+  chapter 04, "Kept for later"). Threads read a scan's rows with the
+  reader's `next_row` loop already; a stream alone would give async
+  code scans but no futures for key operations, and the ecosystem's
+  `Stream` trait is a crate beyond std and libc. No code changes.
 
 ## Later — after the first version
 
@@ -2233,6 +2239,10 @@ AUTO_INCREMENT column writes its counter row); the full interpreter;
 pushdown joins; aggregation pushdown; ring buffer tables; TTL options;
 rate-limit and user-id flags; the deferred unique check. Any of them
 may move into phase 11 if an early application needs it.
+
+Weighed in phase 11 and kept for later (the author, 2026-10-22): a
+Rust stream over the scan reader, with the Rust futures over executors
+(chapter 04, "Kept for later").
 
 ## Working method per module (all phases)
 

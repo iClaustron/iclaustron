@@ -534,7 +534,8 @@ while reader.next_row()? {
   finish it, so that the reader can run again. Dropping a reader ends
   its run without waiting. A stopping executor closes its scans with
   `IC_ERROR_EXECUTOR_STOPPED`.
-- A Rust stream comes later, over the same reader.
+- A Rust stream over the same reader comes later, with the Rust
+  futures over executors (the author, 2026-10-22; "Kept for later").
 
 **The C ABI**, by the rules below:
 
@@ -1370,6 +1371,13 @@ From phase 8.1: requests handed back to a C callback, and Rust futures,
 over the same executors; requests that keep a transaction open across
 calls; the wake-ups an executor makes, one per blocking call, moved to
 helper threads (chapter 06 §8.1, measured).
+
+From phase 8.4, weighed in phase 11 (the author, 2026-10-22): a Rust
+stream over the scan reader, which comes with those futures. Threads
+read a scan's rows with the reader's `next_row` loop. A stream alone
+would give async code scans but no futures for key operations, and
+the ecosystem's `Stream` trait is a crate beyond std and libc
+(chapter 01, principle 8).
 
 From the Phase 0 design, for the releases that build them: WHERE
 conditions and conditional assignments compiled to the interpreter
