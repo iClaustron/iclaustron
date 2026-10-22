@@ -147,6 +147,16 @@ require it, so a type without one cannot be tested conveniently.
 - Comments say why, not what. The C header's prose is the specification
   and belongs in `///` on the item it describes.
 
+## Examples in the documentation
+
+- An example of the API in a document (the user guide, chapter 04, the
+  architecture page) is given in Rust and in C, the Rust first, the
+  same steps in each, with each call as the API has it (the author,
+  2026-10-22). The programs in `examples/` are the same eleven in both
+  languages, and their calls are the ones to copy.
+- A worked example of a mapping from the C code (chapter 11) shows the
+  C beside the Rust.
+
 ## Layout conventions
 
 - 80 columns and 2-space indentation, as the C code. `rustfmt` with a

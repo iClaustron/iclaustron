@@ -666,6 +666,22 @@ loop {
     conn.poll(10);          <span class="c">// callbacks run here; each may define the next batch</span>
     while let Some(id) = conn.get_next_executed_query() { /* queries without a callback */ }
 }</code></pre>
+<p>The same in C:</p>
+<pre><code><span class="c">/* once */</span>
+ic_apid_query_create(conn, table, key_rec, attr_rec, &amp;q);
+<span class="c">/* per batch: define many, send once per node */</span>
+ic_apid_conn_start_transaction(conn, hint, table, &amp;t);
+ic_read_key_args_init(&amp;args, sizeof args);
+args.callback = on_row;
+args.user_ref = user_ref;
+ic_apid_conn_read_key(conn, q, t, &amp;args);
+<span class="c">/* … more read_key / write_key, on this and other transactions */</span>
+ic_apid_conn_commit_transaction(conn, t);
+ic_apid_conn_send(conn, false);
+for (;;) {
+    ic_apid_conn_poll(conn, 10, NULL);  <span class="c">/* callbacks run here; each may define the next batch */</span>
+    while (ic_apid_conn_get_next_executed_query(conn, &amp;id)) { <span class="c">/* queries without a callback */</span> }
+}</code></pre>
 <p>A callback runs inside <code>poll</code> on the polling thread, after the query has left its transaction's lists. It may define queries, start and commit transactions and send, which is how a pipeline keeps <em>depth</em> batches in flight. <code>ic_bench</code> works this way. The limitation is that <strong>new work can only come from this thread</strong>: from its own loop, or from a callback reacting to a reply. An application whose requests arrive on other threads, such as a network server's handlers, has to hand them to this thread somehow, and <code>poll</code> knows nothing about such hand-offs.</p>
 
 <h3 id="async-executor">An executor with two inputs <span class="status built">Built</span></h3>
@@ -820,6 +836,12 @@ conn.read_key(q, t, &amp;args)?;
 conn.commit_transaction(t)?;
 conn.flush(1000, true)?;      <span class="c">// returns when done</span>
 let row = conn.query(q).attr_row();</code></pre>
+    <p>In C:</p>
+<pre><code>ic_apid_conn_start_transaction(conn, hint, table, &amp;t);
+ic_apid_conn_read_key(conn, q, t, &amp;args);
+ic_apid_conn_commit_transaction(conn, t);
+ic_apid_conn_flush(conn, 1000, true, NULL);  <span class="c">/* returns when done */</span>
+row = ic_apid_query_attr_row(conn, q, &amp;len);</code></pre>
     <ul>
       <li>Nothing between the caller and the socket: the lowest latency for one operation.</li>
       <li>Throughput per thread is 1 / round trip. It scales only with threads, and each thread is a block (at most 4711) with its own coordinator records.</li>
@@ -832,6 +854,10 @@ let row = conn.query(q).attr_row();</code></pre>
 <pre><code>let mut request = Request::with_op(KeyOp::read(&amp;shape, ReadKind::Committed));
 submitter.execute(&amp;mut request)?;   <span class="c">// submit + wait</span>
 let row = request.ops()[0].attr_row();</code></pre>
+    <p>In C:</p>
+<pre><code>ic_request_add_read(request, shape, IC_READ_KIND_COMMITTED, &amp;op);
+ic_apid_submitter_execute(submitter, request);  <span class="c">/* submit + wait */</span>
+row = ic_request_attr_row(request, op, &amp;len);</code></pre>
     <ul>
       <li>Any number of application threads, with no block number each. Thousands of blocking callers share a few executors.</li>
       <li>Requests from different callers are batched together: with 64 callers, 21 a send. The per-batch costs are shared; the wake-up each call costs is not.</li>

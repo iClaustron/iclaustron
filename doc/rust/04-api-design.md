@@ -103,7 +103,26 @@ struct my_row {
 
 declared once with one `FieldSpec` per field (field id, offset, and
 for a nullable field the byte and bit of its null bit), and the row's
-size: `Record::new(&table, &specs, row_size)`.
+size: `Record::new(&table, &specs, row_size)`, `ic_record_create` in C.
+
+```rust
+let specs = [
+  FieldSpec::not_null(a_id, 0),
+  FieldSpec::nullable(b_id, 4, 29, 0),     // null bit 0 of null_bits
+  FieldSpec::not_null(name_id, 8),         // name_len, then the bytes
+];
+let rec = Record::new(&table, &specs, 32)?;  // the struct's size
+```
+
+```c
+IC_FIELD_SPEC specs[3] = {
+  { a_id,    offsetof(struct my_row, a),        IC_NO_NULL_BIT, 0 },
+  { b_id,    offsetof(struct my_row, b),
+             offsetof(struct my_row, null_bits), 0 },
+  { name_id, offsetof(struct my_row, name_len), IC_NO_NULL_BIT, 0 },
+};
+ret = ic_record_create(table, specs, 3, sizeof(struct my_row), &rec);
+```
 
 - Values are stored as NDB stores them, so nothing is converted on the
   way: fixed-size fields inline at their offset with their NDB size,
@@ -256,6 +275,19 @@ submitter.execute(&mut request)?;                  // blocks until it ends
 let row = request.ops()[0].attr_row();
 ```
 
+```c
+ret = ic_apid_executor_start(global, NULL, &executor);
+ret = ic_apid_executor_submitter(executor, &submitter);  /* one per thread */
+ret = ic_apid_submitter_table_bind(submitter, "ic_ex", "t1", &table);
+ret = ic_record_create_default(table, NULL, 0, &rec);
+ret = ic_op_shape_create(table, rec, rec, &shape);       /* made once */
+ret = ic_request_create(&request);
+ret = ic_request_add_read(request, shape, IC_READ_KIND_COMMITTED, &op);
+/* ... the key into ic_request_key_row(request, op, &len) ... */
+ret = ic_apid_submitter_execute(submitter, request);     /* blocks */
+row = ic_request_attr_row(request, op, &len);
+```
+
 - **A request** (`Request`) is a transaction of key operations
   (`KeyOp`), defined together with the commit on the last, and sent
   together: it commits, or rolls back as a failed write or the
@@ -314,6 +346,24 @@ while !conn.scan_done(scan) {
       let row = conn.scan_row(scan);  // laid out by the record
     }
     conn.release_scan_batch(batch)?;  // that receiver goes on
+  }
+}
+```
+
+```c
+ret = ic_apid_scan_create(conn, table, rec, &scan);
+ic_scan_args_init(&args, sizeof args);
+args.lock = IC_SCAN_LOCK_COMMITTED;   /* COMMITTED, SHARED or EXCLUSIVE */
+ret = ic_apid_conn_start_scan(conn, scan, &args);
+ret = ic_apid_conn_send(conn, false); /* the request goes with the next send */
+while (!ic_apid_scan_is_done(conn, scan)) {
+  ret = ic_apid_conn_poll(conn, 100, NULL);
+  while (ic_apid_conn_get_next_scan_batch(conn, &batch)) {
+    while ((ret = ic_apid_conn_next_scan_row(conn, batch, &more)) == 0 &&
+           more) {
+      row = ic_apid_scan_row(conn, scan, &len); /* laid out by the record */
+    }
+    ret = ic_apid_conn_release_scan_batch(conn, batch); /* receiver goes on */
   }
 }
 ```
@@ -421,6 +471,14 @@ while conn.next_row(scan)? {           // Ok(false): read to the end
 }
 ```
 
+```c
+ic_scan_args_init(&args, sizeof args);
+ret = ic_apid_conn_start_scan(conn, scan, &args);
+while ((ret = ic_apid_conn_next_row(conn, scan, &more)) == 0 && more) {
+  row = ic_apid_scan_row(conn, scan, &len);
+}                                      /* more false: read to the end */
+```
+
 - `next_row(scan)` unpacks the next row into the scan's row, and
   `next_row_into(scan, row)` into a buffer of the caller's. When the
   batch it reads from is used up, it hands it back, so that receiver
@@ -458,6 +516,16 @@ let mut reader = ScanReader::new(&shape);
 submitter.scan(&mut reader, &ScanArgs::default())?;   // to the executor
 while reader.next_row()? {
   let row = reader.row();                             // laid out by the record
+}
+```
+
+```c
+ret = ic_scan_shape_create(table, rec, &shape);       /* made once, shared */
+ret = ic_scan_reader_create(shape, &reader);
+ic_scan_args_init(&args, sizeof args);
+ret = ic_apid_submitter_scan(submitter, reader, &args); /* to the executor */
+while ((ret = ic_scan_reader_next_row(reader, &more)) == 0 && more) {
+  row = ic_scan_reader_row(reader, &len);       /* laid out by the record */
 }
 ```
 
@@ -604,6 +672,21 @@ while conn.next_row(scan)? {
 conn.commit_transaction(tid)?;
 ```
 
+```c
+ic_scan_args_init(&args, sizeof args);
+args.lock = IC_SCAN_LOCK_EXCLUSIVE;
+args.trans = tid;
+ret = ic_apid_conn_start_scan(conn, scan, &args);
+ic_takeover_args_init(&takeover, sizeof takeover);
+while ((ret = ic_apid_conn_next_row(conn, scan, &more)) == 0 && more) {
+  if (wanted(ic_apid_scan_row(conn, scan, &len))) {
+    /* ... the new values into the query's attribute row ... */
+    ret = ic_apid_conn_update_scan_row(conn, qid, scan, &takeover);
+  }
+}
+ret = ic_apid_conn_commit_transaction(conn, tid);
+```
+
 - `lock_scan_row`, `update_scan_row` and `delete_scan_row` each define
   a query on the scan's transaction that acts on the row last read
   from a batch still with the application. The query is an ordinary
@@ -664,6 +747,25 @@ conn.add_scan_range(scan, &range, &low_row, &high_row)?;
 conn.start_scan(scan, &ScanArgs { ordered: true, ..ScanArgs::default() })?;
 while conn.next_row(scan)? {
   let row = conn.scan_row(scan);       // in the index's order
+}
+```
+
+```c
+ret = ic_apid_conn_index_bind(conn, db, "ix_val", "scan", &index);
+ret = ic_record_create_default(table, &val, 1, &key_rec); /* its columns */
+ret = ic_apid_index_scan_create(conn, index, key_rec, rec, &scan);
+ic_scan_range_init(&range, sizeof range);  /* val from 100 to 200, both in */
+range.low_columns = 1;
+range.low_inclusive = true;
+range.high_columns = 1;
+range.high_inclusive = true;
+ret = ic_apid_conn_add_scan_range(conn, scan, &range, low_row, low_len,
+                                  high_row, high_len);
+ic_scan_args_init(&args, sizeof args);
+args.ordered = true;
+ret = ic_apid_conn_start_scan(conn, scan, &args);
+while ((ret = ic_apid_conn_next_row(conn, scan, &more)) == 0 && more) {
+  row = ic_apid_scan_row(conn, scan, &len);  /* in the index's order */
 }
 ```
 
@@ -757,6 +859,19 @@ while conn.next_row(scan)? {
   submitter.scan(&mut reader, &ScanArgs { ordered: true, ..ScanArgs::default() })?;
   while reader.next_row()? {
     let row = reader.row();            // in the index's order
+  }
+  ```
+
+  ```c
+  ret = ic_scan_shape_create_index(index, key_rec, rec, &shape);
+  ret = ic_scan_reader_create(shape, &reader);
+  ret = ic_scan_reader_add_range(reader, &range, low_row, low_len,
+                                 high_row, high_len);
+  ic_scan_args_init(&args, sizeof args);
+  args.ordered = true;
+  ret = ic_apid_submitter_scan(submitter, reader, &args);
+  while ((ret = ic_scan_reader_next_row(reader, &more)) == 0 && more) {
+    row = ic_scan_reader_row(reader, &len);  /* in the index's order */
   }
   ```
 
@@ -1322,7 +1437,40 @@ not free the connection. A bind there of a table or index whose
 description is being fetched, when the callback runs inside a bind of
 its own thread, is refused with `IC_ERROR_NOT_SUPPORTED`.
 
-### Example in C, asynchronous
+### Example, asynchronous
+
+One committed read by primary key, defined, sent and polled for, in
+Rust and then in C.
+
+```rust
+let global = ApidGlobal::connect("localhost:1186", Some("example"),
+                                 &GlobalOptions::default())?;
+global.wait_for_all_started(30_000);
+let mut conn = global.create_connection()?;
+let t = conn.table_bind("test", "t1")?;
+let rec = Record::default_for(&t, None)?;
+let q = conn.create_query(&t, &rec, &rec)?;
+// a, INT UNSIGNED, where the record put it
+let a = rec.field(rec.position_of(a_id).expect("held")).expect("held");
+let at = a.offset() as usize;
+let mut key = vec![0u8; rec.row_size() as usize];
+key[at..at + 4].copy_from_slice(&42u32.to_le_bytes());
+conn.query_mut(q).expect("just made").key_row_mut().copy_from_slice(&key);
+let hint = conn.hint_for_key(&t, &rec, &key);
+let tr = conn.start_transaction(hint, Some(&t))?;
+let args = ReadKeyArgs { kind: ReadKind::Committed, ..ReadKeyArgs::default() };
+conn.read_key(q, tr, &args)?;
+conn.commit_transaction(tr)?;
+while !conn.transaction(tr).map_or(true, |x| x.is_done()) {
+  conn.flush(100, true)?;
+}
+if let Some(e) = conn.query(q).and_then(|x| x.error()) {
+  return Err(e);
+}
+let row = conn.query(q).expect("still there").attr_row();
+// ... use the row ...
+conn.close_transaction(tr)?;
+```
 
 ```c
 IC_GLOBAL_OPTIONS opts;

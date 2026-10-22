@@ -40,6 +40,14 @@ ic_apid = { git = "https://github.com/iClaustron/iclaustron", branch = "RUST-icl
 ic_port = { git = "https://github.com/iClaustron/iclaustron", branch = "RUST-iclaustron" }
 ```
 
+and name each item from its module, as the examples do:
+
+```rust
+use ic_apid::apid_global::ApidGlobal;
+use ic_apid::apid_global::GlobalOptions;
+use ic_port::IcError;
+```
+
 From C, install the library, `libiclaustron`, with its header and a
 pkg-config file, then build with pkg-config:
 
@@ -121,7 +129,23 @@ go, and the next bind fetches it again: bind again and retry.
 **A record** says how a row is laid out in the program's memory: for
 each field, where its value is and where its null bit is. The values
 are kept as the data nodes keep them, so nothing is converted on the
-way in or out. In C a record is usually over a struct:
+way in or out. In Rust a row is a slice of bytes, and the record says
+where each field lies in it; here the layout of the C struct below,
+field by field:
+
+```rust
+// id at 0; val at 4, null bit 0; code at 8; name at 12, its length
+// byte and then 32 bytes, null bit 1; the null bits in byte 45
+let spec = [
+  FieldSpec::not_null(id_of_id, 0),
+  FieldSpec::nullable(id_of_val, 4, 45, 0),
+  FieldSpec::not_null(id_of_code, 8),
+  FieldSpec::nullable(id_of_name, 12, 45, 1),
+];
+let rec = Record::new(&table, &spec, 48)?;
+```
+
+In C a record is usually over a struct:
 
 ```c
 struct t1_row {
@@ -144,7 +168,8 @@ IC_FIELD_SPEC spec[4] = {
 ret = ic_record_create(table, spec, 4, sizeof(struct t1_row), &rec);
 ```
 
-(the field ids from `ic_table_def_field_id`). A program that would
+(the field ids from `table.field_id(name)`, `ic_table_def_field_id`
+in C). A program that would
 rather not write the struct asks the library to lay the row out,
 `Record::default_for(&table, None)` or `ic_record_create_default(table,
 NULL, 0, &rec)`, and finds each field with `ic_record_field` (offset
@@ -260,6 +285,22 @@ conn.commit_transaction(t)?;
 conn.close_transaction(t)?;
 ```
 
+```c
+IC_TRANSACTION_HINT hint;
+IC_WRITE_KEY_ARGS args;
+IC_TRANS_ID t;
+
+hint = ic_apid_conn_hint_for_key(conn, table, rec, key, len);
+ret = ic_apid_conn_start_transaction(conn, hint, table, &t);
+ic_write_key_args_init(&args, sizeof args);
+args.kind = IC_WRITE_KIND_INSERT;
+ret = ic_apid_conn_write_key(conn, q, t, &args);
+ret = ic_apid_conn_commit_transaction(conn, t);
+while (!ic_apid_transaction_is_done(conn, t))  /* send and poll */
+  ret = ic_apid_conn_flush(conn, 100, true, NULL);
+ret = ic_apid_conn_close_transaction(conn, t);
+```
+
 **The hint** chooses the data node that coordinates the transaction.
 `hint_for_key` hashes the key as the data nodes do, character columns
 in their collation included, and chooses the node that holds the row,
@@ -286,6 +327,11 @@ it, and wait: `key_op::read_committed`, `read_unique_committed` and
 `ic_apid_conn_read_unique_committed` and `ic_apid_conn_write` in C. They
 take the program's own rows, and suit a thread that does one thing at
 a time; a connection per thread is the way to scale them.
+
+```rust
+let mut row = vec![0u8; rec.row_size() as usize];
+let found = key_op::read_committed(&mut conn, &rec, &key, &rec, &mut row)?;
+```
 
 ```c
 struct t1_row key, row;
@@ -342,6 +388,19 @@ threads, and sends together whatever it admits at once.
   has ended: the rows read are in its operations, each operation says
   how it went, and the call returns 0 if the transaction committed.
   Keep the request and run it again with new keys.
+
+```rust
+let mut req = Request::with_op(KeyOp::read(&shape, ReadKind::Committed));
+req.ops_mut()[0].key_row_mut().copy_from_slice(&key);
+sub.execute(&mut req)?;
+match req.ops()[0].error() {
+  Some(e) if e.code as u32 == key_op::IC_NDB_ERROR_NO_SUCH_ROW => {
+    // no such row
+  }
+  Some(e) => return Err(e),
+  None => row.copy_from_slice(req.ops()[0].attr_row()),
+}
+```
 
 ```c
 IC_REQUEST *req;
@@ -405,6 +464,14 @@ their batch is handed back.
   reader stalls only its own scan. A committed read may set
   `read_ahead`, so that a receiver fetches its next batch while the
   reader reads the last, at the cost of twice the memory.
+
+```rust
+conn.start_scan(scan, &ScanArgs::default())?;
+while conn.next_row(scan)? {
+  let row = conn.scan_row(scan);
+  // ... use the row ...
+}
+```
 
 ```c
 IC_SCAN_ARGS args;
@@ -675,6 +742,21 @@ a table without a primary key.
 A query defined with a callback has it called when it completes:
 **on the thread that polls, from inside the poll**, with the connection,
 the query and the `user_ref` it was defined with.
+
+```rust
+fn on_written(conn: &mut ApidConnection, query: QueryId, user_ref: usize) {
+  let error = conn.query(query).and_then(|q| q.error());
+  // ...
+}
+
+let args = WriteKeyArgs {
+  kind: WriteKind::Write,
+  callback: Some(on_written),
+  user_ref: slot,
+  ..WriteKeyArgs::default()
+};
+conn.write_key(query, trans, &args)?;
+```
 
 ```c
 static void on_written(IC_APID_CONNECTION *conn, IC_QUERY_ID query,

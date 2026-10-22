@@ -151,7 +151,27 @@ the `Vec`.
 
 ## Worked example: header word 1 (`fill_ndb_message_header`)
 
-C builds word 0 with shifts into a `register guint32 word`. Rust:
+C (`api/ic_apid_send_message.ic`, simplified) builds the word with
+shifts into a `register guint32 word` and stores it as the message's
+first:
+
+```c
+word= 0;
+if (ic_glob_byte_order)
+  word= 0x81000081; /* Set bit 0,7,24,31 independent of byte order */
+loc_variable= fragment_flag & 2;          /* high fragment bit: bit 1 */
+word|= (loc_variable << (1 - 1));
+loc_variable= fragment_flag & 1;          /* low fragment bit: bit 25 */
+word|= (loc_variable << 25);
+word|= use_message_sequence_id << 2;
+word|= use_checksum << 4;
+word|= message_priority << 5;
+word|= tot_message_size << 8;
+word|= segment_lens[0] << 26;             /* main message, at most 25 */
+start_message32[0]= word;
+```
+
+Rust:
 
 ```rust
 pub fn encode_word1(byte_order_big: bool, fragment: u32, signal_id: bool,
@@ -159,8 +179,8 @@ pub fn encode_word1(byte_order_big: bool, fragment: u32, signal_id: bool,
                     data_len: u32) -> u32 {
     let mut word: u32 = 0;
     if byte_order_big { word |= 0x8100_0081; }
-    word |= (fragment & 2) >> 1;            // low fragment bit -> bit 1
-    word |= (fragment & 1) << 25;           // high fragment bit -> bit 25
+    word |= fragment & 2;                   // high fragment bit: bit 1
+    word |= (fragment & 1) << 25;           // low fragment bit: bit 25
     if signal_id { word |= 1 << 2; }
     if checksum { word |= 1 << 4; }
     word |= (prio & 3) << 5;
@@ -170,6 +190,9 @@ pub fn encode_word1(byte_order_big: bool, fragment: u32, signal_id: bool,
 }
 ```
 
-Identical arithmetic; the only differences are `bool` parameters instead
-of `gboolean`, and that the function returns the word instead of writing
-through a pointer.
+The same arithmetic. The Rust masks each field to its width, where
+the C requires the priority and the main message's size to fit
+(`ic_require`); it takes `bool` parameters instead of `gboolean`, and
+returns the word instead of storing it through a pointer.
+`ic_signals::header` writes word 1 the same way, with a named mask for
+each field.
