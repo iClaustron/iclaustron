@@ -1323,11 +1323,13 @@ impl ApidConnection {
     // coordinator's link went fail, and what the scans called for goes
     // now rather than with the next send.
     self.drive_scans(check_links);
-    // Transactions whose replies never came while their link stayed up
-    // end with 4012, after the replies just taken have had their say.
+    // Transactions and scans whose replies never came while their link
+    // stayed up end with 4012, after the replies just taken have had
+    // their say.
     let now = ic_port::time::gethrtime();
     if reply_check_due(&mut self.next_reply_check, now) {
       self.expire_transactions(now);
+      self.expire_scans(now);
     }
     // What the replies called for, such as commit acknowledgements,
     // goes with the next send, in the same write as its requests. It is
@@ -1752,6 +1754,22 @@ impl ApidConnection {
     Ok(())
   }
 
+  /// Give up the pool's requests for records at `node_id` and
+  /// `instance`, which its coordinator has left unanswered for as long
+  /// as a scan waits: the next scan there asks again, and a record that
+  /// comes later is freed as it comes (`take_late_allocate`). An answer
+  /// that has come is taken first.
+  pub(crate) fn give_up_scan_records(&mut self, node_id: u32, instance: u32) {
+    self.collect_scan_records();
+    let pool = self.scan_pool_index(node_id, instance);
+    let asked = std::mem::take(&mut self.scan_pools[pool].asked);
+    for index in asked {
+      let api_ptr = self.coord_records[index as usize].api_ptr;
+      self.expectations.forget(api_ptr);
+      self.coord_records[index as usize].abandoned = true;
+    }
+  }
+
   /// Ask ahead for the next record of the pool at `node_id` and
   /// `instance` if it has none free and none asked for, so that the
   /// next scan there need not wait. A failure to ask is left for that
@@ -2009,7 +2027,8 @@ impl ApidConnection {
   }
 
   /// True if `client_ptr` names a record of ours that is out of use: an
-  /// answer to the COORD_FREE_REQ that gave it up.
+  /// answer to the COORD_FREE_REQ that gave it up, or one for the scan
+  /// that ran on it, given up on.
   pub(crate) fn names_lost_record(&self, client_ptr: u32) -> bool {
     let index = match coord_index_of(client_ptr) {
       Some(index) => index,

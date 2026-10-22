@@ -150,9 +150,9 @@ fn lost_link(error: IcError) -> bool {
 pub(crate) fn schema_error(code: i32) -> bool {
   ndb_err::class_of(code) == ErrorClass::Schema
 }
-/// NDB's error for a transaction whose replies never came while its
-/// link stayed up: the data node did not answer in time, and the
-/// outcome is unknown (chapter 06 §6.3).
+/// NDB's error for a transaction or a scan whose replies never came
+/// while its link stayed up: the data node did not answer in time, and
+/// the outcome is unknown (chapter 06 §6.3, §11.3).
 pub const IC_NDB_ERROR_NO_REPLY: i32 = 4012;
 /// Previous name for the lost-read error, retained for compatibility.
 pub const IC_NDB_ERROR_TAKEOVER_COMMIT_UNASKED: i32 =

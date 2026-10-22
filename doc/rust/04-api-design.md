@@ -399,7 +399,9 @@ while !conn.scan_done(scan) {
   idle too long at the coordinator, 270 when a reading node fails
   (temporary: the scan is started again and its rows come again; in
   the error table since 2026-10-17), 4028 when the coordinator's node
-  fails.
+  fails, and 4012 when the coordinator, its link up, sends nothing for
+  six minutes, a fixed wait, while the run waits for a record, a batch
+  or its stop's answer (the author, 2026-10-22; chapter 06 §11.3).
 
 The synchronous form, scans through an executor, and the C ABI are
 phase 8.4, below.
@@ -441,8 +443,8 @@ while conn.next_row(scan)? {           // Ok(false): read to the end
   a wait inside a callback, where a poll does nothing; a batch that is
   already complete can still be read there.
 - The wait lasts as long as the run goes on. The run's `timeout_ms`,
-  the coordinator's own timers and node failure handling bound it
-  (8.3).
+  the coordinator's own timers, node failure handling and the 4012 of
+  a coordinator that stops answering bound it (8.3).
 - An ordered scan (8.7) is read only this way, `next_row` merging the
   rows of its receivers.
 

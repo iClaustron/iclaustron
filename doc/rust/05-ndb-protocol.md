@@ -1100,6 +1100,9 @@ fail the node, if they fail it at all.
   transaction or conclude it without telling us, and free the record;
   a record is freed once at most (17.10). A reply that comes later
   finds no transaction of that id and is dropped.
+- **Scans** wait six minutes for their coordinator, a fixed wait, and
+  then end with 4012 as well, their record freed the same way (7.2;
+  chapter 06 §11.3).
 - **Seen live (2026-10-09, RonDB 26.10 debug build, the integration
   group `timeout`).** With a wait of one second, a data node stopped
   with SIGSTOP after the transaction's record was allocated and before
@@ -1417,8 +1420,20 @@ count from 0: word 0 is a signal's first.
   scan fails with 296 and a close owed (the default in 26.10 is 3 600
   000 ms). A fragment stalled past the deadlock timeout gives 274;
   RonDB's deadlock detection may end a scan with 296. The reference's
-  client gives up with 4008 after three times the check interval plus
-  the deadlock timeout.
+  client gives up with 4008 after three times its wait for a
+  transaction's replies (6.9) with nothing from the coordinator, the
+  wait starting again with each batch, and sends a close; a close
+  unanswered as long again has the record released by force, never
+  used again. The data node's heartbeat for a long scan (signal 354)
+  goes from the reading threads to the coordinator only, so a client
+  hears nothing from a fragment that scans long without filling a
+  batch. We end the run with 4012 after six minutes, a fixed wait (the
+  author, 2026-10-22; 7.3, question 15), and free its record at once
+  with `COORD_FREE_REQ`, for which the coordinator closes the scan
+  without telling us and frees the record. A data node that stops
+  loses its link to missed heartbeats long before; RonDB is to send
+  the API a heartbeat for a long scan as well, after which only a bug
+  leaves a scan that long unheard.
 - **Takeover**: a `KEY_OP_REQ` on the owning transaction whose key is
   the row's key from `SCAN_ROW_KEY_REP`, with flags bit 14 (scan
   takeover) and bit 2 (distribution key given), and optional words after
@@ -1647,6 +1662,16 @@ said with each.
     by the descending flag; after the first batches, one fragment is
     fetched at a time unless the continuous scan is used, which a
     locked ordered scan cannot (answered 2026-10-15).
+15. A scan whose coordinator stays up but sends nothing back, while
+    the scan waits for a record, a batch or its stop's answer: when
+    does it give up, and with which error? As read: the reference's
+    client gives up with 4008 after three times its wait for a
+    transaction's replies, six minutes at least, since the data node's
+    heartbeat for a long scan reaches the coordinator only. The author:
+    a heartbeat for a long scan should reach the API too, so that this
+    happens only by a bug, and then the scan gets 4012 after six
+    minutes, a fixed time, whatever a transaction waits for its replies
+    (answered 2026-10-22).
 
 For the author, in sessions of their own (raised 2026-10-15):
 - error 2203 had two meanings, the fanout scan refusal and read rate
@@ -1662,7 +1687,12 @@ For the author, in sessions of their own (raised 2026-10-15):
 - two things the data node stops on that a refusal would serve: a
   `SCAN_MORE_REQ` naming a pointer not held, and a batch's rows outside
   1 to 992 or 4 000, or an exclusive scan without keys: mended in
-  99ea088977e (2206) and c2f5eff326b (1230, 2205).
+  99ea088977e (2206) and c2f5eff326b (1230, 2205);
+- a heartbeat from the coordinator to the API for a scan that runs long
+  without a batch, as the reading threads send the coordinator, so that
+  a scan's wait for its coordinator runs out only on a bug (raised
+  2026-10-22, question 15). Our side, which would take it as an answer
+  that starts the wait again, comes with it.
 
 ### 7.4 Seen on the wire (2026-10-16)
 

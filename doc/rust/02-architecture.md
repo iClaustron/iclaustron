@@ -543,7 +543,11 @@ The protocol is chapter 05 §7; this is how the connection runs it.
   is owed. A coordinator link lost or replaced fails the scan at the
   next poll, as it fails transactions, and its record is lost with the
   link. A reading node's failure comes from the coordinator, as
-  `SCAN_REF` 270.
+  `SCAN_REF` 270. A coordinator that stays up and sends nothing ends
+  the scan with 4012 once the scan has waited six minutes, a fixed
+  wait, for a record, a batch or its stop's answer, as a poll finds
+  once a second; its record is lost and freed with `COORD_FREE_REQ`,
+  which closes the scan there (chapter 06 §11.3).
 
 ### Reading a scan, on a connection and on an executor (phase 8.4)
 

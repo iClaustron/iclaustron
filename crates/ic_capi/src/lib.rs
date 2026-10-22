@@ -213,7 +213,8 @@ pub const IC_ERROR_BAD_TEXT: i32 = 7158;
 pub const IC_NDB_ERROR_NO_SUCH_ROW: i32 = 626;
 /// A row with that key is there already (an NDB error).
 pub const IC_NDB_ERROR_ROW_EXISTS: i32 = 630;
-/// The transaction's replies stopped coming; its outcome is unknown.
+/// The replies of a transaction or a scan stopped coming; the outcome
+/// is unknown.
 pub const IC_NDB_ERROR_NO_REPLY: i32 = 4012;
 /// A NULL in a key (an NDB error).
 pub const IC_NDB_ERROR_NULL_KEY: i32 = 4316;

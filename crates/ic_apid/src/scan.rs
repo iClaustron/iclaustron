@@ -107,6 +107,7 @@ use crate::row_codec;
 use crate::transaction::schema_error;
 use crate::transaction::CommitState;
 use crate::transaction::TransactionHint;
+use crate::transaction::IC_NDB_ERROR_NO_REPLY;
 
 /// Marks a receiver's id, in the first word of `ROW_DATA_REP`, apart
 /// from a query's: bit 23, the top bit of an object map's index, which
@@ -124,6 +125,13 @@ pub const IC_NDB_ERROR_SCAN_LOCK_TIMEOUT: i32 = 274;
 /// NDB's error for a scan left too long without asking for more, as
 /// when a batch is not handed back (chapter 05 §7.2). Temporary.
 pub const IC_NDB_ERROR_SCAN_IDLE: i32 = 296;
+
+/// How long a scan waits for its coordinator before it ends with 4012:
+/// six minutes, fixed, whatever a transaction waits for its replies
+/// (the author, 2026-10-22; chapter 05 §7.2). A data node that stops
+/// loses its link to missed heartbeats long before; only a coordinator
+/// that stays up and, by a bug, sends nothing runs it out.
+pub const IC_SCAN_ANSWER_WAIT_MS: u64 = 360_000;
 
 /// True if an object map id fits below the receiver tag, as a query's
 /// and a receiver's must.
@@ -464,6 +472,10 @@ pub struct Scan {
   /// When the run is closed for taking too long, by the high-resolution
   /// clock; 0 for never.
   deadline: u64,
+  /// When the run last sent to its coordinator or had an answer from
+  /// it, by the high-resolution clock: the wait for a coordinator that
+  /// does not answer runs from there.
+  heard_at: u64,
   /// Rows read from the batches of the run so far.
   rows_read: u64,
   /// The batch [`next_row`](ApidConnection::next_row) reads from.
@@ -541,6 +553,7 @@ impl Scan {
       stop_sent: false,
       coord_done: false,
       deadline: 0,
+      heard_at: 0,
       rows_read: 0,
       reading: None,
       last_read: None,
@@ -1195,10 +1208,10 @@ impl ApidConnection {
       ids.push(ptr.as_u32() | IC_RECEIVER_TAG);
       place += 1;
     }
+    let now = ic_port::time::gethrtime();
     let mut deadline: u64 = 0;
     if args.timeout_ms > 0 {
-      deadline =
-        ic_port::time::gethrtime() + args.timeout_ms as u64 * 1_000_000;
+      deadline = now + args.timeout_ms as u64 * 1_000_000;
     }
     if let Some(scan) = self.scans.get_mut(id.0) {
       while (scan.receivers.len() as u32) < receivers {
@@ -1259,6 +1272,8 @@ impl ApidConnection {
       scan.stop_sent = false;
       scan.coord_done = false;
       scan.deadline = deadline;
+      // Waiting for a record counts as waiting for the coordinator.
+      scan.heard_at = now;
       scan.rows_read = 0;
       scan.reading = None;
       scan.last_read = None;
@@ -1301,6 +1316,7 @@ impl ApidConnection {
       Some(scan) => {
         scan.record = Some(rec);
         scan.state = ScanState::Running;
+        scan.heard_at = ic_port::time::gethrtime();
         let mut word5 = scans::IC_SCAN_WORD5_PLAIN;
         if scan.partition.is_some() {
           word5 |= scans::IC_SCAN_WORD5_PARTITION_ID;
@@ -2276,6 +2292,7 @@ impl ApidConnection {
           // Nothing to ask for: a run closing or ended since.
           None
         } else {
+          scan.heard_at = ic_port::time::gethrtime();
           let request = ScanMoreReq {
             coord_ptr: match scan.record {
               Some(rec) => rec.coord_ptr,
@@ -2461,6 +2478,72 @@ impl ApidConnection {
     }
   }
 
+  /// End every run that has waited too long for its coordinator while
+  /// its link stayed up, as of `now`: for `IC_SCAN_ANSWER_WAIT_MS`, six
+  /// minutes, since it last sent to the coordinator or had an answer
+  /// (the author, 2026-10-22; chapter 06 §11.3). Run by a poll at most
+  /// once a second, with the transactions' check. Once the coordinator
+  /// sends the API a heartbeat for a long scan, as RonDB is to, only a
+  /// bug leaves a scan that long unheard.
+  ///
+  /// The run ends with 4012, whose class says the outcome is unknown,
+  /// unless it had failed already, or been closed for its deadline. Its
+  /// record is never used again, and is freed with COORD_FREE_REQ,
+  /// which makes the coordinator close the scan, telling us nothing,
+  /// and free the record; rows and answers that come for it later are
+  /// late. A run that waited for a record gives up its pool's requests
+  /// for one, so that the next scan there asks again; a record that
+  /// comes later is freed as it comes.
+  pub(crate) fn expire_scans(&mut self, now: u64) {
+    if self.scans_live.is_empty() {
+      return;
+    }
+    let mut expired: Vec<ScanId> = Vec::new();
+    for id in &self.scans_live {
+      if let Some(scan) = self.scans.get(id.0) {
+        let waits = waits_on_coordinator(
+          scan.state,
+          &scan.receivers[..scan.used as usize],
+          scan.stop_sent,
+          scan.coord_done,
+        );
+        if waits && waited_out(scan.heard_at, now) {
+          expired.push(*id);
+        }
+      }
+    }
+    for id in expired {
+      let (rec, pool) = match self.scans.get_mut(id.0) {
+        Some(scan) => {
+          if scan.error.is_none() {
+            scan.error = Some(IcError::new(IC_NDB_ERROR_NO_REPLY));
+          }
+          let mut pool: Option<(u32, u32)> = None;
+          if scan.state == ScanState::Starting {
+            pool = Some((scan.node_id, scan.instance));
+          }
+          (scan.record.take(), pool)
+        }
+        None => continue,
+      };
+      if let Some(rec) = rec {
+        ic_port::debug_print!(
+          IC_NDB_MESSAGE_LEVEL,
+          "Node {} did not answer scan {:?} in time",
+          rec.node_id,
+          id
+        );
+        self.note_scan_record(rec.index, None);
+        self.lose_coord_record(&rec);
+        self.send_coord_free(&rec);
+      }
+      if let Some((node_id, instance)) = pool {
+        self.give_up_scan_records(node_id, instance);
+      }
+      self.end_run(id);
+    }
+  }
+
   // ---- Replies ----
 
   /// The scan whose run is on the record our pointer names, if the
@@ -2607,13 +2690,19 @@ impl ApidConnection {
     ) {
       Some(id) => id,
       // A stop that crossed its run's end is confirmed by the
-      // coordinator all the same, once the run has ended here.
-      None if conf.confirms_close() => {
-        self.late_scan_signals += 1;
-        return true;
+      // coordinator all the same, once the run has ended here; and a
+      // run given up on may still be answered on its lost record.
+      None => {
+        if conf.confirms_close() || self.names_lost_record(conf.client_ptr) {
+          self.late_scan_signals += 1;
+          return true;
+        }
+        return false;
       }
-      None => return false,
     };
+    if let Some(scan) = self.scans.get_mut(id.0) {
+      scan.heard_at = ic_port::time::gethrtime();
+    }
     if conf.confirms_close() {
       // The stop is confirmed, or the run ended at the coordinator
       // with nothing more to report: either way it is over there.
@@ -2769,7 +2858,14 @@ impl ApidConnection {
       refusal.trans_id_hi,
     ) {
       Some(id) => id,
-      None => return false,
+      // A run given up on may still be refused on its lost record.
+      None => {
+        if self.names_lost_record(refusal.client_ptr) {
+          self.late_scan_signals += 1;
+          return true;
+        }
+        return false;
+      }
     };
     let code = refusal.error_code as i32;
     if schema_error(code) {
@@ -2789,6 +2885,7 @@ impl ApidConnection {
         }
         scan.state = ScanState::Closing;
         hold_batches(scan);
+        scan.heard_at = ic_port::time::gethrtime();
         scan.stop_sent
       }
       None => return false,
@@ -2944,6 +3041,42 @@ impl ApidConnection {
 /// transaction rolls back stop at once.
 fn stop_waits(takeovers_pending: bool, rolls_back: Option<bool>) -> bool {
   takeovers_pending && rolls_back == Some(false)
+}
+
+/// Whether a run in `state`, with `receivers` taking part, waits for its
+/// coordinator: for a record to start on, for a batch asked for, or for
+/// its stop to be confirmed. A batch handed back and not yet asked for
+/// again, as when it waits for its takeovers, is not waited for; nor is
+/// a continuous scan's receiver waiting its turn. A run whose batches
+/// are all with the application waits for nothing from it, and neither
+/// does one whose stop waits for takeovers, which their transaction's
+/// own wait covers.
+fn waits_on_coordinator(
+  state: ScanState,
+  receivers: &[Receiver],
+  stop_sent: bool,
+  coord_done: bool,
+) -> bool {
+  match state {
+    ScanState::Starting => true,
+    ScanState::Running => {
+      for receiver in receivers {
+        if receiver.state == ReceiverState::Asked && !receiver.unsent {
+          return true;
+        }
+      }
+      false
+    }
+    ScanState::Closing => stop_sent && !coord_done,
+    ScanState::Idle | ScanState::Done => false,
+  }
+}
+
+/// Whether a run that last sent to its coordinator or had an answer
+/// from it at `heard_at` has waited it out by `now`, both by the
+/// high-resolution clock.
+fn waited_out(heard_at: u64, now: u64) -> bool {
+  now.saturating_sub(heard_at) >= IC_SCAN_ANSWER_WAIT_MS * 1_000_000
 }
 
 /// Let go of a closing run's batches: those with the application, those
@@ -3185,6 +3318,47 @@ mod tests {
     // One whose transaction rolls back, or is gone, waits for nothing.
     assert!(!stop_waits(true, Some(true)));
     assert!(!stop_waits(false, Some(true)));
+  }
+
+  #[test]
+  fn a_run_waits_on_its_coordinator_only_for_what_it_has_asked() {
+    let (starting, running, closing) =
+      (ScanState::Starting, ScanState::Running, ScanState::Closing);
+    let (idle, done) = (ScanState::Idle, ScanState::Done);
+    let mut four = four_starting();
+    // Waiting for a record, and for the batches the request asked for.
+    assert!(waits_on_coordinator(starting, &four, false, false));
+    assert!(waits_on_coordinator(running, &four, false, false));
+    // Every batch with the application, or its receiver waiting its
+    // turn: nothing is owed.
+    come(&mut four, 0);
+    come(&mut four, 1);
+    assert!(!waits_on_coordinator(running, &four, false, false));
+    // A batch handed back and not yet asked for again, as when its
+    // takeovers go first, is owed nothing either; once asked, it is.
+    four[0].state = ReceiverState::Asked;
+    four[0].unsent = true;
+    assert!(!waits_on_coordinator(running, &four, false, false));
+    four[0].unsent = false;
+    assert!(waits_on_coordinator(running, &four, false, false));
+    // A closing run waits for its stop's answer once the stop has gone,
+    // and for nothing once the coordinator is done with it.
+    assert!(!waits_on_coordinator(closing, &four, false, false));
+    assert!(waits_on_coordinator(closing, &four, true, false));
+    assert!(!waits_on_coordinator(closing, &four, true, true));
+    assert!(!waits_on_coordinator(idle, &four, false, false));
+    assert!(!waits_on_coordinator(done, &four, true, false));
+  }
+
+  #[test]
+  fn a_run_waits_six_minutes_for_its_coordinator() {
+    let minute: u64 = 60 * 1_000_000_000;
+    let heard_at = 5 * minute;
+    assert!(!waited_out(heard_at, heard_at));
+    assert!(!waited_out(heard_at, heard_at + 6 * minute - 1));
+    assert!(waited_out(heard_at, heard_at + 6 * minute));
+    // A clock read before the run was last heard of has waited nothing.
+    assert!(!waited_out(heard_at, heard_at - 1));
   }
 
   /// The four receivers of one fragment of a continuous run, as a run

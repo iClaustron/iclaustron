@@ -1393,7 +1393,8 @@ failure.
   same executor each read the whole table, in 7 ms together.
 - Left for later: a Rust stream over the reader; scans whose
   coordinator stays up but never answers still wait for the run's own
-  `timeout_ms` or the coordinator's timers (from 8.3).
+  `timeout_ms` or the coordinator's timers (from 8.3; ended with 4012
+  in phase 11, §11.3).
 
 ### 8.5 Updating and deleting what a scan locked (3 days)
 
@@ -2091,8 +2092,6 @@ code, and to find out, with early applications, whether anything more
 is needed for a first version. What it holds is gathered as it is
 found. Known now, to weigh there:
 
-- scans whose coordinator stays up but never answers wait for the run's
-  own `timeout_ms` or the coordinator's timers (8.4);
 - a Rust stream over the scan reader (8.4);
 - chapter 10's open questions, most of them settled in fact (Q2, Q5,
   Q11, Q12);
@@ -2198,6 +2197,27 @@ held, two of them in part:
   `dict_a_description_in_fragments_is_bound_inside_a_callback` binds,
   in a query's callback, a table of 401 columns whose description is
   well over a data node's 7 400 words, and passes (2026-10-22).
+- A scan whose coordinator stayed up but sent nothing back waited for
+  its own `timeout_ms`, if it had one, or for ever: for the record its
+  pool had asked for, which nothing gave up on, for a batch, or for its
+  stop's answer, which even a run closed for its deadline waits for. A
+  poll now ends, once a second with the transactions' check, every run
+  that waits for its coordinator and has heard nothing from it for six
+  minutes, a fixed wait whatever a transaction waits for its replies
+  (the author, 2026-10-22; chapter 05 §7.2, and §7.3 question 15):
+  with 4012, unless it had failed already or was closed for its
+  deadline. Its record is lost and freed with `COORD_FREE_REQ`, for
+  which the coordinator closes the scan; a run that waited for a
+  record gives up its pool's requests, and a record that comes later
+  is freed as it comes. Rows and answers that come later for a record
+  given up on count as late (`late_scan_signals`). The heartbeat to
+  the API for a long scan is RonDB's to add (chapter 05 §7.3). Tests:
+  unit tests of when a run waits for its coordinator and of when six
+  minutes have passed, which pass, as does the `scan` group beside the
+  new check (2026-10-22). No cluster test reaches the 4012: a data node
+  that stops loses its link to missed heartbeats within seconds, long
+  before six minutes, and the scan fails that way; only a bug in a
+  coordinator that stays up leaves it waiting that long.
 
 ## Later — after the first version
 

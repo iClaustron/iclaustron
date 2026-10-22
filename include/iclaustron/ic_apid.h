@@ -443,7 +443,8 @@
 #define IC_NDB_ERROR_ROW_EXISTS 630
 
 /*
- The transaction's replies stopped coming; its outcome is unknown.
+ The replies of a transaction or a scan stopped coming; the outcome
+ is unknown.
  */
 #define IC_NDB_ERROR_NO_REPLY 4012
 
