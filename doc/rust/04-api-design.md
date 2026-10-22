@@ -40,8 +40,9 @@ The connectstring: `host[:port]` items separated by commas (default
 `localhost:1186`), `nodeid=N` to ask for that node id rather than one
 the management server chooses, `bind-address=host` for the local
 address. `GlobalOptions`, fixed for the life of the global:
-`receive_threads` (1), `reply_wait_ms` (0: from the configuration, see
-05 §6.9), `mgm_timeout_ms` (30 000). Stopping or dropping the global
+`receive_threads` (1), `reply_wait_ms` (0: six minutes, the longest
+it ever waits; less to give up sooner; see 05 §6.9), `mgm_timeout_ms`
+(30 000). Stopping or dropping the global
 stops every thread and waits for each.
 
 One cluster per global (Q3, applied 2026-10-14): an application that
@@ -224,7 +225,7 @@ its own behind (review, 2026-10-21): `read_unique_committed`, which
 runs on the transaction API, rolls back a transaction whose read is
 refused before anything goes, as a NULL key is, which ends it at
 once, and waits until the reply timeout has ended one whose
-coordinator does not answer (4012; at least two minutes unless
+coordinator does not answer (4012; six minutes unless
 `GlobalOptions::reply_wait_ms` says less), so that it can always
 close it, as the AUTO_INCREMENT counter's transactions are waited for.
 So long a wait is as the reference's: the NDB API gives up after 6

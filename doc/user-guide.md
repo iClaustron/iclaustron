@@ -93,7 +93,7 @@ is what the management server shows for its node.
 | Option | Default | Meaning |
 |---|---|---|
 | `receive_threads` | 1 | threads reading the data nodes' links; more when many threads send much |
-| `reply_wait_ms` | 0: from the configuration | how long a transaction waits for its replies before it ends with 4012; at least two minutes |
+| `reply_wait_ms` | 0: six minutes | how long a transaction waits for its replies before it ends with 4012; less to give up sooner, never more than six minutes, after which a data node will never answer |
 | `mgm_timeout_ms` | 30 000 | how long a management server has to answer |
 | `auto_increment_prefetch` | 4 096 | AUTO_INCREMENT values a refill reserves for a table (section 7) |
 | `auto_increment_step`, `auto_increment_offset` | 1, 1 | as MySQL's `auto_increment_increment` and `auto_increment_offset` (section 7) |

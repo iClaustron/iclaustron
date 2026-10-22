@@ -816,7 +816,8 @@ typedef struct {
   uint32_t receive_threads;
   /*
    How long a transaction waits for its replies before it ends with
-   4012, in milliseconds; 0 takes it from the configuration.
+   4012, in milliseconds: 0, or more than six minutes, for six
+   minutes; less to give up sooner.
    */
   uint32_t reply_wait_ms;
   /*

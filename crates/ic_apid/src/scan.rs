@@ -88,6 +88,7 @@ use crate::apid_conn::coord_index_of;
 use crate::apid_conn::ApidConnection;
 use crate::apid_conn::CoordRecord;
 use crate::apid_conn::IC_CALL_SLICE_MS;
+use crate::apid_global::IC_MAX_REPLY_WAIT_MS;
 use crate::dict_cache::IndexDef;
 use crate::dict_cache::TableDef;
 use crate::index_order::IndexOrder;
@@ -127,11 +128,12 @@ pub const IC_NDB_ERROR_SCAN_LOCK_TIMEOUT: i32 = 274;
 pub const IC_NDB_ERROR_SCAN_IDLE: i32 = 296;
 
 /// How long a scan waits for its coordinator before it ends with 4012:
-/// six minutes, fixed, whatever a transaction waits for its replies
-/// (the author, 2026-10-22; chapter 05 §7.2). A data node that stops
-/// loses its link to missed heartbeats long before; only a coordinator
-/// that stays up and, by a bug, sends nothing runs it out.
-pub const IC_SCAN_ANSWER_WAIT_MS: u64 = 360_000;
+/// six minutes, the longest a transaction waits, whatever the options
+/// say; a run's own `timeout_ms` gives up sooner (the author,
+/// 2026-10-22; chapter 05 §7.2). A data node that stops loses its link
+/// to missed heartbeats long before; only a coordinator that stays up
+/// and, by a bug, sends nothing runs it out.
+pub const IC_SCAN_ANSWER_WAIT_MS: u64 = IC_MAX_REPLY_WAIT_MS as u64;
 
 /// True if an object map id fits below the receiver tag, as a query's
 /// and a receiver's must.

@@ -753,9 +753,10 @@ pub struct GlobalOptions {
   /// every link becomes the limit. Capped at the number of data nodes.
   pub receive_threads: u32,
   /// How long a transaction waits for its replies, in milliseconds,
-  /// before it ends with 4012, its outcome unknown (chapter 06 §6.3).
-  /// Zero takes it from the configuration: at least two minutes, longer
-  /// if the data nodes' timeouts call for it. Tests set a second.
+  /// before it ends with 4012, its outcome unknown (chapter 06 §6.3):
+  /// zero for six minutes ([`IC_MAX_REPLY_WAIT_MS`]), the longest it
+  /// ever waits, so that more counts as six minutes too. Less is the
+  /// application's choice to give up sooner; tests set a second.
   pub reply_wait_ms: u32,
   /// How long to wait for a management server to answer, in
   /// milliseconds, when starting and whenever it is asked again: for a
@@ -778,6 +779,13 @@ pub struct GlobalOptions {
 
 /// How long a management server has to answer, unless the options say.
 pub const IC_DEFAULT_MGM_TIMEOUT_MS: u32 = 30_000;
+
+/// The longest a transaction waits for its replies before it ends with
+/// 4012, and how long it waits unless the options say less: six
+/// minutes, whatever the configuration. A data node that has not
+/// answered by then never will, and only a bug leaves it silent that
+/// long (the author, 2026-10-22; chapter 05 §6.9).
+pub const IC_MAX_REPLY_WAIT_MS: u32 = 360_000;
 
 /// How many AUTO_INCREMENT values a refill reserves, unless the
 /// options or the table say: eight times a MySQL server's default.
@@ -1335,11 +1343,7 @@ impl ApidGlobal {
     let scan_batch_rows = config.api.scan_batch_rows;
     let scan_batch_bytes = config.api.scan_batch_bytes;
     let scan_batch_bytes_total = config.api.scan_batch_bytes_total;
-    let reply_wait_ms = if options.reply_wait_ms > 0 {
-      options.reply_wait_ms
-    } else {
-      config.reply_wait_ms()
-    };
+    let reply_wait_ms = reply_wait_of(options.reply_wait_ms);
     let node_id_is_dynamic = connect_string.node_id.is_none();
     let mut owned_name: Option<String> = None;
     if let Some(name) = node_name {
@@ -1623,9 +1627,27 @@ pub(crate) fn period_nanos(ms: u32) -> IcTimer {
   (ms as IcTimer) * 1_000_000
 }
 
+/// The wait for a transaction's replies, in milliseconds, when the
+/// options ask for `asked`: six minutes, or less if the application
+/// asks for less; zero asks for nothing.
+fn reply_wait_of(asked: u32) -> u32 {
+  if asked > 0 && asked < IC_MAX_REPLY_WAIT_MS {
+    return asked;
+  }
+  IC_MAX_REPLY_WAIT_MS
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn a_transaction_waits_six_minutes_at_most() {
+    assert_eq!(reply_wait_of(0), IC_MAX_REPLY_WAIT_MS);
+    assert_eq!(reply_wait_of(1_000), 1_000);
+    assert_eq!(reply_wait_of(IC_MAX_REPLY_WAIT_MS), IC_MAX_REPLY_WAIT_MS);
+    assert_eq!(reply_wait_of(u32::MAX), IC_MAX_REPLY_WAIT_MS);
+  }
 
   /// A node with a pool of its own, for tests of what needs no thread.
   fn test_node(node_id: u32, heartbeat_interval_ms: u32) -> NodeShared {

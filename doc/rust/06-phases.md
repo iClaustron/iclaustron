@@ -666,7 +666,8 @@ the TEXT as MySQL wrote it.
   configuration, the largest `timeout_check_period` (parameter 129) +
   `lock_wait_limit` (131) (chapter 05 §6.9). `ic_apic`
   decodes both parameters; `GlobalOptions` may override (tests use a
-  second).
+  second). Since 2026-10-22 the wait is six minutes, fixed, which the
+  options may only shorten (§11.3).
 - A transaction notes when it last sent with replies outstanding.
   `poll` reads the clock once and walks the transactions with replies
   outstanding at most once a second.
@@ -686,8 +687,10 @@ the TEXT as MySQL wrote it.
 
 As built (2026-10-09; `timeout` and the whole suite pass): `ic_apic` decodes parameters
 129 and 131 into `DataNodeConfig`, and `ClusterConfig::reply_wait_ms`
-gives the wait; `GlobalOptions::reply_wait_ms` overrides it when not
-zero, and `ApidGlobal::reply_wait_ms` says which applies. A send reads
+gave the wait; `GlobalOptions::reply_wait_ms` overrode it when not
+zero, and `ApidGlobal::reply_wait_ms` says which applies. Since
+2026-10-22 the wait is six minutes, fixed, and the option may only
+shorten it (§11.3). A send reads
 the clock once and notes it on every transaction it sends for. A poll
 reads the clock once, after the replies it took, and at most once a
 second walks the transactions in flight
@@ -2230,6 +2233,21 @@ held, two of them in part:
   §6.1 as they stand; and the refusals of §6.5, item 8. Q6, the
   languages for smoke bindings, stays open with the bindings, which
   are later. No code changes.
+- A transaction waited for its replies, before 4012, for the larger of
+  two minutes and the data nodes' check period plus lock wait limit
+  (parameters 129 and 131), as the reference's asynchronous path does;
+  its synchronous execute waits three times that. 4012 is not a lock
+  or deadlock timeout, which the data node reports itself: it says the
+  data node will never answer, and after six minutes it never will
+  (the author, 2026-10-22; chapter 05 §6.9). The wait is now six
+  minutes, fixed, whatever the configuration (`IC_MAX_REPLY_WAIT_MS`);
+  `GlobalOptions::reply_wait_ms` may shorten it, the application's
+  choice, and a longer value counts as six minutes. Scans wait the
+  same six minutes, and their own `timeout_ms` gives up sooner.
+  `ClusterConfig::reply_wait_ms` and its two-minute floor are gone;
+  the two parameters are still decoded. Tests: a unit test of the
+  wait an option gives; the `timeout` group keeps its one-second wait.
+  Both pass (2026-10-22).
 
 ## Later — after the first version
 

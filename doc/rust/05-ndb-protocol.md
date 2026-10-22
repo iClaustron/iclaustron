@@ -1085,10 +1085,20 @@ that has stopped, or a coordinator that dropped a request train for
 lack of room (16.1), sends nothing, and the heartbeats take minutes to
 fail the node, if they fail it at all.
 
-- **How long the client waits.** The larger of 120 000 ms and, over the
-  node sections of the configuration, parameter 129 plus parameter 131
-  (our `timeout_check_period` and `lock_wait_limit`), a section without
-  them counting as 0.
+- **How long the reference waits.** The larger of 120 000 ms and, over
+  the node sections of the configuration, parameter 129 plus parameter
+  131 (our `timeout_check_period` and `lock_wait_limit`), a section
+  without them counting as 0: once a second, a transaction sent longer
+  ago than that ends with 4012. Its synchronous execute waits three
+  times as long, six minutes at the defaults, before it gives up.
+- **How long we wait** (the author, 2026-10-22): six minutes, fixed,
+  whatever the configuration (`IC_MAX_REPLY_WAIT_MS`). 4012 is not a
+  timeout of a lock or a deadlock, which the data node reports itself:
+  it says the data node will never answer, and one that has not
+  answered in six minutes never will, so that only a bug in it leaves
+  a transaction waiting that long. An application may give up sooner,
+  its own choice, with `GlobalOptions::reply_wait_ms`; nothing waits
+  longer.
 - **What the reference does then.** It fails the transaction with 4012,
   whose class is unknown result, and never uses its coordinator record
   again; in its synchronous path it also tries a rollback.

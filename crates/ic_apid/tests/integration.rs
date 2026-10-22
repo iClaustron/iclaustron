@@ -153,7 +153,7 @@ fn cluster() -> Option<Cluster> {
 }
 
 /// As [`cluster`], with transactions that give up waiting for their
-/// replies after `reply_wait_ms`, or when the configuration says if 0.
+/// replies after `reply_wait_ms`, or after six minutes if 0.
 fn cluster_with_reply_wait(reply_wait_ms: u32) -> Option<Cluster> {
   cluster_with(reply_wait_ms, 30_000)
 }
