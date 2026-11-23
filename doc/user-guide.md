@@ -717,9 +717,22 @@ where it ignores errors the operation fails alone with it. A row that
 is not there is still 626. The library knows nothing of what a code
 means: every one is a user error, permanent. A code outside the range
 fails the finish (`IC_ERROR_BAD_PROGRAM`); 6000 is the library's, for
-the program's condition. Checks are for key reads, updates and deletes:
-a scan would end on such a code, so it refuses a program that has them
+the program's condition. Checks are for reads, updates and deletes by
+primary key, as every program on a key operation is: a scan would end
+on such a code, so it refuses a program that has them
 (`IC_ERROR_NOT_SUPPORTED`).
+
+Where the transaction rolls back, every operation of it still waiting
+fails with the code too, as with any error that rolls a transaction
+back. The transaction's error says why it rolled back; the code on
+another operation does not say that operation's own check was missed.
+
+The data node runs at most 8000 instructions of a program on a row and
+fails the operation with 886 beyond that, whatever the program would
+have said. The builder limits a program's length, not what it runs, so
+it takes programs that come to it: of checks of a column against a
+constant that all pass, 2600 ran and 2700 did not (RonDB 26.10.1,
+2026-11-23).
 
 **Reading after an update.** An update can read columns back after its
 program has run, into a row of their own laid out by a record of their
@@ -898,6 +911,7 @@ asked for once it has completed.
 | 626 | no row with that key; or a program's condition did not hold, on an operation that ignores errors | user |
 | 630 | a row with that key is there already | user |
 | 893 | the row would break a unique index; the error data names it | user |
+| 886 | a program ran more than 8000 instructions on a row | user |
 | 6000 | a program's condition did not hold, on an operation that aborts on error | user |
 | 6001–6999 | the row missed a check of a program, which refused it with this code of the application's own | user |
 | 241, 283, 284, 709, 710, 723 | the table or index changed or went since it was bound | user: bind again |

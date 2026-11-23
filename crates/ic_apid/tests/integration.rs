@@ -9143,6 +9143,118 @@ fn refuse_an_update_says_which_check_its_row_missed() {
 }
 
 #[test]
+fn refuse_a_check_and_the_condition_each_keep_their_code() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if fill_ref().is_none() {
+    return;
+  }
+  let db = IC_IT_DB;
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let t = bind(&mut conn, "ref_api");
+  let id_column = t.def.field_id("id").expect("id");
+  let version = t.def.field_id("version").expect("version");
+  let balance = t.def.field_id("balance").expect("balance");
+  let key_rec = Record::default_for(&t.def, Some(&[id_column])).expect("key");
+
+  // Unless version = input 0 refuse with 6001; the condition is
+  // balance >= input 1; then balance = balance - input 1.
+  let mut b = ProgramBuilder::new(&t.def);
+  let has = b.column(version);
+  let read = b.input(0);
+  let same = b.compare(Cmp::Eq, has, read);
+  let held = b.column(balance);
+  let amount = b.input(1);
+  let enough = b.compare(Cmp::Ge, held, amount);
+  b.refuse_unless(same, IC_IT_REF_VERSION as u32);
+  let left = b.subtract(held, amount);
+  b.assign(balance, left);
+  let program = b.finish(Some(enough)).expect("the program");
+  assert!(program.own_codes());
+
+  let guarded = conn
+    .create_query(&t.def, &key_rec, &key_rec)
+    .expect("a query");
+  {
+    let query = conn.query_mut(guarded).expect("the query");
+    query.set_program(Some(&program)).expect("the program");
+    query.set_input(0, 5).expect("the version");
+    query.set_input(1, 50).expect("the amount");
+  }
+
+  // Row 3 misses the check, and the condition too: the check's code
+  // whatever the abort option. Row 2 passes the check and misses the
+  // condition: 6000 where the update aborts on error, 626 where it
+  // ignores errors. Row 1 passes both and is updated.
+  let no_row = key_op::IC_NDB_ERROR_NO_SUCH_ROW as i32;
+  let cases: [(i64, AbortOption, Option<i32>); 6] = [
+    (3, AbortOption::Default, Some(IC_IT_REF_VERSION)),
+    (3, AbortOption::IgnoreError, Some(IC_IT_REF_VERSION)),
+    (2, AbortOption::Default, Some(6000)),
+    (2, AbortOption::IgnoreError, Some(no_row)),
+    (1, AbortOption::Default, None),
+    (1, AbortOption::IgnoreError, None),
+  ];
+  for (id, option, want) in cases {
+    let aborts = option == AbortOption::Default;
+    let query = conn.query_mut(guarded).expect("the query");
+    text_row::put_value(&key_rec, 0, &id.to_string(), query.key_row_mut())
+      .expect("id");
+    let tid = conn
+      .start_transaction(TransactionHint::Any, Some(&t.def))
+      .expect("a transaction");
+    let write = WriteKeyArgs {
+      kind: WriteKind::Update,
+      abort_option: option,
+      ..WriteKeyArgs::default()
+    };
+    conn
+      .write_key(guarded, tid, &write)
+      .expect("the guarded update");
+    conn.commit_transaction(tid).expect("commit");
+    let state = finish(&mut conn, tid);
+    let query_error = conn.query(guarded).expect("the query").error();
+    let trans_error = conn.transaction(tid).expect("the transaction").error();
+    conn.close_transaction(tid).expect("close");
+    let what = format!(
+      "row {}, aborts {}: {:?} {:?}",
+      id, aborts, query_error, trans_error
+    );
+    match want {
+      None => {
+        assert_eq!(state, CommitState::Committed, "{}", what);
+        assert!(query_error.is_none(), "{}", what);
+      }
+      Some(code) if aborts => {
+        assert_eq!(state, CommitState::RolledBack, "{}", what);
+        let mut said: bool = false;
+        for e in [query_error, trans_error].into_iter().flatten() {
+          said = said || e.code == code;
+          // No other refusal's code is said in its place.
+          for other in [IC_IT_REF_VERSION, 6000, no_row] {
+            assert!(other == code || e.code != other, "{}", what);
+          }
+        }
+        assert!(said, "{} said: {}", code, what);
+      }
+      Some(code) => {
+        assert_eq!(state, CommitState::Committed, "{}", what);
+        assert_eq!(query_error.map(|e| e.code), Some(code), "{}", what);
+      }
+    }
+  }
+  // Row 1 was taken from twice, the others not at all.
+  let rows = count_of(&format!(
+    "SELECT COUNT(*) FROM {db}.ref_api WHERE (id = 1 AND balance = 0) \
+     OR (id = 2 AND balance = 10) OR (id = 3 AND balance = 10)",
+    db = db
+  ));
+  assert_eq!(rows, 3, "only the row that passed both was updated");
+}
+
+#[test]
 fn refuse_reads_and_deletes_take_checks_and_scans_do_not() {
   let cluster = match cluster() {
     Some(cluster) => cluster,

@@ -467,10 +467,12 @@ impl ProgramBuilder {
       c.w.place(to);
       c.w.refuse(check.code);
     }
-    c.w.finish()?;
+    // The length first: a program too long may also have a jump too
+    // far, and is to be called too long.
     if c.w.len() > IC_MAX_PROGRAM_WORDS {
       return Err(IcError::new(err::IC_ERROR_CONDITION_TOO_COMPLEX));
     }
+    c.w.finish()?;
     Ok(Arc::new(Program {
       table: Arc::clone(&self.table),
       code: c.w.words().to_vec(),
@@ -1895,6 +1897,31 @@ mod tests {
     let top = f.compare_int(Cmp::Gt, VAL, 100);
     let p = f.b.finish(Some(top)).expect("finish");
     assert!(!p.own_codes());
+  }
+
+  #[test]
+  fn a_program_too_long_for_its_checks_is_called_too_long() {
+    // A check is three words and its refusal one; with the acceptance
+    // 7 999 checks are 31 997 words, 8 000 are 32 001.
+    let build = |checks: u32| {
+      let mut f = Fixture::new();
+      let above = f.compare_int(Cmp::Gt, VAL, 100);
+      let mut i: u32 = 0;
+      while i < checks {
+        f.b.refuse_unless(above, 6001 + i % 999);
+        i += 1;
+      }
+      f.b.finish(None)
+    };
+    let p = build(7_999).expect("the longest");
+    assert_eq!(p.words().len(), 31_997);
+    assert_eq!(p.words()[31_996], (6001 + 7_998 % 999) << 16 | 0x13);
+    let e = build(8_000).expect_err("one more");
+    assert_eq!(e.code, err::IC_ERROR_CONDITION_TOO_COMPLEX);
+    // The first of 11 000 checks jumps further than a jump reaches:
+    // the program is still called too long.
+    let e = build(11_000).expect_err("a jump too far");
+    assert_eq!(e.code, err::IC_ERROR_CONDITION_TOO_COMPLEX);
   }
 
   #[test]

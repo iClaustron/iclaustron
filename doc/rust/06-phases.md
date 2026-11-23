@@ -2360,6 +2360,14 @@ for it (chapter 05 §9.4).
   deletes; a scan's and a scan shape's refusal; four updates in one
   request through an executor, each saying its own, and one that
   aborts. The C API's program test does the same through the header.
+- After a review the same day: a live test of a check before a
+  condition (the check's code under either abort option, 6000 or 626
+  for the condition, the update where both hold); a program too long is
+  called too long (`IC_ERROR_CONDITION_TOO_COMPLEX`) also where one of
+  its jumps is too far, which said `IC_ERROR_RECORD_SIZE_TOO_BIG`
+  before, with a unit test at the limit; 886, the data node's limit of
+  8000 instructions on a row, is in the error table and the user guide
+  (Q21).
 - The `conditional_update` example, in Rust and in C, takes an amount
   from a row only if it is the caller's and holds enough, and is told
   6001 or 6002.
@@ -2368,7 +2376,8 @@ for it (chapter 05 §9.4).
   (the operation's type, the interpreter's outputs); those stay with
   the full interpreter, below. Three questions it raised are open
   (chapter 10): whether 6000 is the application's too, checks on a
-  scan, and a `refuse_if`.
+  scan, a `refuse_if`, and programs that run past the data node's
+  limit.
 
 ## Later — after the first version
 

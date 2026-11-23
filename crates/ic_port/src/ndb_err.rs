@@ -517,6 +517,11 @@ const IC_NDB_ERRORS: &[ErrorEntry] = &[
     text: "The program read or wrote a column the table does not have",
   },
   ErrorEntry {
+    code: 886,
+    class: ErrorClass::Application,
+    text: "The program ran more than 8000 instructions on a row",
+  },
+  ErrorEntry {
     code: 882,
     class: ErrorClass::Application,
     text: "The sizes of the program's parts do not add up",
