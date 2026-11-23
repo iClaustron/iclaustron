@@ -241,6 +241,13 @@ pub const IC_NDB_ERROR_SCAN_IDLE: i32 = 296;
 /// error, which rolls the transaction back (ours, in NDB's range for
 /// programs).
 pub const IC_NDB_ERROR_CONDITION: i32 = 6000;
+/// The first of the codes a program's checks may refuse with, the
+/// application's own: `ic_program_refuse_unless` takes a code from this
+/// to `IC_NDB_ERROR_OWN_LAST`, and an operation whose row misses the
+/// check fails with it (NDB's range for programs, after ours).
+pub const IC_NDB_ERROR_OWN_FIRST: i32 = 6001;
+/// The last of the codes of the application's own.
+pub const IC_NDB_ERROR_OWN_LAST: i32 = 6999;
 
 /// A text that is not a connectstring.
 pub const IC_ERROR_PARSE_CONNECTSTRING: i32 = 7056;
@@ -6038,6 +6045,38 @@ pub unsafe extern "C" fn ic_program_assign_if(
   })
 }
 
+/// A check: unless `cond` is true the program refuses the row with
+/// `code`, a code of the application's own, `IC_NDB_ERROR_OWN_FIRST` to
+/// `IC_NDB_ERROR_OWN_LAST`, so that a failed operation says which check
+/// its row missed. Checks are made in the order given, before the
+/// program's condition and its assignments, and the first the row
+/// misses decides the code; a condition that is unknown, from a NULL,
+/// is missed. The operation fails with the code whatever its abort
+/// option, which alone decides whether its transaction is rolled back.
+/// A program with checks runs on key operations only: a scan refuses it
+/// (`IC_ERROR_NOT_SUPPORTED`). What is wrong, another code among it,
+/// comes back from the finish (`IC_ERROR_BAD_PROGRAM`).
+///
+/// # Safety
+///
+/// As `ic_program_column`.
+#[no_mangle]
+pub unsafe extern "C" fn ic_program_refuse_unless(
+  builder: *mut IcProgramBuilder,
+  cond: IcProgramCond,
+  code: u32,
+) -> i32 {
+  // SAFETY: the caller's promise.
+  let b = match unsafe { builder_of(builder) } {
+    Some(b) => b,
+    None => return err::IC_ERROR_NULL_POINTER,
+  };
+  guarded(|| {
+    b.refuse_unless(Cond::from_u32(cond), code);
+    0
+  })
+}
+
 /// The program's handle, made from a compiled program.
 fn program_out(made: Arc<Program>, program: *mut *mut IcProgram) -> i32 {
   let handle = Box::into_raw(Box::new(made)) as *mut IcProgram;
@@ -6164,7 +6203,9 @@ pub unsafe extern "C" fn ic_program_inputs(program: *const IcProgram) -> u32 {
 /// checked as each is defined (`IC_ERROR_NOT_SUPPORTED`). A row the
 /// program refuses fails the query with `IC_NDB_ERROR_CONDITION` where it
 /// aborts on error, rolling the transaction back, and with
-/// `IC_NDB_ERROR_NO_SUCH_ROW` where it ignores errors.
+/// `IC_NDB_ERROR_NO_SUCH_ROW` where it ignores errors; a row that misses
+/// one of the program's checks fails it with the check's code in both
+/// (`ic_program_refuse_unless`).
 ///
 /// Errors: `IC_ERROR_BAD_PROGRAM` for a program of another table;
 /// `IC_ERROR_TRANSACTION_ACTIVE` while the query is defined or sent;
@@ -6282,7 +6323,8 @@ pub unsafe extern "C" fn ic_apid_query_after_row(
 /// a NULL `program`: a row it refuses is passed over at the data node.
 ///
 /// Errors: `IC_ERROR_BAD_PROGRAM` for a program of another table;
-/// `IC_ERROR_NOT_SUPPORTED` for one that assigns; `IC_ERROR_SCAN_ACTIVE`
+/// `IC_ERROR_NOT_SUPPORTED` for one that assigns, or one with checks,
+/// whose codes would end the scan; `IC_ERROR_SCAN_ACTIVE`
 /// while a run is on; `IC_ERROR_NO_SUCH_FIELD` for an id that names no
 /// scan.
 ///
@@ -6411,8 +6453,8 @@ pub unsafe extern "C" fn ic_op_shape_reading_after(
 /// a scan.
 ///
 /// Errors: `IC_ERROR_BAD_PROGRAM` for a program of another table;
-/// `IC_ERROR_NOT_SUPPORTED` for one that assigns. The new shape is the
-/// caller's, freed with `ic_scan_shape_free`.
+/// `IC_ERROR_NOT_SUPPORTED` for one that assigns, or one with checks.
+/// The new shape is the caller's, freed with `ic_scan_shape_free`.
 ///
 /// # Safety
 ///
@@ -6901,6 +6943,24 @@ mod tests {
     );
     assert!(IcError::new(IC_NDB_ERROR_CONDITION).is_ndb_error());
     assert!(!IcError::new(IC_NDB_ERROR_CONDITION).is_temporary());
+    assert_eq!(
+      IC_NDB_ERROR_OWN_FIRST as u16,
+      ic_signals::interp::IC_REFUSE_OWN_FIRST
+    );
+    assert_eq!(
+      IC_NDB_ERROR_OWN_LAST as u16,
+      ic_signals::interp::IC_REFUSE_OWN_LAST
+    );
+    assert_eq!(
+      IC_NDB_ERROR_OWN_FIRST,
+      ic_port::ndb_err::IC_NDB_ERROR_OWN_FIRST
+    );
+    assert_eq!(
+      IC_NDB_ERROR_OWN_LAST,
+      ic_port::ndb_err::IC_NDB_ERROR_OWN_LAST
+    );
+    assert!(IcError::new(IC_NDB_ERROR_OWN_FIRST).is_ndb_error());
+    assert!(!IcError::new(IC_NDB_ERROR_OWN_LAST).is_temporary());
     assert_eq!(IC_PROGRAM_INPUTS, ic_apid::program::IC_PROGRAM_INPUTS);
     assert_eq!(cmp_from_c(IC_CMP_LE), Some(Cmp::Le));
     assert_eq!(cmp_from_c(6), None);

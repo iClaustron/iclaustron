@@ -9,6 +9,9 @@
  *   value read back after the update, all in one round trip.
  * - A scan whose filter passes over, on the data nodes, every row but
  *   this example's with val above an input and a name.
+ * - Checks: an update that takes an amount from val only if the row's
+ *   code is the caller's and val is enough, and says which of the two
+ *   failed with a code of this example's own, 6001 or 6002.
  *
  *   ./conditional_update [connectstring]
  *
@@ -24,6 +27,12 @@
 /* The filter's bound on val: rows 5 to 9 are above it, and of those 5,
  * 7 and 9 have a name. */
 #define EX_COND_VAL_ABOVE 40
+/* Codes of this example's own, which an application's are from
+ * IC_NDB_ERROR_OWN_FIRST to IC_NDB_ERROR_OWN_LAST, 6001 to 6999: the
+ * row's code is not the caller's, and val is less than the amount to
+ * take. */
+#define EX_COND_NOT_OURS 6001
+#define EX_COND_TOO_LITTLE 6002
 
 /* A record over id alone in a struct t1_row: the key, and what the
  * counter's update writes, which leaves val to its program. */
@@ -95,9 +104,18 @@ int main(int argc, char **argv)
   IC_TABLE_DEF *table;
   IC_RECORD *rec, *id_rec, *name_rec, *val_rec;
   IC_PROGRAM_BUILDER *b;
-  IC_PROGRAM *still, *plus, *filter;
+  IC_PROGRAM *still, *plus, *filter, *taking;
   IC_PROGRAM_COND same, ours, wanted;
-  IC_QUERY_ID guarded, counter;
+  IC_QUERY_ID guarded, counter, take_query;
+  /* Who asks, how much to take, and what the update ends with. */
+  static const struct {
+    int64_t caller;
+    int64_t amount;
+    int32_t expected;
+  } takes[4] = {{999, 5, EX_COND_NOT_OURS},
+                {EX_COND_FIRST + 2, 50, EX_COND_TOO_LITTLE},
+                {999, 50, EX_COND_NOT_OURS},
+                {EX_COND_FIRST + 2, 5, 0}};
   IC_SCAN_ID scan;
   IC_SCAN_ARGS args;
   struct t1_row row;
@@ -105,12 +123,13 @@ int main(int argc, char **argv)
   char name[16];
   size_t len;
   bool found, more;
-  uint32_t id, val, name_id, place, times, seen = 0, count = 0;
+  uint32_t id, val, code, name_id, place, times, seen = 0, count = 0;
   int32_t error;
 
   EX_CHECK(ic_apid_conn_table_bind(conn, EX_DB, EX_TABLE, &table));
   id = ex_field(table, "id");
   val = ex_field(table, "val");
+  code = ex_field(table, "code");
   name_id = ex_field(table, "name");
   rec = ex_t1_record(table, 0);
   id_rec = id_record(table);
@@ -235,11 +254,67 @@ int main(int argc, char **argv)
            "the filter lets through 305, 307, 309");
 
   EX_CHECK(ic_apid_scan_free(conn, scan));
+
+  /* 4. Checks on row 302, whose code is 302 and val 20: unless code is
+   * input 0 the program refuses the row with 6001, unless val is at
+   * least input 1 with 6002, in that order; a row that passes both has
+   * input 1 taken from its val. The update fails with the code of the
+   * first check its row misses, whatever its abort option, so the
+   * application knows which without reading the row. A scan takes no
+   * program with checks. */
+  EX_CHECK(ic_program_builder_create(table, &b));
+  EX_CHECK(ic_program_refuse_unless(
+      b,
+      ic_program_compare(b, IC_CMP_EQ, ic_program_column(b, code),
+                         ic_program_input(b, 0)),
+      EX_COND_NOT_OURS));
+  EX_CHECK(ic_program_refuse_unless(
+      b,
+      ic_program_compare(b, IC_CMP_GE, ic_program_column(b, val),
+                         ic_program_input(b, 1)),
+      EX_COND_TOO_LITTLE));
+  EX_CHECK(ic_program_assign(
+      b, val,
+      ic_program_subtract(b, ic_program_column(b, val),
+                          ic_program_input(b, 1))));
+  EX_CHECK(ic_program_builder_finish_no_condition(b, &taking));
+  ic_program_builder_free(b);
+  EX_CHECK(ic_apid_query_create(conn, table, id_rec, id_rec, &take_query));
+  EX_CHECK(ic_apid_query_set_program(conn, take_query, taking));
+  ex_fill(&row, EX_COND_FIRST + 2, 0, 0, NULL);
+  put_rows(conn, take_query, &row);
+  for (times = 0; times < 4; times++) {
+    EX_CHECK(ic_apid_query_set_input(conn, take_query, 0,
+                                     takes[times].caller));
+    EX_CHECK(ic_apid_query_set_input(conn, take_query, 1,
+                                     takes[times].amount));
+    error = update_and_wait(conn, table, take_query, IC_ABORT_DEFAULT);
+    ex_check(error == takes[times].expected,
+             "the update says 6001 for another's row, 6002 for too little");
+    if (error != 0)
+      printf("row 302: take %d as %d: refused with %d\n",
+             (int)takes[times].amount, (int)takes[times].caller, (int)error);
+    else
+      printf("row 302: take %d as %d: committed\n",
+             (int)takes[times].amount, (int)takes[times].caller);
+  }
+  ex_fill(&key, EX_COND_FIRST + 2, 0, 0, NULL);
+  EX_CHECK(ic_apid_conn_read_committed(conn, rec, (const uint8_t *)&key,
+                                       sizeof key, rec, (uint8_t *)&row,
+                                       sizeof row, &found));
+  ex_check(found, "row 302 is there");
+  ex_print("row 302", &row);
+  ex_check(!(row.null_bits & EX_VAL_NULL) && row.val == 15,
+           "row 302 is val 15: only the update that passed both checks "
+           "took 5");
+
+  EX_CHECK(ic_apid_query_free(conn, take_query));
   EX_CHECK(ic_apid_query_free(conn, guarded));
   EX_CHECK(ic_apid_query_free(conn, counter));
   ic_program_free(still);
   ic_program_free(plus);
   ic_program_free(filter);
+  ic_program_free(taking);
   ic_record_free(val_rec);
   ic_record_free(name_rec);
   ic_record_free(id_rec);

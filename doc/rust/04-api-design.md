@@ -1013,6 +1013,21 @@ between them, without subroutine ids for the caller to keep:
   scanned row, for later. A unique `OpShape` refuses `with_program`
   and `reading_after`.
 
+- **Checks (phase 11.5, 2026-11-23)**: `refuse_unless(cond, code)` on
+  the builder, any number of times, each a condition the row must meet
+  and the code of the application's own, 6001 to 6999, that the
+  program refuses with when it does not; another code fails the finish
+  (`IC_ERROR_BAD_PROGRAM`). The checks come first, in the order given,
+  then the condition and the assignments, and unknown counts as
+  missed, as for the condition. A check's code is not rewritten as the
+  program goes out: the operation fails with it under either abort
+  option, and the option alone decides whether the transaction goes
+  too. `Program::own_codes()` says a program has checks; a scan
+  refuses such a program (`IC_ERROR_NOT_SUPPORTED`), on a connection
+  and as a `ScanShape`, since any code but 626 and 899 ends a scan
+  (chapter 05 §9.4). The error table classes 6001 to 6999 as raised by
+  the application's program, permanent, with one text for all.
+
 C follows the Rust API by the ABI's rules below, as the scans' did.
 
 ### AUTO_INCREMENT (phase 9.2; agreed with the author 2026-10-20)
@@ -1418,7 +1433,9 @@ executor: `ic_op_shape_with_program(shape, program, &out)`,
 `ic_scan_shape_with_program(shape, program, &out)`, each a new shape
 the caller frees; `ic_request_set_input(req, op, n, value)`,
 `ic_request_after_row(req, op, &len)`,
-`ic_scan_reader_set_input(reader, n, value)`. `IC_NDB_ERROR_CONDITION`
+`ic_scan_reader_set_input(reader, n, value)`. Checks (phase 11.5):
+`ic_program_refuse_unless(b, cond, code)`, with `IC_NDB_ERROR_OWN_FIRST`
+(6001) and `IC_NDB_ERROR_OWN_LAST` (6999). `IC_NDB_ERROR_CONDITION`
 (6000), `IC_ERROR_CONDITION_TOO_COMPLEX` (7130),
 `IC_ERROR_NOT_COMPARABLE` (7164), `IC_ERROR_BAD_PROGRAM` (7165),
 `IC_PROGRAM_INPUTS` (16).

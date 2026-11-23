@@ -497,7 +497,7 @@ impl ApidQuery {
     self.check_idle()?;
     match program {
       Some(program) => {
-        program::check_program(program, &self.table, true)?;
+        program::check_program(program, &self.table, true, false)?;
         self.program = Some(Arc::clone(program));
       }
       None => self.program = None,

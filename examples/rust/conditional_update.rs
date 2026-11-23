@@ -12,6 +12,9 @@
 //!   value read back after the update, all in one round trip.
 //! - A scan whose filter passes over, on the data nodes, every row but
 //!   this example's with val above an input and a name.
+//! - Checks: an update that takes an amount from val only if the row's
+//!   code is the caller's and val is enough, and says which of the two
+//!   failed with a code of this example's own, 6001 or 6002.
 //!
 //! ```text
 //! cargo run -p ic_examples --example conditional_update -- [connectstring]
@@ -56,6 +59,11 @@ const EX_COND_ROWS: u32 = 10;
 /// The filter's bound on val: rows 5 to 9 are above it, and of those
 /// 5, 7 and 9 have a name.
 const EX_COND_VAL_ABOVE: i64 = 40;
+/// A code of this example's own: the row's code is not the caller's.
+/// An application's codes are 6001 to 6999.
+const EX_COND_NOT_OURS: u32 = 6001;
+/// A code of this example's own: val is less than the amount to take.
+const EX_COND_TOO_LITTLE: u32 = 6002;
 
 /// Write this example's rows, over whatever an earlier run left.
 fn write_rows(conn: &mut ApidConnection, t1: &T1) -> Result<(), IcError> {
@@ -127,6 +135,24 @@ fn filter(t1: &T1) -> Result<Arc<Program>, IcError> {
   let wanted = b.and(above, named);
   let both = b.and(ours, wanted);
   b.finish(Some(both))
+}
+
+/// The checked update: unless code is input 0 it refuses the row with
+/// 6001, unless val is at least input 1 with 6002, in that order; a row
+/// that passes both has input 1 taken from its val.
+fn take(t1: &T1) -> Result<Arc<Program>, IcError> {
+  let mut b = ProgramBuilder::new(&t1.table);
+  let code = b.column(t1.code);
+  let caller = b.input(0);
+  let ours = b.compare(Cmp::Eq, code, caller);
+  let val = b.column(t1.val);
+  let amount = b.input(1);
+  let enough = b.compare(Cmp::Ge, val, amount);
+  b.refuse_unless(ours, EX_COND_NOT_OURS);
+  b.refuse_unless(enough, EX_COND_TOO_LITTLE);
+  let left = b.subtract(val, amount);
+  b.assign(t1.val, left);
+  b.finish(None)
 }
 
 /// Define an update on `query` as a transaction of its own, ask to
@@ -277,6 +303,56 @@ fn run(args: &[String]) -> Result<(), IcError> {
     "the filter lets through 305, 307, 309",
   )?;
   conn.free_scan(scan)?;
+
+  // 4. Checks on row 302, whose code is 302 and val 20: the update
+  // fails with the code of the first check its row misses, whatever its
+  // abort option, so the application knows which without reading the
+  // row. A scan takes no program with checks.
+  let taking = take(&t1)?;
+  let take_query = conn.create_query(&t1.table, &id_rec, &id_rec)?;
+  match conn.query_mut(take_query) {
+    Some(query) => {
+      query.set_program(Some(&taking))?;
+      put_u32(&id_rec, query.key_row_mut(), t1.id, EX_COND_FIRST + 2)?;
+      put_u32(&id_rec, query.attr_row_mut(), t1.id, EX_COND_FIRST + 2)?;
+    }
+    None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
+  }
+  let ours = i64::from(EX_COND_FIRST + 2);
+  for (caller, amount, expected) in [
+    (999, 5, Some(EX_COND_NOT_OURS)),
+    (ours, 50, Some(EX_COND_TOO_LITTLE)),
+    (999, 50, Some(EX_COND_NOT_OURS)),
+    (ours, 5, None),
+  ] {
+    match conn.query_mut(take_query) {
+      Some(query) => {
+        query.set_input(0, caller)?;
+        query.set_input(1, amount)?;
+      }
+      None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
+    }
+    let ended =
+      update_and_wait(&mut conn, &t1, take_query, AbortOption::Default)?;
+    let said = ended.map(|e| e.code as u32);
+    check(
+      said == expected,
+      "the update says 6001 for another's row, 6002 for too little",
+    )?;
+    match said {
+      Some(code) => println!(
+        "row 302: take {} as {}: refused with {}",
+        amount, caller, code
+      ),
+      None => println!("row 302: take {} as {}: committed", amount, caller),
+    }
+  }
+  let row = read_and_print(&mut conn, &t1, EX_COND_FIRST + 2, "row 302")?;
+  check(
+    get_i32(&t1.rec, &row, t1.val) == Some(15),
+    "row 302 is val 15: only the update that passed both checks took 5",
+  )?;
+  conn.free_query(take_query)?;
   conn.free_query(guarded)?;
   conn.free_query(counter)
 }

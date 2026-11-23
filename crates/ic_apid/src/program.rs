@@ -51,6 +51,16 @@
 //! **The refusal's code** is set as the program goes out with an
 //! operation: 626 where a missed condition is not to abort, 6000 where
 //! it is (chapter 05 §9.4).
+//!
+//! **Checks** are conditions with refusal codes of the application's
+//! own, 6001 to 6999, so that a failed operation says which of them the
+//! row missed. They come first, in the order given, each jumping to a
+//! `REFUSE` of its own when it is not true; those stand after the rest
+//! of the program, so every jump still goes forward. A check's code is
+//! not changed as the program goes out: the operation fails with it
+//! whatever its abort option, which alone decides whether the
+//! transaction goes with it. A scan would end on such a code, so a
+//! program with checks runs on key operations only.
 
 use std::sync::Arc;
 
@@ -219,6 +229,14 @@ struct Assignment {
   condition: Option<Cond>,
 }
 
+/// A condition the row must meet, and the code of the application's
+/// own the program refuses with when it does not.
+#[derive(Debug)]
+struct Check {
+  condition: Cond,
+  code: u16,
+}
+
 /// A condition and assignments being built over a table, compiled by
 /// [`finish`](Self::finish).
 ///
@@ -248,6 +266,7 @@ pub struct ProgramBuilder {
   values: Vec<ValueNode>,
   conds: Vec<CondNode>,
   assignments: Vec<Assignment>,
+  checks: Vec<Check>,
   error: Option<IcError>,
 }
 
@@ -259,6 +278,7 @@ impl ProgramBuilder {
       values: Vec::new(),
       conds: Vec::new(),
       assignments: Vec::new(),
+      checks: Vec::new(),
       error: None,
     }
   }
@@ -370,8 +390,30 @@ impl ProgramBuilder {
     self.push_assignment(column, value, Some(condition));
   }
 
-  /// Compile the condition under `top`, none for a program that only
-  /// assigns, with the assignments. The first error met in building
+  /// A check: unless `condition` is true the program refuses the row
+  /// with `code`, a code of the application's own, 6001 to 6999
+  /// (`IC_ERROR_BAD_PROGRAM` for another). Checks are made in the order
+  /// given, before the program's condition and its assignments, and the
+  /// first the row misses decides the code; a condition that is unknown,
+  /// from a NULL, is missed. The operation fails with the code whatever
+  /// its abort option. A program with checks is for key operations: a
+  /// scan refuses it (`IC_ERROR_NOT_SUPPORTED`).
+  pub fn refuse_unless(&mut self, condition: Cond, code: u32) {
+    self.check_cond(condition);
+    if code < u32::from(interp::IC_REFUSE_OWN_FIRST)
+      || code > u32::from(interp::IC_REFUSE_OWN_LAST)
+    {
+      self.fail(err::IC_ERROR_BAD_PROGRAM);
+      return;
+    }
+    self.checks.push(Check {
+      condition,
+      code: code as u16,
+    });
+  }
+
+  /// Compile the checks, the condition under `top`, none for a program
+  /// without one, and the assignments. The first error met in building
   /// comes back here.
   pub fn finish(&self, top: Option<Cond>) -> Result<Arc<Program>, IcError> {
     if let Some(e) = self.error {
@@ -385,6 +427,14 @@ impl ProgramBuilder {
       inputs: 0,
       terms: 0,
     };
+    // Each check jumps to its own refusal, placed after the rest.
+    let mut missed: Vec<Label> = Vec::with_capacity(self.checks.len());
+    for check in &self.checks {
+      let tree = c.normalize(check.condition, false, 0)?;
+      let to = c.w.new_label();
+      c.cond(&tree, to, false)?;
+      missed.push(to);
+    }
     match top {
       Some(top) => {
         if top.0 as usize >= self.conds.len() {
@@ -413,6 +463,10 @@ impl ProgramBuilder {
         c.w.accept();
       }
     }
+    for (check, to) in self.checks.iter().zip(missed) {
+      c.w.place(to);
+      c.w.refuse(check.code);
+    }
     c.w.finish()?;
     if c.w.len() > IC_MAX_PROGRAM_WORDS {
       return Err(IcError::new(err::IC_ERROR_CONDITION_TOO_COMPLEX));
@@ -424,6 +478,7 @@ impl ProgramBuilder {
       updates: c.updates,
       inputs: c.inputs,
       writes: !self.assignments.is_empty(),
+      own_codes: !self.checks.is_empty(),
       uses_disk: self.uses_disk(),
     }))
   }
@@ -528,15 +583,19 @@ impl ProgramBuilder {
 #[derive(Debug)]
 pub struct Program {
   table: Arc<TableDef>,
-  /// The instructions, refusing with 626.
+  /// The instructions, the condition refusing with 626 and each check
+  /// with its own code.
   code: Vec<u32>,
-  /// Where the `REFUSE` words are, for another code.
+  /// Where the condition's `REFUSE` words are, for another code; the
+  /// checks' are not among them.
   refusals: Vec<u32>,
   /// The updates after the program, as a write sends them.
   updates: Vec<u32>,
   /// The inputs it reads, a bit each.
   inputs: u32,
   writes: bool,
+  /// It has checks, which refuse with codes of the application's own.
+  own_codes: bool,
   /// It reads or assigns a column kept on disk.
   uses_disk: bool,
 }
@@ -563,6 +622,12 @@ impl Program {
     self.writes
   }
 
+  /// True if it has checks, which refuse with codes of the
+  /// application's own: a key operation may run it, a scan may not.
+  pub fn own_codes(&self) -> bool {
+    self.own_codes
+  }
+
   /// True if it reads or assigns a column kept on disk: an operation
   /// running it reads the disk, whatever else it reads (chapter 05
   /// §7.2, flag 9).
@@ -575,7 +640,8 @@ impl Program {
     self.inputs
   }
 
-  /// Its instructions, appended to `out`, refusing with `refusal`.
+  /// Its instructions, appended to `out`, its condition refusing with
+  /// `refusal`; a check refuses with its own code whatever that is.
   pub fn code_into(&self, refusal: u16, out: &mut Vec<u32>) {
     let start = out.len();
     out.extend_from_slice(&self.code);
@@ -659,12 +725,15 @@ pub(crate) fn scan_section_into(
   section.end_part();
 }
 
-/// Refuse a program over another table than `table`, or one that
-/// assigns columns where only a read or a delete runs it.
+/// Refuse a program over another table than `table`, one that assigns
+/// columns where only a read or a delete runs it, or one with checks
+/// where a scan runs it: a code of the application's own would end the
+/// scan (chapter 05 §9.4).
 pub(crate) fn check_program(
   program: &Program,
   table: &TableDef,
   may_write: bool,
+  is_scan: bool,
 ) -> Result<(), IcError> {
   let ours = program.table();
   if ours.table_id() != table.table_id()
@@ -673,6 +742,9 @@ pub(crate) fn check_program(
     return Err(IcError::new(err::IC_ERROR_BAD_PROGRAM));
   }
   if program.writes() && !may_write {
+    return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
+  }
+  if program.own_codes() && is_scan {
     return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
   }
   Ok(())
@@ -1722,6 +1794,110 @@ mod tests {
   }
 
   #[test]
+  fn each_check_refuses_with_its_own_code_after_the_rest() {
+    // Unless val > 100 refuse with 6001, unless val < 30000 with 6002:
+    // each test jumps to its own REFUSE, which stand after the ACCEPT
+    // in the order of the checks.
+    let mut f = Fixture::new();
+    let above = f.compare_int(Cmp::Gt, VAL, 100);
+    let below = f.compare_int(Cmp::Lt, VAL, 30000);
+    f.b.refuse_unless(above, 6001);
+    f.b.refuse_unless(below, 6002);
+    let p = f.b.finish(None).expect("finish");
+    assert_eq!(
+      p.words(),
+      [
+        0x0007_5097,
+        0x0001_0004,
+        0x0000_0064,
+        0x0005_3097,
+        0x0001_0004,
+        0x0000_7530,
+        0x12,
+        0x1771_0013,
+        0x1772_0013
+      ]
+    );
+    assert!(p.own_codes());
+    assert!(!p.writes());
+  }
+
+  #[test]
+  fn a_checks_code_is_kept_whatever_the_operations() {
+    // A check before a condition: the condition's refusal takes the
+    // operation's code, the check's keeps its own.
+    let mut f = Fixture::new();
+    let above = f.compare_int(Cmp::Gt, VAL, 100);
+    f.b.refuse_unless(above, 6999);
+    let top = f.compare_int(Cmp::Gt, VAL, 190000);
+    let p = f.b.finish(Some(top)).expect("finish");
+    assert_eq!(
+      p.words(),
+      [
+        0x0008_5097,
+        0x0001_0004,
+        0x0000_0064,
+        0x0004_5097,
+        0x0001_0004,
+        0x0002_e630,
+        0x12,
+        0x0272_0013,
+        0x1b57_0013
+      ]
+    );
+    let mut out = Vec::new();
+    p.code_into(interp::IC_REFUSE_CONDITION, &mut out);
+    assert_eq!(out[7], 0x1770_0013);
+    assert_eq!(out[8], 0x1b57_0013);
+    assert_eq!(out[..7], p.words()[..7]);
+    out.clear();
+    p.code_into(interp::IC_REFUSE_NO_ROW, &mut out);
+    assert_eq!(out, p.words());
+    // A check on an OR: the terms but the last skip past when true.
+    let mut f = Fixture::new();
+    let low = f.compare_int(Cmp::Lt, VAL, 100);
+    let high = f.compare_int(Cmp::Gt, VAL, 30000);
+    let either = f.b.or(low, high);
+    f.b.refuse_unless(either, 6001);
+    let p = f.b.finish(None).expect("finish");
+    assert_eq!(p.words().len(), 8);
+    assert_eq!(p.words()[6], 0x12);
+    assert_eq!(p.words()[7], 0x1771_0013);
+  }
+
+  #[test]
+  fn a_check_takes_only_a_code_of_the_applications_own() {
+    for code in [0, 626, 899, 6000, 7000, 70_000] {
+      let mut f = Fixture::new();
+      let above = f.compare_int(Cmp::Gt, VAL, 100);
+      f.b.refuse_unless(above, code);
+      let e = f.b.finish(None).expect_err("code");
+      assert_eq!(e.code, err::IC_ERROR_BAD_PROGRAM, "code {}", code);
+    }
+    // A condition the builder did not make.
+    let mut f = Fixture::new();
+    f.b.refuse_unless(Cond::from_u32(7), 6001);
+    let e = f.b.finish(None).expect_err("condition");
+    assert_eq!(e.code, err::IC_ERROR_BAD_PROGRAM);
+    // A scan would end on the code, so it refuses the program; a key
+    // operation takes it.
+    let t = table();
+    let mut f = Fixture::new();
+    let above = f.compare_int(Cmp::Gt, VAL, 100);
+    f.b.refuse_unless(above, 6001);
+    let p = f.b.finish(None).expect("finish");
+    let e = check_program(&p, &t, false, true).expect_err("scan");
+    assert_eq!(e.code, err::IC_ERROR_NOT_SUPPORTED);
+    assert!(check_program(&p, &t, true, false).is_ok());
+    assert!(check_program(&p, &t, false, false).is_ok());
+    // Without checks a program has no codes of its own.
+    let mut f = Fixture::new();
+    let top = f.compare_int(Cmp::Gt, VAL, 100);
+    let p = f.b.finish(Some(top)).expect("finish");
+    assert!(!p.own_codes());
+  }
+
+  #[test]
   fn a_scans_section_has_the_inputs_before_the_reads() {
     let mut f = Fixture::new();
     let c = f.b.column(VAL);
@@ -1740,14 +1916,14 @@ mod tests {
     assert_eq!(out, want);
     // Another table's program, or one that writes, is refused.
     let t = table();
-    assert!(check_program(&p, &t, false).is_ok());
+    assert!(check_program(&p, &t, false, true).is_ok());
     let mut f = Fixture::new();
     let k = f.b.integer(1);
     f.b.assign(VAL, k);
     let writes = f.b.finish(None).expect("finish");
-    let e = check_program(&writes, &t, false).expect_err("writes");
+    let e = check_program(&writes, &t, false, true).expect_err("writes");
     assert_eq!(e.code, err::IC_ERROR_NOT_SUPPORTED);
-    assert!(check_program(&writes, &t, true).is_ok());
+    assert!(check_program(&writes, &t, true, false).is_ok());
   }
 
   #[test]

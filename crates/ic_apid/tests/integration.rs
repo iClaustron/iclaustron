@@ -8905,6 +8905,443 @@ fn assign_a_missed_condition_aborts_only_where_asked() {
   assert!(said, "6000 said: {:?} {:?}", query_error, trans_error);
 }
 
+// ---- Checks: refusal codes of the application's own (phase 11.5) ----
+
+/// The code the first check refuses with: the version is another.
+const IC_IT_REF_VERSION: i32 = 6001;
+/// The code the second refuses with: the balance is too low, or NULL.
+const IC_IT_REF_BALANCE: i32 = 6002;
+
+/// Make and fill the `ref_api` table: row 1 passes both checks of
+/// [`ref_program`] with version 5 and 50 to take, row 2 misses the
+/// second, row 3 both, and row 4 has a NULL balance.
+fn fill_ref() -> Option<()> {
+  mysql(&format!(
+    "CREATE DATABASE IF NOT EXISTS {db};
+     DROP TABLE IF EXISTS {db}.ref_api;
+     CREATE TABLE {db}.ref_api (
+       id INT NOT NULL PRIMARY KEY,
+       version INT NOT NULL, balance INT, note INT NOT NULL
+     ) ENGINE=NDB;
+     INSERT INTO {db}.ref_api VALUES
+       (1, 5, 100, 0), (2, 5, 10, 0), (3, 7, 10, 0), (4, 5, NULL, 0);",
+    db = IC_IT_DB
+  ))?;
+  Some(())
+}
+
+/// Unless version = input 0 refuse with 6001, unless balance >= input 1
+/// with 6002; with `takes`, balance = balance - input 1.
+fn ref_program(def: &Arc<TableDef>, takes: bool) -> Arc<Program> {
+  let version = def.field_id("version").expect("version");
+  let balance = def.field_id("balance").expect("balance");
+  let mut b = ProgramBuilder::new(def);
+  let has = b.column(version);
+  let read = b.input(0);
+  let same = b.compare(Cmp::Eq, has, read);
+  let held = b.column(balance);
+  let amount = b.input(1);
+  let enough = b.compare(Cmp::Ge, held, amount);
+  b.refuse_unless(same, IC_IT_REF_VERSION as u32);
+  b.refuse_unless(enough, IC_IT_REF_BALANCE as u32);
+  if takes {
+    let left = b.subtract(held, amount);
+    b.assign(balance, left);
+  }
+  b.finish(None).expect("the program")
+}
+
+/// The rows of `ref_api` that miss a check, and the code each is
+/// refused with: the first check missed decides.
+const IC_IT_REF_MISSES: [(i64, i32); 3] = [
+  (2, IC_IT_REF_BALANCE),
+  (3, IC_IT_REF_VERSION),
+  (4, IC_IT_REF_BALANCE),
+];
+
+#[test]
+fn refuse_an_update_says_which_check_its_row_missed() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if fill_ref().is_none() {
+    return;
+  }
+  let db = IC_IT_DB;
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let t = bind(&mut conn, "ref_api");
+  let id_column = t.def.field_id("id").expect("id");
+  let note = t.def.field_id("note").expect("note");
+  let key_rec = Record::default_for(&t.def, Some(&[id_column])).expect("key");
+  let note_rec = Record::default_for(&t.def, Some(&[note])).expect("note");
+  let program = ref_program(&t.def, true);
+  assert!(program.own_codes());
+  let plain = conn
+    .create_query(&t.def, &key_rec, &note_rec)
+    .expect("a query");
+  let guarded = conn
+    .create_query(&t.def, &key_rec, &key_rec)
+    .expect("a query");
+  {
+    let query = conn.query_mut(plain).expect("the query");
+    text_row::put_value(&key_rec, 0, "1", query.key_row_mut()).expect("id");
+    let query = conn.query_mut(guarded).expect("the query");
+    query.set_program(Some(&program)).expect("the program");
+    query.set_input(0, 5).expect("the version");
+    query.set_input(1, 50).expect("the amount");
+  }
+
+  // A plain update of row 1's note and the guarded update of a row
+  // that misses a check, in one transaction. Where the guarded one
+  // aborts on error, the writes' default, the transaction rolls back
+  // and says the check's code; where it ignores errors it fails alone
+  // with the same code, and the plain update commits.
+  let mut tried: i64 = 0;
+  for (id, code) in IC_IT_REF_MISSES {
+    for (option, aborts) in [
+      (AbortOption::Default, true),
+      (AbortOption::IgnoreError, false),
+    ] {
+      tried += 1;
+      let query = conn.query_mut(plain).expect("the query");
+      text_row::put_value(
+        &note_rec,
+        0,
+        &tried.to_string(),
+        query.attr_row_mut(),
+      )
+      .expect("note");
+      let query = conn.query_mut(guarded).expect("the query");
+      text_row::put_value(&key_rec, 0, &id.to_string(), query.key_row_mut())
+        .expect("id");
+      let before =
+        count_of(&format!("SELECT note FROM {}.ref_api WHERE id = 1", db));
+      let tid = conn
+        .start_transaction(TransactionHint::Any, Some(&t.def))
+        .expect("a transaction");
+      let write = WriteKeyArgs {
+        kind: WriteKind::Update,
+        ..WriteKeyArgs::default()
+      };
+      conn
+        .write_key(plain, tid, &write)
+        .expect("the plain update");
+      let write = WriteKeyArgs {
+        kind: WriteKind::Update,
+        abort_option: option,
+        ..WriteKeyArgs::default()
+      };
+      conn
+        .write_key(guarded, tid, &write)
+        .expect("the guarded update");
+      conn.commit_transaction(tid).expect("commit");
+      let state = finish(&mut conn, tid);
+      let query_error = conn.query(guarded).expect("the query").error();
+      let trans_error = conn.transaction(tid).expect("the transaction").error();
+      conn.close_transaction(tid).expect("close");
+      let now =
+        count_of(&format!("SELECT note FROM {}.ref_api WHERE id = 1", db));
+      let what = format!(
+        "row {}, aborts {}: {:?} {:?}",
+        id, aborts, query_error, trans_error
+      );
+      if aborts {
+        assert_eq!(state, CommitState::RolledBack, "{}", what);
+        let mut said: bool = false;
+        for e in [query_error, trans_error].into_iter().flatten() {
+          assert_ne!(e.code, 6000, "{}", what);
+          assert_ne!(
+            e.code,
+            key_op::IC_NDB_ERROR_NO_SUCH_ROW as i32,
+            "{}",
+            what
+          );
+          if e.code == code {
+            said = true;
+            assert!(e.is_ndb_error(), "{}", what);
+            assert!(!e.is_temporary(), "{}", what);
+          }
+        }
+        assert!(said, "{} said: {}", code, what);
+        assert_eq!(now, before, "the plain update rolled back: {}", what);
+      } else {
+        assert_eq!(state, CommitState::Committed, "{}", what);
+        assert_eq!(query_error.map(|e| e.code), Some(code), "{}", what);
+        assert_eq!(now, tried, "the plain update committed: {}", what);
+      }
+    }
+  }
+  let untouched = count_of(&format!(
+    "SELECT COUNT(*) FROM {db}.ref_api WHERE (id = 2 AND balance = 10) \
+     OR (id = 3 AND balance = 10) OR (id = 4 AND balance IS NULL)",
+    db = db
+  ));
+  assert_eq!(untouched, 3, "the refused rows are as they were");
+
+  // A row that is not there is still 626, not a check's code.
+  let query = conn.query_mut(guarded).expect("the query");
+  text_row::put_value(&key_rec, 0, "99", query.key_row_mut()).expect("id");
+  let tid = conn
+    .start_transaction(TransactionHint::Any, Some(&t.def))
+    .expect("a transaction");
+  let write = WriteKeyArgs {
+    kind: WriteKind::Update,
+    abort_option: AbortOption::IgnoreError,
+    ..WriteKeyArgs::default()
+  };
+  conn
+    .write_key(guarded, tid, &write)
+    .expect("the guarded update");
+  conn.commit_transaction(tid).expect("commit");
+  let _ = finish(&mut conn, tid);
+  let query_error = conn.query(guarded).expect("the query").error();
+  conn.close_transaction(tid).expect("close");
+  assert_eq!(
+    query_error.map(|e| e.code),
+    Some(key_op::IC_NDB_ERROR_NO_SUCH_ROW as i32)
+  );
+
+  // Row 1 passes both, twice: 100, 50, 0; the third time the balance is
+  // too low.
+  let query = conn.query_mut(guarded).expect("the query");
+  text_row::put_value(&key_rec, 0, "1", query.key_row_mut()).expect("id");
+  for (want, left) in [(None, 50i64), (None, 0), (Some(IC_IT_REF_BALANCE), 0)] {
+    let tid = conn
+      .start_transaction(TransactionHint::Any, Some(&t.def))
+      .expect("a transaction");
+    let write = WriteKeyArgs {
+      kind: WriteKind::Update,
+      ..WriteKeyArgs::default()
+    };
+    conn
+      .write_key(guarded, tid, &write)
+      .expect("the guarded update");
+    conn.commit_transaction(tid).expect("commit");
+    let state = finish(&mut conn, tid);
+    let query_error = conn.query(guarded).expect("the query").error();
+    let trans_error = conn.transaction(tid).expect("the transaction").error();
+    conn.close_transaction(tid).expect("close");
+    let mut said: Option<i32> = None;
+    for e in [query_error, trans_error].into_iter().flatten() {
+      if e.code == IC_IT_REF_BALANCE {
+        said = Some(e.code);
+      }
+    }
+    match want {
+      None => {
+        assert_eq!(state, CommitState::Committed, "{:?}", trans_error);
+        assert!(query_error.is_none(), "{:?}", query_error);
+      }
+      Some(_) => assert_eq!(state, CommitState::RolledBack),
+    }
+    assert_eq!(said, want, "{:?} {:?}", query_error, trans_error);
+    let balance =
+      count_of(&format!("SELECT balance FROM {}.ref_api WHERE id = 1", db));
+    assert_eq!(balance, left);
+  }
+}
+
+#[test]
+fn refuse_reads_and_deletes_take_checks_and_scans_do_not() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if fill_ref().is_none() {
+    return;
+  }
+  let db = IC_IT_DB;
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let t = bind(&mut conn, "ref_api");
+  let program = ref_program(&t.def, false);
+  let qid = conn.create_query(&t.def, &t.rec, &t.rec).expect("a query");
+  {
+    let query = conn.query_mut(qid).expect("the query");
+    query.set_program(Some(&program)).expect("the program");
+    query.set_input(0, 5).expect("the version");
+    query.set_input(1, 50).expect("the amount");
+  }
+
+  // A read, which ignores errors unless asked: it fails alone with the
+  // check's code, and the transaction commits. Row 1 is read.
+  for (id, want) in [
+    (1i64, None),
+    (2, Some(IC_IT_REF_BALANCE)),
+    (3, Some(IC_IT_REF_VERSION)),
+    (4, Some(IC_IT_REF_BALANCE)),
+  ] {
+    let query = conn.query_mut(qid).expect("the query");
+    t.put(query.key_row_mut(), "id", &id.to_string());
+    let tid = conn
+      .start_transaction(TransactionHint::Any, Some(&t.def))
+      .expect("a transaction");
+    conn
+      .read_key(qid, tid, &ReadKeyArgs::default())
+      .expect("the read");
+    conn.commit_transaction(tid).expect("commit");
+    let state = finish(&mut conn, tid);
+    let query = conn.query(qid).expect("the query");
+    let query_error = query.error();
+    assert_eq!(state, CommitState::Committed, "row {}", id);
+    assert_eq!(query_error.map(|e| e.code), want, "row {}", id);
+    if want.is_none() {
+      assert_eq!(t.get(query.attr_row(), "balance"), "100");
+    }
+    conn.close_transaction(tid).expect("close");
+  }
+
+  // A read that aborts on error rolls its transaction back with the
+  // code.
+  let query = conn.query_mut(qid).expect("the query");
+  t.put(query.key_row_mut(), "id", "3");
+  let tid = conn
+    .start_transaction(TransactionHint::Any, Some(&t.def))
+    .expect("a transaction");
+  let read = ReadKeyArgs {
+    kind: ReadKind::Locked,
+    abort_option: AbortOption::AbortOnError,
+    ..ReadKeyArgs::default()
+  };
+  conn.read_key(qid, tid, &read).expect("the read");
+  conn.commit_transaction(tid).expect("commit");
+  let state = finish(&mut conn, tid);
+  let query_error = conn.query(qid).expect("the query").error();
+  let trans_error = conn.transaction(tid).expect("the transaction").error();
+  conn.close_transaction(tid).expect("close");
+  assert_eq!(state, CommitState::RolledBack, "{:?}", trans_error);
+  let mut said: bool = false;
+  for e in [query_error, trans_error].into_iter().flatten() {
+    if e.code == IC_IT_REF_VERSION {
+      said = true;
+    }
+  }
+  assert!(said, "6001 said: {:?} {:?}", query_error, trans_error);
+
+  // A delete of a row that misses a check leaves it; of one that
+  // passes, takes it.
+  for (id, want, left) in [(2i64, Some(IC_IT_REF_BALANCE), 1i64), (1, None, 0)]
+  {
+    let query = conn.query_mut(qid).expect("the query");
+    t.put(query.key_row_mut(), "id", &id.to_string());
+    let tid = conn
+      .start_transaction(TransactionHint::Any, Some(&t.def))
+      .expect("a transaction");
+    let write = WriteKeyArgs {
+      kind: WriteKind::Delete,
+      abort_option: AbortOption::IgnoreError,
+      ..WriteKeyArgs::default()
+    };
+    conn.write_key(qid, tid, &write).expect("the delete");
+    conn.commit_transaction(tid).expect("commit");
+    let state = finish(&mut conn, tid);
+    let query_error = conn.query(qid).expect("the query").error();
+    conn.close_transaction(tid).expect("close");
+    assert_eq!(state, CommitState::Committed, "row {}", id);
+    assert_eq!(query_error.map(|e| e.code), want, "row {}", id);
+    let rows = count_of(&format!(
+      "SELECT COUNT(*) FROM {}.ref_api WHERE id = {}",
+      db, id
+    ));
+    assert_eq!(rows, left, "row {}", id);
+  }
+
+  // A scan would end on a check's code: it refuses the program, on a
+  // connection and as a shape, and keeps the filter it had.
+  let scan = conn.create_scan(&t.def, &t.rec).expect("a scan");
+  let e = conn
+    .set_scan_program(scan, Some(&program))
+    .expect_err("a scan with checks");
+  assert_eq!(e.code, err::IC_ERROR_NOT_SUPPORTED);
+  let shape = ScanShape::new(&t.def, &t.rec).expect("a scan shape");
+  let e = shape
+    .with_program(&program)
+    .expect_err("a shape with checks");
+  assert_eq!(e.code, err::IC_ERROR_NOT_SUPPORTED);
+}
+
+#[test]
+fn refuse_through_an_executor_each_operation_says_its_check() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if fill_ref().is_none() {
+    return;
+  }
+  let db = IC_IT_DB;
+  let executor = executor_with(&cluster, 64, 256);
+  let mut submitter = executor.submitter();
+  let te = bind_through(&submitter, "ref_api");
+  let id_column = te.def.field_id("id").expect("id");
+  let key_rec = Record::default_for(&te.def, Some(&[id_column])).expect("key");
+  let program = ref_program(&te.def, true);
+  let shape = OpShape::new(&te.def, &key_rec, &key_rec)
+    .expect("a shape")
+    .with_program(&program)
+    .expect("with the program");
+
+  // Four updates that ignore errors, in one transaction: row 1 passes,
+  // the others each say the check they missed, and it commits.
+  let mut request = Request::new();
+  for id in 1..=4 {
+    let mut op = KeyOp::write(&shape, WriteKind::Update);
+    op.set_abort_option(AbortOption::IgnoreError);
+    op.set_input(0, 5).expect("the version");
+    op.set_input(1, 50).expect("the amount");
+    text_row::put_value(&key_rec, 0, &id.to_string(), op.key_row_mut())
+      .expect("id");
+    request.push(op);
+  }
+  submitter.execute(&mut request).expect("run the request");
+  assert_eq!(request.commit_state(), CommitState::Committed);
+  let said: Vec<Option<i32>> = request
+    .ops()
+    .iter()
+    .map(|op| op.error().map(|e| e.code))
+    .collect();
+  assert_eq!(
+    said,
+    [
+      None,
+      Some(IC_IT_REF_BALANCE),
+      Some(IC_IT_REF_VERSION),
+      Some(IC_IT_REF_BALANCE)
+    ]
+  );
+  let balance =
+    count_of(&format!("SELECT balance FROM {}.ref_api WHERE id = 1", db));
+  assert_eq!(balance, 50);
+
+  // One that aborts on error, the writes' default: the request fails
+  // with the check's code, and row 1's update goes with it.
+  let mut request = Request::new();
+  for id in [1, 3] {
+    let mut op = KeyOp::write(&shape, WriteKind::Update);
+    op.set_input(0, 5).expect("the version");
+    op.set_input(1, 50).expect("the amount");
+    text_row::put_value(&key_rec, 0, &id.to_string(), op.key_row_mut())
+      .expect("id");
+    request.push(op);
+  }
+  let outcome = submitter.execute(&mut request);
+  assert_eq!(request.commit_state(), CommitState::RolledBack);
+  let mut said: bool = false;
+  let op_error = request.ops()[1].error();
+  for e in [outcome.err(), request.error(), op_error]
+    .into_iter()
+    .flatten()
+  {
+    if e.code == IC_IT_REF_VERSION {
+      said = true;
+    }
+  }
+  assert!(said, "6001 said: {:?} {:?}", request.error(), op_error);
+  let balance =
+    count_of(&format!("SELECT balance FROM {}.ref_api WHERE id = 1", db));
+  assert_eq!(balance, 50, "row 1's update rolled back with it");
+}
+
 // ---- AUTO_INCREMENT (phase 9.2a) ----
 
 /// The values of `id` MySQL's inserts by `who` took, at or above `low`

@@ -574,7 +574,30 @@ const IC_NDB_ERRORS: &[ErrorEntry] = &[
   },
 ];
 
+/// The first of the codes a program refuses with that are the
+/// application's own: NDB keeps 6000 to 6999 for programs and defines
+/// none there, and 6000 is ours. Verify: chapter 05 §9.4.
+pub const IC_NDB_ERROR_OWN_FIRST: i32 = 6001;
+/// The last of the application's own codes.
+pub const IC_NDB_ERROR_OWN_LAST: i32 = 6999;
+
+/// What every code of the application's own is: the application knows
+/// what each of its codes means, we only that its program raised it.
+static IC_OWN_ERROR: ErrorEntry = ErrorEntry {
+  code: IC_NDB_ERROR_OWN_FIRST,
+  class: ErrorClass::AppDefined,
+  text: "The program refused the row with a code of the application's own",
+};
+
+/// True for a code of the application's own.
+pub fn is_own(code: i32) -> bool {
+  (IC_NDB_ERROR_OWN_FIRST..=IC_NDB_ERROR_OWN_LAST).contains(&code)
+}
+
 fn find(code: i32) -> Option<&'static ErrorEntry> {
+  if is_own(code) {
+    return Some(&IC_OWN_ERROR);
+  }
   IC_NDB_ERRORS.iter().find(|error| error.code == code)
 }
 
@@ -647,6 +670,18 @@ mod tests {
     assert_eq!(class_of(6000), ErrorClass::AppDefined);
     assert_eq!(class_of(6000).category(), ErrorCategory::User);
     assert_eq!(class_of(6000).severity(), ErrorSeverity::Error);
+    // A code of the application's own, from its program: known, and
+    // the application's error, for good. The codes beside the range are
+    // not.
+    for code in [6001, 6002, 6999] {
+      assert!(is_known(code), "code {}", code);
+      assert_eq!(class_of(code), ErrorClass::AppDefined);
+      assert_eq!(class_of(code).category(), ErrorCategory::User);
+      assert_eq!(class_of(code).severity(), ErrorSeverity::Error);
+      assert!(text_of(code).is_some());
+    }
+    assert!(!is_own(6000));
+    assert!(!is_known(7000));
     assert_eq!(class_of(4350).category(), ErrorCategory::Internal);
     // A read rate overload is tried again; a fanout table's scan pruned
     // by a hash alone, 2203 too until the kernel gave it 2204, is

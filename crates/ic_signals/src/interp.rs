@@ -32,7 +32,9 @@
 //! code: a scan skips the row on 626, and a key operation fails with
 //! the code. Ours refuse with 626 where a missed condition is not to
 //! abort and with 6000 where it is ([`IC_REFUSE_NO_ROW`],
-//! [`IC_REFUSE_CONDITION`]).
+//! [`IC_REFUSE_CONDITION`]). A program may also refuse with codes of the
+//! application's own, 6001 to 6999, one for each of its checks
+//! ([`IC_REFUSE_OWN_FIRST`], [`IC_REFUSE_OWN_LAST`]).
 //!
 //! **The column section of an interpreted operation** begins with five
 //! sizes: the reads before the program, the program, the updates after
@@ -120,6 +122,13 @@ pub const IC_REFUSE_NO_ROW: u16 = 626;
 /// that the condition failed. Ours, the first of the range NDB keeps
 /// for programs' own codes. Verify: chapter 05 §9.4, §9.8.
 pub const IC_REFUSE_CONDITION: u16 = 6000;
+/// The first of the codes an application's program may refuse with by
+/// its own choice: the rest of the range NDB keeps for programs, 6000
+/// being ours. A key operation fails with the code whatever its abort
+/// option; a scan would end with it. Verify: chapter 05 §9.4.
+pub const IC_REFUSE_OWN_FIRST: u16 = 6001;
+/// The last of the codes of an application's own.
+pub const IC_REFUSE_OWN_LAST: u16 = 6999;
 
 /// The longest jump, in words: bits 16–30 hold it. Bit 31 would make it
 /// a jump backwards, which no program of ours makes.

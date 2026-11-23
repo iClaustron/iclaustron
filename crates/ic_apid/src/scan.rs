@@ -982,7 +982,7 @@ impl ApidConnection {
     let scan = self.idle_scan(id)?;
     match program {
       Some(program) => {
-        program::check_program(program, &scan.table, false)?;
+        program::check_program(program, &scan.table, false, true)?;
         scan.program = Some(Arc::clone(program));
       }
       None => scan.program = None,

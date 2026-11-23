@@ -1802,6 +1802,88 @@ fn c_api_programs_filter_scans_guard_updates_and_count() {
       assert_eq!(seen_sql, Some(after.to_string()), "below {}", limit);
     }
 
+    // Checks, with codes of the application's own: unless val < input 0
+    // refuse with 6001, unless val > input 1 with 6002; val = val + 1.
+    assert_eq!(ic_program_builder_create(table, &mut builder), 0);
+    let column = ic_program_column(builder, val);
+    let high = ic_program_input(builder, 0);
+    let low = ic_program_input(builder, 1);
+    let below = ic_program_compare(builder, IC_CMP_LT, column, high);
+    let above = ic_program_compare(builder, IC_CMP_GT, column, low);
+    assert_eq!(
+      ic_program_refuse_unless(builder, below, IC_NDB_ERROR_OWN_FIRST as u32),
+      0
+    );
+    assert_eq!(ic_program_refuse_unless(builder, above, 6002), 0);
+    let one = ic_program_integer(builder, 1);
+    let sum = ic_program_add(builder, column, one);
+    assert_eq!(ic_program_assign(builder, val, sum), 0);
+    let mut checks: *mut IcProgram = std::ptr::null_mut();
+    let ret = ic_program_builder_finish_no_condition(builder, &mut checks);
+    assert_eq!(ret, 0, "finish: {}", message(ret));
+    // A code that is not the application's fails the finish, and a null
+    // builder takes no check.
+    assert_eq!(
+      ic_program_refuse_unless(builder, below, IC_NDB_ERROR_CONDITION as u32),
+      0
+    );
+    let ret = ic_program_builder_finish_no_condition(builder, &mut refused);
+    assert_eq!(ret, IC_ERROR_BAD_PROGRAM);
+    assert_eq!(
+      ic_program_refuse_unless(std::ptr::null_mut(), below, 6001),
+      IC_ERROR_NULL_POINTER
+    );
+    ic_program_builder_free(builder);
+    // A scan refuses the program, and keeps its filter.
+    assert_eq!(
+      ic_apid_conn_set_scan_program(conn, scan, checks),
+      IC_ERROR_NOT_SUPPORTED
+    );
+    assert_eq!(ic_apid_query_set_program(conn, query, checks), 0);
+    // Row 3's val is 31. Where the update aborts on error its
+    // transaction rolls back and says the code of the first check
+    // missed; where it ignores errors it fails alone with that code.
+    for (high, low, ignore, error, state, after) in [
+      (20, 0, false, 6001, IC_COMMIT_STATE_ROLLED_BACK, "31"),
+      (40, 35, false, 6002, IC_COMMIT_STATE_ROLLED_BACK, "31"),
+      (20, 35, false, 6001, IC_COMMIT_STATE_ROLLED_BACK, "31"),
+      (20, 0, true, 6001, IC_COMMIT_STATE_COMMITTED, "31"),
+      (40, 35, true, 6002, IC_COMMIT_STATE_COMMITTED, "31"),
+      (40, 0, false, 0, IC_COMMIT_STATE_COMMITTED, "32"),
+    ] {
+      let what = format!("below {}, above {}, ignore {}", high, low, ignore);
+      assert_eq!(ic_apid_query_set_input(conn, query, 0, high), 0);
+      assert_eq!(ic_apid_query_set_input(conn, query, 1, low), 0);
+      write.abort_option = if ignore {
+        IC_IGNORE_ERROR
+      } else {
+        IC_ABORT_DEFAULT
+      };
+      let hint = ic_apid_conn_hint_for_key(conn, table, key_rec, key, len);
+      let mut trans: IcTransId = 0;
+      assert_eq!(
+        ic_apid_conn_start_transaction(conn, hint, table, &mut trans),
+        0
+      );
+      let ret = ic_apid_conn_write_key(conn, query, trans, &write);
+      assert_eq!(ret, 0, "define: {}", message(ret));
+      assert_eq!(ic_apid_conn_commit_transaction(conn, trans), 0);
+      assert_eq!(finish(conn, trans), state, "{}", what);
+      let query_error = ic_apid_query_error(conn, query);
+      let seen = [query_error, ic_apid_transaction_error(conn, trans)];
+      assert!(seen.contains(&error), "{}: {:?}", what, seen);
+      if ignore {
+        assert_eq!(query_error, error, "{}", what);
+      }
+      let mut done: IcQueryId = 0;
+      while ic_apid_conn_get_next_executed_query(conn, &mut done) {}
+      assert_eq!(ic_apid_conn_close_transaction(conn, trans), 0);
+      let seen_sql = mysql(&format!(
+        "SELECT val FROM {}.capi_prog WHERE id = 3",
+        IC_IT_DB
+      ));
+      assert_eq!(seen_sql, Some(after.to_string()), "{}", what);
+    }
     // cnt = cnt + input 0 through an executor, cnt read back after.
     assert_eq!(ic_program_builder_create(table, &mut builder), 0);
     let column = ic_program_column(builder, cnt);
@@ -1884,6 +1966,7 @@ fn c_api_programs_filter_scans_guard_updates_and_count() {
     ic_apid_submitter_free(submitter);
     ic_apid_executor_free(executor);
     ic_program_free(counter);
+    ic_program_free(checks);
     ic_program_free(guard);
     ic_program_free(filter);
     assert_eq!(ic_apid_query_free(conn, query), 0);

@@ -15,7 +15,7 @@ instance:
 | `range_scan` | rows by ranges of the ordered index on val, in the index's order, from either end, and several numbered ranges at once |
 | `scan_update` | rows locked by an exclusive scan on a transaction and updated through it, as `UPDATE ... WHERE` does, with one commit |
 | `scan_executor` | four threads with no connection of their own, each reading a range in order through a reader of an executor's scan |
-| `conditional_update` | programs run in the data nodes: an update only while val is what was read, a counter read back after its update, a scan's filter |
+| `conditional_update` | programs run in the data nodes: an update only while val is what was read, a counter read back after its update, a scan's filter, an update whose checks refuse with codes of its own |
 | `auto_increment` | AUTO_INCREMENT values asked for and put in the row: one at a time, a block, an id of the program's own; a table without a primary key, its hidden key, a scan and deletes by it |
 
 `conditional_update` and `auto_increment` check every result they know

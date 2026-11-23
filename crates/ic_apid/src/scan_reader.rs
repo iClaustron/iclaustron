@@ -158,7 +158,7 @@ impl ScanShape {
     &self,
     program: &Arc<Program>,
   ) -> Result<Arc<ScanShape>, IcError> {
-    program::check_program(program, &self.table, false)?;
+    program::check_program(program, &self.table, false, true)?;
     let index = match &self.index {
       Some(index) => {
         let read_part = row_codec::read_attr_info(&self.rec);

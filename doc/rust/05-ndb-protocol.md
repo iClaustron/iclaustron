@@ -2378,6 +2378,19 @@ Seen: comparisons 1, 2, 4 and 5 with rules 0 and 2 (§9.6).
   raised, permanent: "The row did not meet the operation's condition".
   The rest of the range, 6001–6999, is left to applications' own
   exits.
+- **The application's** (phase 11.5, 2026-11-23): a program may hold
+  several `REFUSE` words, each with a code of 6001–6999 the application
+  chose, one for each of its checks (chapter 04, "Conditions and
+  assignments"). A check is compiled as a condition is, its jump going
+  to a `REFUSE` of its own; these stand after the rest of the program,
+  in the order of the checks, so that every jump goes forward. Their
+  codes are fixed when the program is compiled and are not among those
+  rewritten as it goes out, so a key operation fails with the check's
+  code under either abort option. A scan would end on such a code, as
+  on any but 626 and 899, so a program with checks is refused there.
+  Seen on a 26.10 cluster: a key update, read and delete fail with 6001
+  or 6002 as the program says, alone where they ignore errors and with
+  their transaction where they abort on error.
 - **`ACCEPT_LAST`**: as `ACCEPT`, and the fragment's scan ends after
   the row.
 

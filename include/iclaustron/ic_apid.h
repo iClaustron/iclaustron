@@ -503,6 +503,19 @@
 #define IC_NDB_ERROR_CONDITION 6000
 
 /*
+ The first of the codes a program's checks may refuse with, the
+ application's own: `ic_program_refuse_unless` takes a code from this
+ to `IC_NDB_ERROR_OWN_LAST`, and an operation whose row misses the
+ check fails with it (NDB's range for programs, after ours).
+ */
+#define IC_NDB_ERROR_OWN_FIRST 6001
+
+/*
+ The last of the codes of the application's own.
+ */
+#define IC_NDB_ERROR_OWN_LAST 6999
+
+/*
  A text that is not a connectstring.
  */
 #define IC_ERROR_PARSE_CONNECTSTRING 7056
@@ -3491,6 +3504,27 @@ int32_t ic_program_assign_if(IC_PROGRAM_BUILDER *builder,
                              IC_PROGRAM_COND cond);
 
 /*
+ A check: unless `cond` is true the program refuses the row with
+ `code`, a code of the application's own, `IC_NDB_ERROR_OWN_FIRST` to
+ `IC_NDB_ERROR_OWN_LAST`, so that a failed operation says which check
+ its row missed. Checks are made in the order given, before the
+ program's condition and its assignments, and the first the row
+ misses decides the code; a condition that is unknown, from a NULL,
+ is missed. The operation fails with the code whatever its abort
+ option, which alone decides whether its transaction is rolled back.
+ A program with checks runs on key operations only: a scan refuses it
+ (`IC_ERROR_NOT_SUPPORTED`). What is wrong, another code among it,
+ comes back from the finish (`IC_ERROR_BAD_PROGRAM`).
+
+ # Safety
+
+ As `ic_program_column`.
+ */
+int32_t ic_program_refuse_unless(IC_PROGRAM_BUILDER *builder,
+                                 IC_PROGRAM_COND cond,
+                                 uint32_t code);
+
+/*
  Compile the condition `top` with the builder's assignments into a
  program, which any number of operations may run, each with its own
  inputs. The builder stays, and may finish another.
@@ -3562,7 +3596,9 @@ uint32_t ic_program_inputs(const IC_PROGRAM *program);
  checked as each is defined (`IC_ERROR_NOT_SUPPORTED`). A row the
  program refuses fails the query with `IC_NDB_ERROR_CONDITION` where it
  aborts on error, rolling the transaction back, and with
- `IC_NDB_ERROR_NO_SUCH_ROW` where it ignores errors.
+ `IC_NDB_ERROR_NO_SUCH_ROW` where it ignores errors; a row that misses
+ one of the program's checks fails it with the check's code in both
+ (`ic_program_refuse_unless`).
 
  Errors: `IC_ERROR_BAD_PROGRAM` for a program of another table;
  `IC_ERROR_TRANSACTION_ACTIVE` while the query is defined or sent;
@@ -3632,7 +3668,8 @@ const uint8_t *ic_apid_query_after_row(IC_APID_CONNECTION *conn,
  a NULL `program`: a row it refuses is passed over at the data node.
 
  Errors: `IC_ERROR_BAD_PROGRAM` for a program of another table;
- `IC_ERROR_NOT_SUPPORTED` for one that assigns; `IC_ERROR_SCAN_ACTIVE`
+ `IC_ERROR_NOT_SUPPORTED` for one that assigns, or one with checks,
+ whose codes would end the scan; `IC_ERROR_SCAN_ACTIVE`
  while a run is on; `IC_ERROR_NO_SUCH_FIELD` for an id that names no
  scan.
 
@@ -3704,8 +3741,8 @@ int32_t ic_op_shape_reading_after(const IC_OP_SHAPE *shape,
  a scan.
 
  Errors: `IC_ERROR_BAD_PROGRAM` for a program of another table;
- `IC_ERROR_NOT_SUPPORTED` for one that assigns. The new shape is the
- caller's, freed with `ic_scan_shape_free`.
+ `IC_ERROR_NOT_SUPPORTED` for one that assigns, or one with checks.
+ The new shape is the caller's, freed with `ic_scan_shape_free`.
 
  # Safety
 

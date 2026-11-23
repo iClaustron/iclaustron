@@ -595,6 +595,9 @@ bottom-up, each giving an id, and compiles them into a program:
 - assignments, for an update: `assign(column, value)`, and
   `assign_if(column, value, cond)` for one that happens only where its
   own condition holds;
+- checks, for a key operation: `refuse_unless(cond, code)`, a condition
+  the row must meet and the code of your own the operation fails with
+  when it does not ("Checks" below);
 - then `finish(Some(top))`, or `finish(None)` for a program that only
   assigns (`ic_program_builder_finish`,
   `ic_program_builder_finish_no_condition`).
@@ -668,6 +671,56 @@ a condition that is true lets the row through. A conditional update is
 a program with a condition only, the new values in the attribute row
 as for any update.
 
+**Checks: codes of your own.** A program's one condition says only
+that the row missed it. A check is a condition with a code of the
+application's own, 6001 to 6999 (`IC_NDB_ERROR_OWN_FIRST` to
+`IC_NDB_ERROR_OWN_LAST`), and a program may have several:
+`b.refuse_unless(cond, code)` (`ic_program_refuse_unless`). They are
+made in the order given, before the program's condition and its
+assignments, and the operation fails with the code of the first its row
+misses, so the application knows which without reading the row. A
+check that is unknown, from a NULL, is missed.
+
+```rust
+// Take input 1 from val, if the row's code is input 0 and val is enough.
+let mut b = ProgramBuilder::new(&table);
+let code = b.column(code_id);
+let caller = b.input(0);
+let ours = b.compare(Cmp::Eq, code, caller);
+let val = b.column(val_id);
+let amount = b.input(1);
+let enough = b.compare(Cmp::Ge, val, amount);
+b.refuse_unless(ours, 6001);
+b.refuse_unless(enough, 6002);
+let left = b.subtract(val, amount);
+b.assign(val_id, left);
+let take = b.finish(None)?;
+```
+
+```c
+ret = ic_program_refuse_unless(
+    b, ic_program_compare(b, IC_CMP_EQ, ic_program_column(b, code_id),
+                          ic_program_input(b, 0)), 6001);
+ret = ic_program_refuse_unless(
+    b, ic_program_compare(b, IC_CMP_GE, ic_program_column(b, val_id),
+                          ic_program_input(b, 1)), 6002);
+ret = ic_program_assign(
+    b, val_id, ic_program_subtract(b, ic_program_column(b, val_id),
+                                   ic_program_input(b, 1)));
+ret = ic_program_builder_finish_no_condition(b, &take);
+```
+
+A check's code is the operation's error whatever its abort option, and
+the option alone decides what becomes of the transaction: where the
+operation aborts on error the transaction rolls back and says the code,
+where it ignores errors the operation fails alone with it. A row that
+is not there is still 626. The library knows nothing of what a code
+means: every one is a user error, permanent. A code outside the range
+fails the finish (`IC_ERROR_BAD_PROGRAM`); 6000 is the library's, for
+the program's condition. Checks are for key reads, updates and deletes:
+a scan would end on such a code, so it refuses a program that has them
+(`IC_ERROR_NOT_SUPPORTED`).
+
 **Reading after an update.** An update can read columns back after its
 program has run, into a row of their own laid out by a record of their
 own: `query.set_reads_after(Some(&rec))` and `query.after_row()`
@@ -692,7 +745,8 @@ operations (`IC_ERROR_BAD_PROGRAM`).
 
 The `conditional_update` example runs an optimistic update, once
 committed and once refused with 6000, a counter read back after its
-update, and a scan with a filter.
+update, a scan with a filter, and an update with two checks, refused
+with 6001 and with 6002 and then committed.
 
 ## 7. AUTO_INCREMENT and tables without a primary key
 
@@ -845,6 +899,7 @@ asked for once it has completed.
 | 630 | a row with that key is there already | user |
 | 893 | the row would break a unique index; the error data names it | user |
 | 6000 | a program's condition did not hold, on an operation that aborts on error | user |
+| 6001–6999 | the row missed a check of a program, which refused it with this code of the application's own | user |
 | 241, 283, 284, 709, 710, 723 | the table or index changed or went since it was bound | user: bind again |
 | 266 | a lock wait timed out, probably a deadlock | temporary |
 | 274, 296 | a scan waited too long for a lock; a scan's batch was kept too long | temporary |

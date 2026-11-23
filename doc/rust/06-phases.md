@@ -2327,6 +2327,49 @@ the two disagreed; what followed from those places is here too.
   free records of a link gone.
 - Tests: to be run, with the fuzz targets.
 
+### 11.5 Refusal codes of the application's own (2026-11-23)
+
+Asked for by an early application: "Refusal codes of our own, and more
+than one in a program: a hot-path program of ours refuses with 6001 or
+6002 depending on which test failed." Until now a program had one
+condition, whose one `REFUSE` the library stamped with 626 or 6000 as
+the operation's abort option had it, so an application learnt only that
+the row had missed the condition. The reference's programs exit with a
+code wherever they like, any number of times, and keep 6000 to 6999
+for it (chapter 05 §9.4).
+
+- Checks on the builder: `refuse_unless(cond, code)`, any number, each
+  with a code from 6001 to 6999, made in the order given before the
+  condition and the assignments (chapter 04, "Conditions and
+  assignments"; `ic_program_refuse_unless` in C, with
+  `IC_NDB_ERROR_OWN_FIRST` and `IC_NDB_ERROR_OWN_LAST`). The compiler
+  gives each a `REFUSE` of its own after the rest of the program, whose
+  code is kept as the program goes out.
+- The operation fails with the check's code under either abort option;
+  the option alone decides whether its transaction goes with it.
+- A scan refuses a program with checks, on a connection and as a
+  shape: the code would end the scan.
+- The error table classes 6001 to 6999 as the application's program's
+  own, permanent, where they were unknown codes, classed as internal.
+- Tests. Unit: the words of two checks, a check before a condition
+  with each of the operation's codes, the codes refused, the scan's
+  refusal, the class of the range. Integration, the `refuse_` group:
+  an update that misses the first check, the second, both, and neither,
+  aborting on error and ignoring errors, beside a plain update in the
+  same transaction; a row that is not there, still 626; reads and
+  deletes; a scan's and a scan shape's refusal; four updates in one
+  request through an executor, each saying its own, and one that
+  aborts. The C API's program test does the same through the header.
+- The `conditional_update` example, in Rust and in C, takes an amount
+  from a row only if it is the caller's and holds enough, and is told
+  6001 or 6002.
+- Not in it: exits on any branch of a program, as the reference's
+  programs have them, and the instructions such programs use besides
+  (the operation's type, the interpreter's outputs); those stay with
+  the full interpreter, below. Three questions it raised are open
+  (chapter 10): whether 6000 is the application's too, checks on a
+  scan, and a `refuse_if`.
+
 ## Later — after the first version
 
 Not needed in a first version (the author, 2026-10-20): TLS to the data
